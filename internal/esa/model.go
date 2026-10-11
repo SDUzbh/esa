@@ -5,7 +5,7 @@ import (
 	"time"
 )
 
-const WorkflowVersion = "1"
+const WorkflowVersion = "2"
 
 type Comment struct {
 	ID        string    `json:"id"`
@@ -134,7 +134,25 @@ type Evidence struct {
 	Quote     string `json:"quote"`
 }
 
+// Finding pins localization to an immutable source revision.
+type Finding struct {
+	Commit    string     `json:"commit"`
+	File      string     `json:"file"`
+	StartLine int        `json:"start_line"`
+	EndLine   int        `json:"end_line"`
+	Problem   string     `json:"problem"`
+	Solution  string     `json:"solution"`
+	Evidence  []Evidence `json:"evidence"`
+}
+type IssueAssignment struct {
+	ExistingID string `json:"existing_id"`
+	Title      string `json:"title"`
+	Reason     string `json:"reason"`
+}
 type Report struct {
+	AgentClassification *Classification      `json:"agent_classification,omitempty"`
+	Issue               *IssueAssignment     `json:"issue,omitempty"`
+	Findings            []Finding            `json:"findings,omitempty"`
 	Summary             string               `json:"summary"`
 	RootCauseCandidates []string             `json:"root_cause_candidates"`
 	Evidence            []Evidence           `json:"evidence"`

@@ -32,14 +32,14 @@ func TestProviderCachesOneInvocationAndRejectsChangedInput(t *testing.T) {
 	dir := t.TempDir()
 	counter := filepath.Join(dir, "invocations")
 	fixture := filepath.Join(dir, "fixture.json")
-	r := esa.Report{Summary: "Candidate", RootCauseCandidates: []string{"Disconnect"}, Recommendations: []string{"Fail and retry"}, VerificationSteps: []string{"Replay"}, Evidence: []esa.Evidence{{Source: "git", Reference: "old:file.java:10", Quote: "complete(response);"}}}
+	r := EngineeringOutput{Classification: "code_defect", Issue: esa.IssueAssignment{Title: "Disconnect", Reason: "New defect"}, Findings: []esa.Finding{{Commit: "old", File: "file.java", StartLine: 10, EndLine: 10, Problem: "Disconnect", Solution: "Fail and retry", Evidence: []esa.Evidence{{Source: "git", Reference: "old:file.java:10", Quote: "complete(response);"}}}}}
 	b, _ := json.Marshal(r)
 	os.WriteFile(fixture, b, 0600)
 	script := filepath.Join(dir, "fake-codex")
 	code := "#!/bin/sh\nprintf x >> '" + counter + "'\nwhile [ \"$#\" -gt 0 ]; do\nif [ \"$1\" = '-o' ]; then cp '" + fixture + "' \"$2\"; fi\nshift\ndone\nprintf '%s\\n' '{\"type\":\"item.completed\",\"item\":{\"type\":\"error\",\"message\":\"Under-development features enabled\"}}' '{\"type\":\"turn.completed\",\"usage\":{\"input_tokens\":12,\"output_tokens\":24}}'\n"
 	os.WriteFile(script, []byte(code), 0700)
 	ticket := esa.Ticket{SourceKey: "BUG-1", ProjectID: "1", Subject: "Crash"}
-	p := Provider{CLI: script, RunsDir: filepath.Join(dir, "runs"), Packet: Packet{Cutoff: time.Now(), Ticket: ticket, Documents: []Document{{Source: "git", Prefix: "old:file.java:", First: 10, Lines: []string{"complete(response);"}}}}}
+	p := Provider{CLI: script, RunsDir: filepath.Join(dir, "runs"), Packet: Packet{Commit: "old", Cutoff: time.Now(), Ticket: ticket, Documents: []Document{{Source: "git", Prefix: "old:file.java:", First: 10, Lines: []string{"complete(response);"}}}}}
 	in := esa.AnalyzeRequest{RunID: "run_abc123", Ticket: ticket, ReadOnly: true, Classification: esa.Classification{Category: "code_defect"}, Budget: esa.Budget{MaxCalls: 1, MaxInputTokens: 10000, MaxOutputTokens: 1000, TimeoutSeconds: 10}}
 	for i := 0; i < 2; i++ {
 		report, err := p.Analyze(context.Background(), in)

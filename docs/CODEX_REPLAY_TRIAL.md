@@ -1,6 +1,6 @@
 # Codex historical replay trial
 
-This trial connects the installed, already authenticated Codex CLI through a Go HTTP adapter. ESA retains its existing classifier, routing, asynchronous worker, report contract and engineer review. Ruby remains the Redmine integration layer. No Kafka or original Jira files are edited.
+This trial connects the installed, already authenticated Codex CLI through a Go HTTP adapter. ESA keeps deterministic routing hints and the asynchronous worker; the Agent returns its classification, issue assignment and specific code findings. Existing display fields are derived for engineer review. Ruby remains the Redmine integration layer. No Kafka or original Jira files are edited.
 
 ## Selected issue and scope
 
@@ -47,7 +47,7 @@ Set the public endpoint `ESA_ANALYZER_URL=http://host.lima.internal:8091/analyze
 After the diagnosis is complete and frozen, invoke the separate evaluator:
 
 ```sh
-python3 scripts/replay_trial.py evaluate --report .esa/codex-runs/<run-id>/report.json
+python3 scripts/replay_trial.py evaluate --report .esa/codex-runs/<run-id>/report.json --versions 1 --review-fixes
 ```
 
 The evaluator exports the later upstream fix into `.esa/evaluation`, outside the Agent bundle, and runs the **same unchanged test**. It preserves the frozen diagnosis hash, upstream patch, fixed revision and test logs. Diagnostic assertions compare cited locations and recommendations with the actual upstream correction; they are not a general accuracy score.
@@ -62,3 +62,5 @@ To stop only the host adapter, use `python3 scripts/manage_codex_provider.py sto
 - Universal historical build profiles, attachment replay, archive-wide ground-truth scoring and release lifecycle verification remain future work. Controlled source/log retrieval is available only within the registered replay environment.
 
 The Codex execution mechanism follows [official non-interactive documentation](https://learn.chatgpt.com/docs/non-interactive-mode).
+
+The old selected-fix keyword evaluator has been removed. Evaluation requires a new structured report and delegates to the [ticket-centered pipeline](TICKET_BACKTEST.md). Earlier trial reports and metrics remain historical artifacts.

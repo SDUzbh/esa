@@ -330,3 +330,18 @@ func TestImportFormatsAndErrors(t *testing.T) {
 		t.Fatal(p, err)
 	}
 }
+
+func TestAgentClassificationUpdatesSupportRoute(t *testing.T) {
+	e := testEngine(t)
+	receipt := receive(t, e, "classification-event", fixture(e, "classification-ticket"))
+	_, err := e.ProcessOne(context.Background(), analyzerFunc(func(context.Context, AnalyzeRequest) (Report, error) {
+		return Report{Summary: "Configuration problem", AgentClassification: &Classification{Category: "configuration", RuleIDs: []string{"engineering_agent"}}, Issue: &IssueAssignment{Title: "Configuration problem", Reason: "Reported settings"}}, nil
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	run := e.Store.Snapshot().Runs[receipt.RunID]
+	if run.Classification.Category != "configuration" || run.Route != "customer_support" || run.State != "completed" {
+		t.Fatal(run)
+	}
+}

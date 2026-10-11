@@ -16,7 +16,7 @@ This repository contains ESA code and deployment definitions. Redmine is referen
 - A bounded asynchronous HTTP engineering-provider interface, explicit unconfigured/failed states, evidence validation, and human report review.
 - Tests in `replay_test` establish temporal visibility of case revisions and reconstruct conservative Jira snapshots without future comments or diagnostic field values.
 - A Go Codex CLI adapter accepts an explicitly registered historical evidence packet, validates exact source quotes, records actual usage, and returns engineering reports for human review.
-- A deterministic KAFKA-2880 client replay compiles historical source in an isolated Java 8 container; its later upstream fix is evaluated separately after diagnosis.
+- A ticket-centered backtest freezes structured Agent classification and code locations, follows mainline versions, reviews candidate PRs with a separate Agent and assesses the initial diagnosis. See [the backtest design and commands](docs/TICKET_BACKTEST.md).
 - A CLI replay pipeline resolves historical affected versions, sorts batches, reuses one isolated environment, synchronizes file differences and cleans owned runtime resources.
 - Registered MCP tools support installation, system/debugger execution, frozen source inspection and environment change requests. Source, dependencies and baseline bytecode remain read-only.
 - Per-ticket token warnings appear in provider logs, audit files, batch results and ESA reports without cancelling analysis.
@@ -61,7 +61,7 @@ The Codex adapter disables native host tools and exposes only four registered re
 
 ## Boundaries of this first version
 
-This is a working development foundation with one focused historical replay trial. Automatic customer environment inference, universal historical build profiles, document retrieval, recovery of unavailable historical comment bodies, archive-wide ground-truth scoring, release listening, generalized fixed-version verification and a rules administration page remain to be implemented. Replay profiles explicitly separate environment readiness from reproduction of a customer issue. Importing a current Jira export does not make it a valid historical snapshot.
+This is a working development foundation with one focused historical replay trial. Automatic customer environment inference, universal historical build profiles, document retrieval, recovery of unavailable historical comment bodies, archive-wide accuracy validation, external release listening, universal runtime verification and a rules administration page remain to be implemented. Replay profiles explicitly separate environment readiness from reproduction of a customer issue. Importing a current Jira export does not make it a valid historical snapshot.
 
 State is stored as an atomic JSON snapshot with a single-writer process lock. It preserves immutable events, run inputs, and case revisions; it is intended for this local prototype. The plugin limits access to 2,000 visible ESA issues per request. Move state to a transactional database and implement scalable authorization before importing the full Jira archive. Cross-project issue moves, deletions, bulk-edit hooks, REST-created issues, and retroactive ingestion need a dedicated reconciliation mechanism; use the manual submit action for existing visible issues. Private issues are excluded from shared analysis and case recommendations.
 

@@ -1,5 +1,7 @@
 # Historical replay pipeline
 
+The validation flow is now the [ticket-centered mainline backtest](TICKET_BACKTEST.md). Initial diagnosis and future PR assessment are separate phases. Existing environment management below remains in use.
+
 ESA business logic stays in Go. Python standard-library scripts orchestrate local Git exports, verified artifact downloads and Docker lifecycle; no system packages are installed. Product files in `kafka/` and preserved Jira files in `data/` are never modified. Diagnosis returns recommendations and verification steps, with engineer review required.
 
 ## Commands
@@ -31,7 +33,7 @@ Use `--manifest jobs.json` for a JSON list of jobs. Each job needs `raw`; option
 | Profile | Automated preparation | What it establishes |
 | --- | --- | --- |
 | `source` | Frozen full source plus pinned Java 8 JDK | Environment readiness, without a customer bug reproduction claim |
-| `metadata-disconnect` | Historical client source, dependency versions from historical `build.gradle`, unchanged Java harness, baseline compilation | Registered metadata request replay for Kafka 0.9.0.0 / 0.9.0.1; KAFKA-2880 is the matched issue |
+| `metadata-disconnect` | Historical client source, dependency versions from historical `build.gradle`, neutral Java observation harness, baseline compilation | Registered metadata request observation for Kafka 0.9.0.0 / 0.9.0.1; KAFKA-2880 is the matched issue |
 | `kafka-server` | Apache historical binary, official checksum, full historical source, local ZooKeeper and broker startup, control topic creation | Server readiness; source compilation and reproduction of a customer bug are not claimed |
 
 The server profile defaults to Scala 2.11. These are explicit Java 8 profiles, verified with Kafka 0.9.0.0; they do not infer a customer's OS, JVM, topology or configuration, and do not promise compatibility across every historical version. Add a reviewed profile for other runtime requirements. The network is disabled inside replay containers; operator-controlled downloads happen before input synchronization. Server ports remain inside the container. Product binaries are installed without agent compilation. The metadata profile compiles once because it exercises historical clients and the deterministic harness.
@@ -77,6 +79,6 @@ GOCACHE="$PWD/.tools/go-cache" GOTOOLCHAIN=local .tools/go/bin/go vet ./...
 python3 scripts/verify_replay_runtime.py
 ```
 
-The runtime check uses real containers to verify all four MCP tools, denied source/bytecode writes, allowed helpers, JDK debugger availability, process/state reset, no-op version reuse, normal cleanup, SIGTERM cleanup and stale recovery after SIGKILL. It makes no model calls. Reports retain the limitations and baseline scope for each job. The later upstream fix remains outside the diagnostic environment and is evaluated only after freezing the report.
+The runtime check uses real containers to verify all four MCP tools, denied source/bytecode writes, allowed helpers, JDK debugger availability, process/state reset, no-op version reuse, normal cleanup, SIGTERM cleanup and stale recovery after SIGKILL. It makes no model calls. Reports retain the limitations and baseline scope for each job. Later mainline changes remain outside the diagnostic environment and are evaluated only after every initial report is frozen. Enable `--review-fixes` to run the retrospective Agent; `--track-only` inspects Git history without Docker or model calls.
 
 The CLI integration uses the [official MCP configuration](https://learn.chatgpt.com/docs/extend/mcp?surface=cli) and [non-interactive execution](https://learn.chatgpt.com/docs/non-interactive-mode) contracts. Deployment still registers one immutable packet for live Redmine diagnosis; batch mode creates a separate packet and audit per ticket. It does not automatically register every uploaded issue with the live adapter.

@@ -24,7 +24,7 @@ def build_tools():
     if not go.exists(): go = 'go'
     import os
     env = dict(os.environ, GOCACHE=str(ROOT / '.tools/go-cache'), GOTOOLCHAIN='local')
-    for name in ('esa-replay', 'esa-codex'):
+    for name in ('esa-replay', 'esa-codex', 'esa-backtest'):
         subprocess.run([str(go), 'build', '-trimpath', '-o', str(ROOT / 'bin' / name), './cmd/' + name], cwd=ROOT, env=env, check=True)
 
 
@@ -60,12 +60,12 @@ def source_snapshot(job, repo, cache):
 def runtime_inputs(job, snapshot, env):
     inputs = {}
     if job['profile'] == 'metadata-disconnect':
-        if job['version'] not in ('0.9.0.0', '0.9.0.1'):
+        if not job.get('evaluation') and job['version'] not in ('0.9.0.0', '0.9.0.1'):
             raise RuntimeError('The metadata harness is registered only for 0.9.0.0 and 0.9.0.1')
         deps = dependencies(snapshot / 'source/build.gradle', env.cache)
         inputs.update({'deps/' + name: item['path'] for name, item in deps.items()})
-        inputs['MetadataDisconnectReplay.java'] = ROOT / 'examples/replay/MetadataDisconnectReplay.java'
-        inputs['compile.sh'] = ROOT / 'examples/replay/compile.sh'
+        inputs['MetadataDisconnectObservation.java'] = ROOT / 'examples/replay/MetadataDisconnectObservation.java'
+        inputs['observe.sh'] = ROOT / 'examples/replay/observe.sh'
     if job['profile'] == 'kafka-server':
         product = kafka_binary(job['version'], job.get('scala_version', '2.11'), env.cache)
         inputs.update({'product/' + str(path.relative_to(product)): path for path in product.rglob('*') if path.is_file()})
@@ -79,7 +79,7 @@ def runtime_inputs(job, snapshot, env):
     return inputs
 
 
-def run_job(job, env, repo, output, agent):
+def run_job(job, env, repo, output, agent, known_issues=None):
     p = job['resolved']; key = p['ticket']['source_key']
     safe_key = re.sub(r'[^A-Za-z0-9_-]', '_', key)
     directory = output / (safe_key + '-' + uuid.uuid4().hex[:8]); directory.mkdir(parents=True, exist_ok=False)
@@ -88,12 +88,12 @@ def run_job(job, env, repo, output, agent):
     delta = env.sync(snapshot / 'source', manifest['files'], runtime_inputs(job, snapshot, env))
     command = job.get('command')
     if not command:
-        command = 'set -e; sh /input/install.sh; ' + {'metadata-disconnect':'sh /input/compile.sh', 'kafka-server':'sh /input/start-kafka.sh', 'source':'java -version'}[job['profile']]
+        command = 'set -e; sh /input/install.sh; ' + {'metadata-disconnect':'sh /input/observe.sh', 'kafka-server':'sh /input/start-kafka.sh', 'source':'java -version'}[job['profile']]
     run = env.run(command, job.get('command_timeout', 180))
     log = run.stdout + run.stderr; (directory / 'reproduction.log').write_text(log)
     env.freeze_build()
     result = {'source_key': key, 'version': job['version'], 'source_commit': p['source_commit'],
-              'profile': job['profile'], 'runtime_image': env.jdk_digest, 'container': env.name,
+              'directory': str(directory), 'profile': job['profile'], 'runtime_image': env.jdk_digest, 'container': env.name,
               'environment_delta': delta, 'exit_code': run.returncode,
               'client_compilation_passed': 'CLIENT_MODULE_COMPILATION=PASS' in log,
               'null_pointer_reproduced': 'DISCONNECTED_METADATA_RESULT=java.lang.NullPointerException' in log,
@@ -105,9 +105,9 @@ def run_job(job, env, repo, output, agent):
                         'SUCCESSFUL_METADATA_CONTROL=PASS' in log)
     if run.returncode != 0 and not expected_failure:
         result['error'] = 'Registered environment command failed; inspect reproduction.log'
-    packet = {'cutoff': p['cutoff'], 'source_commit': p['source_commit'], 'expected_ticket': p['ticket'],
+    packet = {'cutoff': p['cutoff'], 'source_commit': p['source_commit'], 'expected_ticket': p['ticket'], 'known_issues': known_issues or [],
               'documents': [{'source': 'replay', 'reference_prefix': 'reproduction.log:', 'first_line': 1, 'lines': log.splitlines()}],
-              'limitations': p['audit']['limitations'] + [result['scope'], 'Runtime is an explicit test profile, not an inferred customer environment.', 'Pretrained model knowledge cannot be excluded.']}
+              'limitations': p['audit']['limitations'] + ([result['error']] if result.get('error') else []) + [result['scope'], 'Runtime is an explicit test profile, not an inferred customer environment.', 'Pretrained model knowledge cannot be excluded.']}
     write_json(directory / 'evidence.json', packet)
     config = env.tool_config(p['source_commit'], directory / 'tools.jsonl')
     write_json(directory / 'tools-config.json', config)
@@ -148,6 +148,13 @@ def main():
     parser.add_argument('--manifest', help='JSON list of operator-defined jobs')
     parser.add_argument('--profile', choices=['source', 'metadata-disconnect', 'kafka-server'], default='source')
     parser.add_argument('--ref'); parser.add_argument('--at'); parser.add_argument('--version')
+    parser.add_argument('--versions', type=int, default=5, help='Follow the next N release observation points on mainline')
+    parser.add_argument('--mainline', default='origin/trunk', help='Read-only main branch ref')
+    parser.add_argument('--until', help='Optional RFC3339 upper bound for later releases')
+    parser.add_argument('--review-fixes', action='store_true', help='Replay candidates and invoke the retrospective Agent after freezing diagnosis')
+    parser.add_argument('--track-only', action='store_true', help='Track issue references without Docker or model calls')
+    parser.add_argument('--issue-history', help='Historical issue revision list from an earlier pipeline run')
+    parser.add_argument('--predictions', help='JSON map of source keys to existing structured historical reports')
     parser.add_argument('--agent', action='store_true', help='Run Codex with only registered replay tools')
     parser.add_argument('--plan', action='store_true', help='Resolve and sort without Docker or model calls')
     parser.add_argument('--repo', default=str(ROOT / 'kafka'))
@@ -157,9 +164,12 @@ def main():
     parser.add_argument('--build-tools', action='store_true', help='Build project-local Go commands first')
     parser.add_argument('--cleanup', action='store_true', help='Clean owned stale sessions left by an untrappable kill')
     args = parser.parse_args()
+    if args.versions < 1: parser.error('--versions must be positive')
+    if args.track_only and (args.agent or args.review_fixes): parser.error('--track-only excludes Agent calls and runtime review')
+    if args.review_fixes and not (args.agent or args.predictions): parser.error('--review-fixes requires --agent or --predictions')
     if args.cleanup:
         print(json.dumps(cleanup_sessions(),indent=2));return 0
-    if args.build_tools or not all((ROOT / 'bin' / name).exists() for name in ('esa-replay', 'esa-codex')): build_tools()
+    if args.build_tools or not all((ROOT / 'bin' / name).exists() for name in ('esa-replay', 'esa-codex', 'esa-backtest')): build_tools()
     jobs = json.loads(Path(args.manifest).read_text()) if args.manifest else [
         {'raw': str(ROOT / 'data/jira/raw' / (x + '.json')) if re.fullmatch(r'KAFKA-\d+', x) else x} for x in args.tickets]
     if not jobs: parser.error('Provide tickets or a job manifest')
@@ -173,31 +183,17 @@ def main():
         try: prepared.append(plan(job, Path(args.repo)))
         except ValueError as error: deferred.append({'raw': job['raw'], 'state': 'needs_clarification', 'reason': str(error)})
     if args.pipeline: prepared.sort(key=lambda x: (version_key(x['version']), x['resolved']['source_commit'], x['resolved']['ticket']['source_key']))
+    keys = [j['resolved']['ticket']['source_key'] for j in prepared]
+    if len(keys) != len(set(keys)): parser.error('Each source key may occur only once in a pipeline')
     output = Path(args.output).resolve(); output.mkdir(parents=True, exist_ok=False)
     summary = {'jobs': [{k: j[k] for k in ('raw','version','profile')} for j in prepared], 'deferred': deferred, 'results': [], 'cleanup': 'not_started'}
     write_json(output / 'pipeline.json', summary)
     if args.plan:
         print(json.dumps(summary, indent=2)); return 0
-    env = None
-    try:
-        if prepared:
-            with Environment(args.cache, args.context) as env:
-                for job in prepared:
-                    try:
-                        summary['results'].append(run_job(job, env, Path(args.repo), output, args.agent))
-                    except (RuntimeError, subprocess.SubprocessError, OSError, ValueError) as error:
-                        summary['results'].append({'source_key': job['resolved']['ticket']['source_key'], 'state':'failed', 'error':str(error)})
-                        print(str(error), file=sys.stderr, flush=True)
-                    finally:
-                        env.reset_job()
-                        write_json(output / 'pipeline.json', summary)
-            summary['cleanup'] = 'completed'
-    finally:
-        if env and not env.started and env.directory and not env.directory.exists(): summary['cleanup']='completed'
-        elif summary['cleanup']=='not_started': summary['cleanup']='interrupted_or_setup_failed'
-        write_json(output / 'pipeline.json', summary)
-    print(json.dumps({'report':str(output/'pipeline.json'),'cleanup':summary['cleanup'],'deferred':len(deferred)}))
-    return 1 if deferred or any('error' in r or 'agent_error' in r for r in summary['results']) else 0
+    from backtest_pipeline import longitudinal
+    status = longitudinal(args, prepared, output, summary, run_job, runtime_inputs)
+    print(json.dumps({'report': str(output / 'pipeline.json'), 'cleanup': summary['cleanup'], 'deferred': len(deferred)}))
+    return status
 
 
 if __name__ == '__main__':

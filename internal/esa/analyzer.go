@@ -12,6 +12,12 @@ import (
 	"time"
 )
 
+type IssueBrief struct {
+	ID         string   `json:"id"`
+	Category   string   `json:"category"`
+	Title      string   `json:"title"`
+	TicketKeys []string `json:"ticket_keys"`
+}
 type AnalyzeRequest struct {
 	RunID          string         `json:"run_id"`
 	Ticket         Ticket         `json:"ticket"`
@@ -139,7 +145,7 @@ func (e *Engine) ProcessOne(ctx context.Context, analyzer Analyzer) (bool, error
 	callCtx, cancel := context.WithTimeout(ctx, time.Duration(e.Config.Budget.TimeoutSeconds)*time.Second)
 	report, callErr := analyzer.Analyze(callCtx, input)
 	cancel()
-	if callErr == nil && (report.Summary == "" || len(report.Evidence) == 0) {
+	if callErr == nil && (report.Summary == "" || (report.AgentClassification == nil && len(report.Evidence) == 0)) {
 		callErr = errors.New("engineering provider did not return a summary and evidence")
 	}
 	if callErr == nil {
@@ -164,6 +170,9 @@ func (e *Engine) ProcessOne(ctx context.Context, analyzer Analyzer) (bool, error
 			return nil
 		}
 		r.Report = report
+		if callErr == nil && report.AgentClassification != nil {
+			r.Classification = *report.AgentClassification
+		}
 		r.UpdatedAt = e.Now()
 		if s.Latest[r.TicketID] != r.ID || s.Tickets[r.TicketID].Closed {
 			r.State = "superseded"
@@ -172,6 +181,14 @@ func (e *Engine) ProcessOne(ctx context.Context, analyzer Analyzer) (bool, error
 			r.Error = callErr.Error()
 		} else {
 			r.State = "awaiting_review"
+			if report.AgentClassification != nil {
+				if !contains(e.Config.EngineeringCategories, r.Classification.Category) && r.Classification.Category != "unknown" {
+					r.Route = "customer_support"
+					r.State = "completed"
+				} else if len(report.Findings) == 0 {
+					r.State = "awaiting_information"
+				}
+			}
 			r.Error = ""
 		}
 		s.Runs[r.ID] = r

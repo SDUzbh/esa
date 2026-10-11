@@ -17,6 +17,7 @@ import (
 	"syscall"
 	"time"
 
+	"esa/internal/backtest"
 	"esa/internal/codex"
 	"esa/internal/esa"
 	"esa/internal/replaytools"
@@ -29,6 +30,7 @@ func main() {
 	}
 }
 func run() error {
+	reviewFile := flag.String("review", "", "Retrospective review packet; runs a separate tool-free Agent")
 	listen := flag.String("listen", "127.0.0.1:8091", "Local provider listen address")
 	evidence := flag.String("evidence", "", "Registered immutable replay evidence packet")
 	runs := flag.String("runs", ".esa/codex-runs", "Private invocation audit directory")
@@ -52,19 +54,25 @@ func run() error {
 		}
 		return (&replaytools.Server{Config: config}).Serve(ctx, os.Stdin, os.Stdout)
 	}
-	b, err := os.ReadFile(*evidence)
+	var b []byte
+	var err error
+	if *reviewFile == "" {
+		b, err = os.ReadFile(*evidence)
+	}
 	if err != nil {
 		return err
 	}
 	var packet codex.Packet
-	if err = json.Unmarshal(b, &packet); err != nil {
-		return err
+	if *reviewFile == "" {
+		if err = json.Unmarshal(b, &packet); err != nil {
+			return err
+		}
 	}
-	if (len(packet.Documents) == 0 && *toolsConfig == "") || packet.Ticket.SourceKey == "" || packet.Cutoff.IsZero() {
+	if *reviewFile == "" && ((len(packet.Documents) == 0 && *toolsConfig == "") || packet.Ticket.SourceKey == "" || packet.Cutoff.IsZero()) {
 		return fmt.Errorf("invalid evidence packet")
 	}
 	token := ""
-	if !*once {
+	if !*once && *reviewFile == "" {
 		b, err = os.ReadFile(*tokenFile)
 		if err != nil {
 			return err
@@ -127,6 +135,35 @@ func run() error {
 		}
 	}
 	provider := &codex.Provider{CLI: path, Model: *model, Effort: *effort, RunsDir: dir, Packet: packet, ToolsConfig: *toolsConfig, ToolCommand: toolCommand}
+	if *reviewFile != "" {
+		if *toolsConfig != "" {
+			return fmt.Errorf("review mode must not expose diagnostic tools")
+		}
+		b, err = os.ReadFile(*reviewFile)
+		if err != nil {
+			return err
+		}
+		var request backtest.ReviewRequest
+		if err = json.Unmarshal(b, &request); err != nil {
+			return err
+		}
+		b, err = os.ReadFile(*rules)
+		if err != nil {
+			return err
+		}
+		var config esa.Config
+		if err = json.Unmarshal(b, &config); err != nil {
+			return err
+		}
+		if *runID == "" {
+			*runID = fmt.Sprintf("run_review_%d", time.Now().UnixNano())
+		}
+		r, err := provider.Review(ctx, request, config.Budget, *runID)
+		if err != nil {
+			return err
+		}
+		return json.NewEncoder(os.Stdout).Encode(r)
+	}
 	if *managed && *toolsConfig == "" {
 		packetPath, err := filepath.Abs(*evidence)
 		if err != nil {

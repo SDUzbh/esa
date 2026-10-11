@@ -73,60 +73,22 @@ def prepare():
     write(BUNDLE / 'evidence.json', packet)
     print(json.dumps({'stage': 'historical_replay', **result, 'evidence': str(BUNDLE / 'evidence.json')}, indent=2))
 
-def evaluate(report_path):
-    # Evaluation is deliberately a separate invocation after the diagnosis is frozen.
-    report_path = Path(report_path).resolve()
-    if not report_path.exists(): raise RuntimeError('Freeze a completed Agent report before evaluation')
-    diagnosis_bytes = report_path.read_bytes()
-    diagnosis = json.loads(diagnosis_bytes)
-    FUTURE.mkdir(parents=True, exist_ok=True)
-    (FUTURE / 'frozen-report.json').write_bytes(diagnosis_bytes)
-    # Choose the earliest merged source revision that mentions this Jira key.
-    entries = command(['git', '-C', str(ROOT / 'kafka'), 'log', '--all', '--format=%ct %H', '--grep=KAFKA-2880']).splitlines()
-    commit = sorted(entries)[0].split()[1]
-    stamp = command(['git', '-C', str(ROOT / 'kafka'), 'show', '-s', '--format=%cI', commit])
-    patch = command(['git', '-C', str(ROOT / 'kafka'), 'show', '--format=fuller', commit, '--', 'clients/src/main/java/org/apache/kafka/clients/consumer/internals/Fetcher.java', 'clients/src/main/java/org/apache/kafka/clients/consumer/internals/ConsumerNetworkClient.java'])
-    (FUTURE / 'upstream-fix.patch').write_text(patch + '\n')
-    # Export this revision into a separate evaluation directory, never the Agent bundle.
-    import io, tarfile
-    archive = subprocess.run(['git', '-C', str(ROOT / 'kafka'), 'archive', commit, 'clients/src/main/java', 'clients/src/test/java/org/apache/kafka/clients/MockClient.java'], check=True, capture_output=True).stdout
-    with tarfile.open(fileobj=io.BytesIO(archive)) as tar:
-        for item in tar:
-            if item.isdir(): continue
-            if not item.isfile() or item.name.startswith('/') or '..' in Path(item.name).parts: raise RuntimeError('Unsafe archive')
-            target = FUTURE / 'source' / item.name; target.parent.mkdir(parents=True, exist_ok=True); target.write_bytes(tar.extractfile(item).read())
-    # Build each revision with its own historical dependency versions. The source
-    # and test are unchanged; a later dependency upgrade must not masquerade as a
-    # missing-symbol regression or be exposed to the historical Agent input.
-    gradle=command(['git','-C',str(ROOT/'kafka'),'show',commit+':build.gradle'])
-    historical_build = FUTURE / 'build.gradle'
-    historical_build.write_text(gradle)
-    resolved = dependencies(historical_build, ROOT / '.esa/replay-cache')
-    deps = FUTURE / 'deps'; deps.mkdir(exist_ok=True)
-    for path in deps.glob('*.jar'):
-        if path.name not in resolved: path.unlink()  # Derived evaluation files only.
-    for name, item in resolved.items(): shutil.copyfile(item['path'], deps / name)
-    write(FUTURE / 'dependency-lock.json', {name: {k: v for k, v in item.items() if k != 'path'} for name, item in resolved.items()})
-    result = compile_revision(FUTURE)
-    if not (result['client_compilation_passed'] and result['successful_control_passed'] and result['timeout_regression_passed'] and result['exit_code'] == 0):
-        raise RuntimeError('Upstream regression check failed; inspect evaluation reproduction.log')
-    prose = '\n'.join([diagnosis['summary']] + diagnosis['root_cause_candidates']).lower()
-    recommendations = '\n'.join(diagnosis['recommendations']).lower()
-    checks = {
-        'root_cause_describes_disconnected_response': 'disconnect' in prose and ('null' in prose or 'responsebody' in prose),
-        'locates_consumer_network_completion': any('ConsumerNetworkClient.java:' in x['reference'] for x in diagnosis['evidence']),
-        'locates_fetcher_metadata_path': any('Fetcher.java:' in x['reference'] for x in diagnosis['evidence']),
-        'recommends_disconnect_failure_and_retry': 'disconnect' in recommendations and ('fail' in recommendations or 'exception' in recommendations) and 'retry' in recommendations,
-        'mentions_timeout_verification': 'timeout' in '\n'.join(diagnosis['verification_steps']).lower(),
-        'explicitly_recommends_timeout_exception': 'timeoutexception' in recommendations or ('throw' in recommendations and 'timeout' in recommendations),
-        'historical_failure_and_fixed_pass': result['timeout_regression_passed'],
-    }
-    evaluation = {'source_key': 'KAFKA-2880', 'report_sha256': hashlib.sha256(diagnosis_bytes).hexdigest(), 'ground_truth_commit': commit, 'ground_truth_committed_at': stamp, 'fixed_replay': result, 'diagnostic_checks': checks, 'review': 'The diagnosis identifies the disconnect-to-successful-future defect and matches the upstream completion-handler correction. It mentions bounded timeout verification but does not explicitly recommend the upstream change to throw TimeoutException instead of returning empty metadata.', 'limitations': ['One selected, stack-rich public bug; not an accuracy estimate for the Jira archive.', 'Source windows were selected by the operator from the reported stack and request lifecycle; autonomous source search was not evaluated.', 'Keyword checks are transparent diagnostic assertions, not a semantic accuracy score.', 'Historical input isolation cannot exclude pretrained model knowledge.']}
-    write(ROOT / 'reports/KAFKA-2880-evaluation.json', evaluation)
-    print(json.dumps(evaluation, indent=2))
+def evaluate(report_path, versions=5, review_fixes=False):
+    # The ticket-centered pipeline replaces the selected-fix keyword evaluator.
+    path = Path(report_path).resolve()
+    report = json.loads(path.read_text())
+    if not report.get('agent_classification') or not report.get('issue'):
+        raise RuntimeError('Legacy prose reports cannot be scored as structured locations; generate a new engineering report first.')
+    output = ROOT / 'reports' / ('ticket-backtest-' + __import__('uuid').uuid4().hex)
+    imports = ROOT / '.esa' / ('predictions-' + __import__('uuid').uuid4().hex + '.json')
+    imports.parent.mkdir(exist_ok=True); write(imports, {'KAFKA-2880': str(path)})
+    args = ['python3', str(ROOT / 'scripts/replay_pipeline.py'), '--pipeline', '--profile', 'metadata-disconnect',
+            '--predictions', str(imports), '--versions', str(versions), '--output', str(output), 'KAFKA-2880']
+    if review_fixes: args.append('--review-fixes')
+    subprocess.run(args, check=True)
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser(); parser.add_argument('stage', choices=['prepare', 'evaluate']); parser.add_argument('--report')
+    parser = argparse.ArgumentParser(); parser.add_argument('stage', choices=['prepare', 'evaluate']); parser.add_argument('--report'); parser.add_argument('--versions', type=int, default=5); parser.add_argument('--review-fixes', action='store_true')
     args = parser.parse_args()
     if args.stage == 'prepare': prepare()
-    else: evaluate(args.report)
+    else: evaluate(args.report, args.versions, args.review_fixes)

@@ -1,0 +1,10 @@
+<% html_title 'Import preview', 'ESA' %>
+<h2>ESA · Import preview</h2>
+<p><%= @upload.filename %> → <%= @upload.project.name %>. <%= @preview['tickets'].length %> valid records.</p>
+<% @preview['warnings'].each do |warning| %><p class="warning"><%= warning %></p><% end %>
+<% @preview['problems'].each do |problem| %><p class="error">Record <%= problem['record'] %>: <%= problem['message'] %></p><% end %>
+<table class="list"><thead><tr><th>Source key</th><th>Subject</th><th>Tracker</th><th>Status</th><th>Components</th><th>Affected versions</th><th>Action</th></tr></thead><tbody>
+<% @preview['tickets'].each do |ticket| %><tr><td><%= ticket['source_key'] %></td><td><%= ticket['subject'] %></td><td><%= ticket['tracker'] %></td><td><%= ticket['status'] %></td><td><%= Array(ticket['components']).join('; ') %></td><td><%= Array(ticket['versions']).join('; ') %></td><td><%= @existing.key?(ticket['source_key']) ? 'Skip existing source key' : 'Create and analyze' %></td></tr><% end %>
+</tbody></table>
+<%= form_tag esa_import_path(@upload), method: :post do %><%= submit_tag 'Import valid records and analyze', disabled: @preview['tickets'].empty? %><% end %>
+<%= link_to 'Choose another file', esa_upload_path %>

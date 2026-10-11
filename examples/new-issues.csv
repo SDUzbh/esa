@@ -1,0 +1,3 @@
+Issue key,Summary,Description,Issue Type,Status,Component/s,Affects Version/s,Environment,Created,Updated
+DEMO-2,Consumer crashes with NullPointerException during assignment,The consumer crashes with NullPointerException while handling an empty partition assignment.,Bug,New,consumer,3.7.0,JDK 17,2026-10-11T00:00:00Z,2026-10-11T00:00:00Z
+DEMO-3,How to configure retention,How do I configure retention for a new topic?,Support,New,broker,3.7.0,JDK 17,2026-10-11T00:00:00Z,2026-10-11T00:00:00Z

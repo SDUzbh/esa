@@ -1,0 +1,73 @@
+name: esa-redmine
+
+services:
+  db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: redmine
+      POSTGRES_USER: redmine
+      POSTGRES_PASSWORD: ${REDMINE_DB_PASSWORD:?Set REDMINE_DB_PASSWORD in .env}
+      TZ: Asia/Shanghai
+    volumes:
+      - database:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U redmine -d redmine"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  redmine:
+    image: esa-redmine-local:7.0.2
+    build:
+      context: ../..
+      dockerfile: deploy/redmine/Dockerfile
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8080:3000"
+    environment:
+      REDMINE_DB_POSTGRES: db
+      REDMINE_DB_DATABASE: redmine
+      REDMINE_DB_USERNAME: redmine
+      REDMINE_DB_PASSWORD: ${REDMINE_DB_PASSWORD:?Set REDMINE_DB_PASSWORD in .env}
+      SECRET_KEY_BASE: ${SECRET_KEY_BASE:?Set SECRET_KEY_BASE in .env}
+      REDMINE_LANG: en
+      REDMINE_PLUGINS_MIGRATE: '1'
+      ESA_URL: http://esa:8090
+      ESA_API_TOKEN: ${ESA_API_TOKEN:?Set ESA_API_TOKEN in .env}
+      TZ: Asia/Shanghai
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - attachments:/usr/src/redmine/files
+    healthcheck:
+      test: ["CMD", "ruby", "-rnet/http", "-e", "exit(Net::HTTP.get_response(URI('http://127.0.0.1:3000/login')).code == '200' ? 0 : 1)"]
+      interval: 15s
+      timeout: 5s
+      retries: 20
+      start_period: 180s
+
+  esa:
+    image: esa-local:0.1.0
+    build:
+      context: ../..
+      dockerfile: deploy/esa/Dockerfile
+    restart: unless-stopped
+    environment:
+      ESA_API_TOKEN: ${ESA_API_TOKEN:?Set ESA_API_TOKEN in .env}
+      ESA_REDMINE_URL: http://redmine:3000
+      ESA_ANALYZER_URL: ${ESA_ANALYZER_URL:-}
+      ESA_ANALYZER_TOKEN: ${ESA_API_TOKEN:?Set ESA_API_TOKEN in .env}
+    volumes:
+      - esa_state:/var/lib/esa
+    healthcheck:
+      test: ["CMD", "/esa", "-healthcheck"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  database:
+  attachments:
+  esa_state:

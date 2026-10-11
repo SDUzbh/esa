@@ -1,0 +1,15 @@
+**
+!bin/
+!bin/esa
+!config/
+!config/rules.json
+!deploy/
+!deploy/esa/
+!deploy/esa/Dockerfile
+!deploy/esa/seed/
+!deploy/esa/seed/**
+!deploy/redmine/
+!deploy/redmine/Dockerfile
+!plugins/
+!plugins/redmine_esa/
+!plugins/redmine_esa/**

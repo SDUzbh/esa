@@ -1,0 +1,20 @@
+{
+  "id": "DEMO-1",
+  "project_id": "demo",
+  "subject": "Consumer crashes with NullPointerException during assignment",
+  "description": "The consumer crashes with NullPointerException while handling an empty partition assignment.",
+  "tracker": "Bug",
+  "status": "Resolved",
+  "closed": true,
+  "components": ["consumer"],
+  "versions": ["3.7.0"],
+  "environment": {"details": "JDK 17"},
+  "created_at": "2026-10-01T00:00:00Z",
+  "updated_at": "2026-10-10T00:00:00Z",
+  "resolution": {
+    "reason": "Fixed",
+    "cause": "An empty assignment was dereferenced without checking its presence.",
+    "solution": "Use the validated release containing the empty-assignment guard.",
+    "validation": "A reproduction test fails before the fix and passes after it."
+  }
+}

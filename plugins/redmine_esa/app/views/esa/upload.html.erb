@@ -1,0 +1,11 @@
+<% html_title 'Upload tickets', 'ESA' %>
+<h2>ESA · Upload tickets</h2>
+<p>Upload Jira JSON, canonical ESA JSON, or Jira CSV. Preview the records before creating Redmine issues. Repeated source keys are skipped.</p>
+<% if @submit_projects.empty? %><p class="nodata">No project grants permission to submit ESA tickets.</p><% else %>
+<%= form_tag esa_preview_path, multipart: true do %>
+<div class="box tabular"><p><%= label_tag :project_id, 'Target project' %><%= select_tag :project_id, options_for_select(@submit_projects.map { |p| [p.name, p.id] }) %></p>
+<p><%= label_tag :file, 'Ticket file' %><%= file_field_tag :file, accept: '.json,.csv', required: true %></p></div>
+<%= submit_tag 'Preview import' %>
+<% end %><% end %>
+<p>Supported CSV headers include Issue key, Summary, Description, Issue Type, Status, Component/s, Affects Version/s, Environment, Created, Updated, Comment, Root Cause, Solution, and Validation. Separate multiple components or versions with semicolons. Use timestamps with a timezone; timezone-free values are interpreted as UTC.</p>
+<%= link_to 'Back to ESA', esa_path %>

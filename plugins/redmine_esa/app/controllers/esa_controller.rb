@@ -1,0 +1,154 @@
+class EsaController < ApplicationController
+  before_action :require_login
+  before_action :load_scope
+  before_action :load_issue, only: [:show, :analyze, :metadata, :review_case, :review_run]
+  rescue_from Esa::Error, with: :service_error
+
+  def index
+    @query = params.permit(:project_id, :tracker, :status, :assignee, :source, :esa_state, :category, :route, :q, :sort, :direction, :page, :limit, :updated_from, :updated_to).to_h
+    @result = @projects.empty? ? { 'tickets' => [], 'total_count' => 0, 'page' => 1, 'limit' => 25 } : @client.request(:get, '/v1/tickets', nil, @query)
+  end
+
+  def show
+    @result = @client.request(:get, "/v1/tickets/redmine:#{@issue.id}")
+    @row = @result['ticket']
+    @metadata = Esa::Payload.ticket(@issue)
+  end
+
+  def upload
+    @submit_projects = @projects.select { |p| User.current.allowed_to?(:submit_esa, p) }
+  end
+
+  def preview
+    project = permitted_project(:submit_esa)
+    file = params[:file]
+    raise Esa::Error, 'Select a UTF-8 JSON or CSV file of at most 10 MB.' unless file && file.size <= 10.megabytes && %w[.json .csv].include?(File.extname(file.original_filename).downcase)
+    original = file.read.force_encoding(Encoding::UTF_8)
+    raise Esa::Error, 'The upload must contain valid UTF-8 text.' unless original.valid_encoding?
+    preview = @client.request(:post, '/v1/import/preview', { filename: file.original_filename, project_id: project.id.to_s, content: original })
+    @upload = EsaUpload.create!(user: User.current, project: project, filename: File.basename(file.original_filename), original_data: original, preview_data: preview.to_json)
+    @preview = preview
+    @existing = EsaTicketSource.where(project_id: project.id).pluck(:source_key, :issue_id).to_h
+  end
+
+  def import
+    upload = EsaUpload.find_by!(id: params[:id], user_id: User.current.id)
+    project = @projects.find { |p| p.id == upload.project_id }
+    return deny_access unless project && User.current.allowed_to?(:submit_esa, project) && User.current.allowed_to?(:add_issues, project)
+    count = 0
+    skipped = 0
+    EsaUpload.transaction do
+      upload.lock!
+      raise Esa::Error, 'This upload has already been imported.' if upload.imported_at
+      JSON.parse(upload.preview_data).fetch('tickets').each do |ticket|
+        key = ticket.fetch('source_key')
+        if EsaTicketSource.exists?(project_id: project.id, source_key: key)
+          skipped += 1
+          next
+        end
+        tracker = project.trackers.find_by(name: ticket['tracker']) || project.trackers.find_by(name: 'Bug') || project.trackers.first
+        raise Esa::Error, 'Enable an issue tracker for this project before importing.' unless tracker
+        status = IssueStatus.find_by(name: ticket['status'])
+        status = IssueStatus.where(is_closed: true).first if ticket['closed'] && !status&.is_closed?
+        status ||= tracker.default_status
+        raise Esa::Error, 'Configure a default issue status before importing.' unless status
+        issue = Issue.new(project: project, tracker: tracker, author: User.current, subject: ticket.fetch('subject'), description: ticket['description'].to_s, status: status)
+        issue.save!
+        EsaTicketSource.create!(issue: issue, project_id: project.id, source_key: key, esa_upload: upload, snapshot: ticket.to_json)
+        EsaEvent.enqueue(issue)
+        count += 1
+      end
+      upload.update!(imported_at: Time.current)
+    end
+    flash[:notice] = "Imported #{count} tickets; skipped #{skipped} existing source keys. Analysis will start through the ESA outbox."
+    redirect_to esa_path(project_id: project.id)
+  rescue ActiveRecord::RecordInvalid, ActiveRecord::RecordNotUnique => e
+    raise Esa::Error, "Import was rolled back: #{e.message}"
+  end
+
+  def analyze
+    return unless require_permission(:submit_esa)
+    # Push the current snapshot first so manual analysis never uses stale input.
+    ticket = Esa::Payload.ticket(@issue)
+    @client.request(:post, '/v1/events', { id: "manual_#{SecureRandom.uuid}", origin: 'redmine', occurred_at: Time.current.iso8601(6), ticket: ticket })
+    @client.request(:post, "/v1/tickets/redmine:#{@issue.id}/analyze", { force: params[:force] == '1' }) unless @issue.closed?
+    flash[:notice] = 'The ticket snapshot was submitted to ESA.'
+    redirect_to esa_ticket_path(@issue)
+  end
+
+  def metadata
+    return unless require_permission(:submit_esa)
+    data = Esa::Payload.ticket(@issue)
+    data['components'] = params[:components].to_s.split(';').map(&:strip).reject(&:blank?)
+    data['versions'] = params[:versions].to_s.split(';').map(&:strip).reject(&:blank?)
+    environment = JSON.parse(params[:environment].presence || '{}')
+    raise Esa::Error, 'Environment must be a JSON object containing string values.' unless environment.is_a?(Hash) && environment.values.all? { |v| v.is_a?(String) }
+    data['environment'] = environment
+    category = params[:category_override].to_s
+    raise Esa::Error, 'Unsupported category.' unless ['', 'unknown', 'code_defect', 'compatibility', 'performance', 'configuration', 'usage_question', 'feature_request'].include?(category)
+    data['category_override'] = category
+    data['resolution'] = { 'reason' => params[:resolution_reason].to_s, 'cause' => params[:cause].to_s, 'solution' => params[:solution].to_s, 'validation' => params[:validation].to_s }
+    EsaTicketSource.transaction do
+      source = EsaTicketSource.find_or_initialize_by(issue_id: @issue.id)
+      source.project_id = @issue.project_id
+      source.source_key ||= "REDMINE-#{@issue.id}"
+      source.snapshot = data.to_json
+      source.save!
+      EsaEvent.enqueue(@issue)
+    end
+    flash[:notice] = 'ESA metadata saved. Original upload data remains available in the import record.'
+    redirect_to esa_ticket_path(@issue)
+  rescue JSON::ParserError
+    raise Esa::Error, 'Environment must be valid JSON.'
+  end
+
+  def review_case
+    return unless require_permission(:review_esa)
+    row = @client.request(:get, "/v1/tickets/redmine:#{@issue.id}").fetch('ticket')
+    record = row.fetch('case') { raise Esa::Error, 'No collected case is available.' }
+    @client.request(:post, "/v1/cases/#{record.fetch('id')}/review", { action: params[:review_action], reviewer: User.current.login, note: params[:note].to_s })
+    flash[:notice] = 'Case review recorded. Applicable recommendations were refreshed without model calls.'
+    redirect_to esa_ticket_path(@issue)
+  end
+
+  def review_run
+    return unless require_permission(:review_esa)
+    row = @client.request(:get, "/v1/tickets/redmine:#{@issue.id}").fetch('ticket')
+    run = row.fetch('latest_run') { raise Esa::Error, 'No analysis run is available.' }
+    @client.request(:post, "/v1/runs/#{run.fetch('id')}/review", { action: params[:review_action], reviewer: User.current.login, note: params[:note].to_s })
+    flash[:notice] = 'Analysis review recorded.'
+    redirect_to esa_ticket_path(@issue)
+  end
+
+  private
+
+  def load_scope
+    @projects = Project.visible(User.current).to_a.select { |p| p.module_enabled?(:esa) && User.current.allowed_to?(:view_esa, p) }
+    # Issue visibility can be narrower than project visibility.
+    visible = Issue.visible(User.current).where(project_id: @projects.map(&:id), is_private: false).pluck(:id).map { |id| "redmine:#{id}" }
+    raise Esa::Error, 'This installation supports at most 2,000 visible ESA issues per request. Narrow the deployment or add database-backed authorization before scaling.' if visible.length > 2000
+    @client = Esa::Client.new(@projects, visible.empty? ? ['none'] : visible)
+  end
+
+  def load_issue
+    @issue = Issue.visible(User.current).find(params[:id])
+    deny_access unless @projects.any? { |p| p.id == @issue.project_id } && !@issue.is_private?
+  end
+
+  def permitted_project(permission)
+    project = @projects.find { |p| p.id.to_s == params[:project_id].to_s }
+    raise Esa::Error, 'This action is not authorized for the selected project.' unless project && User.current.allowed_to?(permission, project)
+    project
+  end
+
+  def require_permission(permission)
+    return true if User.current.allowed_to?(permission, @issue.project)
+    deny_access
+    false
+  end
+
+  def service_error(error)
+    @esa_error = error.message
+    render :error, status: :unprocessable_entity
+  end
+end

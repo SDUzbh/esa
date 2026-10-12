@@ -1,6 +1,6 @@
 # ESA
 
-ESA connects customer support and engineers through a Redmine plugin and an independent Go service. Development language is English. Engineering diagnosis is read-only: deliver root-cause candidates, evidence, repair recommendations, and verification steps.
+ESA connects customer support and engineers through a Redmine plugin and an independent Go service. Engineering diagnosis is read-only: deliver root-cause candidates, evidence, repair recommendations, and verification steps.
 
 This repository contains ESA code and deployment definitions. Redmine is referenced through the official `redmine:7.0.2-bookworm` Docker image; only the ESA plugin is maintained here. See [external dependencies and fresh-checkout setup](docs/DEPENDENCIES.md). Preserved Jira data, Kafka source, credentials, local tools, compiled artifacts and runtime reports are excluded from Git.
 

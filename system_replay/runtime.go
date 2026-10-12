@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -119,8 +120,8 @@ func (r *Runtime) close() error {
 	}
 	return e
 }
-func observeRuntime(ctx context.Context, r *Runtime, m Manifest, p Plan, commit, root string) (RuntimeRecord, error) {
-	out := RuntimeRecord{Commit: commit}
+func observeRuntime(ctx context.Context, r *Runtime, m Manifest, p Plan, commit, root string) (out RuntimeRecord, err error) {
+	out = RuntimeRecord{Commit: commit}
 	if p.Job.Scenario == nil {
 		return out, fmt.Errorf("no registered replay scenario")
 	}
@@ -136,7 +137,13 @@ func observeRuntime(ctx context.Context, r *Runtime, m Manifest, p Plan, commit,
 	defer func() {
 		reset, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
-		_, _ = r.call(reset, map[string]string{"action": "reset"})
+		response, e := r.call(reset, map[string]string{"action": "reset"})
+		if e == nil && response["reset"] != true {
+			e = fmt.Errorf("runtime reset was not acknowledged")
+		}
+		if e != nil {
+			err = errors.Join(err, fmt.Errorf("runtime reset: %w", e))
+		}
 	}()
 	out.Setup, e = r.call(call, map[string]any{"action": "prepare", "commit": commit, "source_dir": source, "files": files, "profile": scenario.Profile})
 	if e != nil {

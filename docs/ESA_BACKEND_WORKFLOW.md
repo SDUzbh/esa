@@ -68,7 +68,11 @@ Evidence completeness checks establish a reviewable structure, not factual corre
 
 `replay_test` uses the same `Engine.Decide` function as live processing. `CasesAt` selects the latest case revision known at time T, including its approval or withdrawal time. Tests demonstrate that future approvals cannot leak into earlier recommendations.
 
-The focused [Codex replay trial](CODEX_REPLAY_TRIAL.md) now reconstructs a conservative Jira snapshot, pins and compiles historical client source, supplies frozen source/log evidence, and evaluates a later upstream fix after the diagnosis is frozen. It excludes edited comments whose earlier body is unavailable. The [replay pipeline](REPLAY_PIPELINE.md) adds version resolution, controlled code/log retrieval, isolated environment reuse and cleanup. Universal build profiles, recovery of unavailable comment revisions and archive-wide scoring remain future work. Current live imports must not be passed directly to replay as historical truth.
+The independent [`system_replay`](../system_replay/README.md) module tests the system externally. It submits events and polls public APIs; it neither imports `Engine.Decide` nor reproduces ESA's classification, issue assignment or case retrieval. It freezes the first observed diagnosis for each job before examining future mainline Git evidence. Subsequent lifecycle events remain audit/test evidence and cannot replace that initial prediction.
+
+Registered product scenarios run at the historical baseline, candidate parent and candidate repaired revision. A repair requires unchanged assertions, reproduced baseline/parent failure, passing controls and healthy repaired behavior. This runtime gate and optional external semantic evaluation are described in [system replay architecture](TICKET_BACKTEST.md); commands, ordering and cleanup are in [pipeline operations](REPLAY_PIPELINE.md).
+
+The focused [Codex trial](CODEX_REPLAY_TRIAL.md) remains an application-provider configuration example. Current external test manifests do not invoke Codex by default. Universal build profiles, recovery of unavailable comment revisions and archive-wide scoring remain future work. Current live imports must not be passed directly to replay as historical truth.
 
 ## Operations and limits
 

@@ -14,10 +14,10 @@ This repository contains ESA code and deployment definitions. Redmine is referen
 - Collection of all closed tickets as case drafts; duplicates and rejected resolutions have separate states. Engineer approval requires cause, solution, validation, component, version, and category.
 - Automatic applicable-case recommendations with zero model calls. Reopening, changing, rejecting, or making a source ticket private withdraws its trusted evidence.
 - A bounded asynchronous HTTP engineering-provider interface, explicit unconfigured/failed states, evidence validation, and human report review.
-- Tests in `replay_test` establish temporal visibility of case revisions and reconstruct conservative Jira snapshots without future comments or diagnostic field values.
+- Application tests in `replay_test` check temporal case visibility and conservative Jira snapshots. They are separate from the standalone external system tester.
 - A Go Codex CLI adapter accepts an explicitly registered historical evidence packet, validates exact source quotes, records actual usage, and returns engineering reports for human review.
-- A standalone external system replay tester submits historical events through public APIs, observes actual system output, follows mainline versions and requires unchanged failure/pass scenarios to verify repairs. See [system replay](docs/TICKET_BACKTEST.md).
-- A CLI replay pipeline resolves historical affected versions, sorts batches, reuses one isolated environment, synchronizes file differences and cleans owned runtime resources.
+- A standalone Go module, `system_replay`, submits historical events through public APIs and freezes the initial observed diagnosis before reading future Git evidence. It imports no ESA application packages.
+- Its pipeline orders tickets by version when compatible with historical event order, reuses one isolated product runtime, transfers source/dependency differences, and verifies candidate repairs using the same baseline/parent/fix scenario. Git reads are shared after predictions freeze; owned resources are cleaned on exit.
 - Registered MCP tools support installation, system/debugger execution, frozen source inspection and environment change requests. Source, dependencies and baseline bytecode remain read-only.
 - Per-ticket token warnings appear in provider logs, audit files, batch results and ESA reports without cancelling analysis.
 
@@ -52,6 +52,28 @@ GOCACHE="$PWD/.tools/go-cache" GOTOOLCHAIN=local .tools/go/bin/go vet ./...
 ```
 
 Use `examples/resolved-case.json` to import a resolved synthetic issue. Open its ESA detail and approve the case after reviewing its evidence. Upload `examples/new-issues.csv`: the matching engineering issue receives the trusted recommendation, while the usage question follows customer support. Reopen the source issue to withdraw the recommendation.
+
+## External system replay
+
+Build the opaque application artifact and the tester separately. Run from the repository root; every output directory must be new:
+
+```sh
+GOCACHE="$PWD/.tools/go-cache" GOTOOLCHAIN=local .tools/go/bin/go build -o bin/esa-host ./cmd/esa
+sh scripts/build_system_replay.sh
+python3 scripts/replay_pipeline.py --pipeline --manifest system_replay/examples/esa-api-lifecycle.json --output reports/new-lifecycle-run
+python3 scripts/replay_pipeline.py --pipeline --manifest system_replay/examples/esa-api-kafka.json --output reports/new-kafka-run
+```
+
+The lifecycle example exercises the actual ESA public API: case collection/approval/reuse, duplicate and stale events, reopening, support routing and project permissions. The Kafka example additionally runs historical client code before and after the upstream repair. Both start a fresh backend on port 18090 with a separate state file and disable Redmine synchronization. The lifecycle example needs no Kafka checkout or Jira export; the Kafka example needs those external inputs and Docker.
+
+The defaults make no model calls. Kafka's expected backend state is `awaiting_configuration`; a successful runtime repair test does not establish engineering Agent accuracy. To test a provider, configure it in the system under test and update the external assertions. The tester never invokes that provider directly.
+
+See [architecture and evaluation](docs/TICKET_BACKTEST.md), [CLI operations](docs/REPLAY_PIPELINE.md), and [the standalone manifest/runtime contract](system_replay/README.md). Root application tests do not include the nested module:
+
+```sh
+GOCACHE="$PWD/.tools/go-cache" GOTOOLCHAIN=local .tools/go/bin/go -C system_replay test -race ./...
+GOCACHE="$PWD/.tools/go-cache" GOTOOLCHAIN=local .tools/go/bin/go -C system_replay vet ./...
+```
 
 ## Engineering provider
 

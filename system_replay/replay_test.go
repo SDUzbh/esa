@@ -177,6 +177,8 @@ func TestExternalEvaluatorCannotOverrideReplayGateAndMustCiteEvidence(t *testing
 	defer server.Close()
 	m := Manifest{Repo: g.Repo, Evaluator: &Evaluator{URL: server.URL, Request: Request{Method: "POST", Path: "/evaluate", Body: "{{evaluation_packet}}"}}}
 	result := Result{Plan: Plan{Commit: base, Ticket: map[string]any{"source_key": "BUG-1"}}, Events: []EventResult{{Observation: Observation{Findings: []Finding{{Commit: base, File: "old.java", StartLine: 2, EndLine: 2, Problem: "Fixture cause", Solution: "Fixture correction"}}}}}}
+	// Later lifecycle observations must not replace the original diagnosis.
+	result.Events = append(result.Events, EventResult{Observation: Observation{Findings: []Finding{{Commit: fix, File: "new.java", StartLine: 3, EndLine: 3, Problem: "Later result", Solution: "Later suggestion"}}}})
 	repair := Repair{Candidate: Candidate{Commit: fix, Patch: patch}, State: "not_fixed"}
 	if response, e := evaluateRepair(context.Background(), m, result, repair); e != nil || response != nil || calls != 0 {
 		t.Fatal("unverified behavior sent for accuracy evaluation", response, e, calls)

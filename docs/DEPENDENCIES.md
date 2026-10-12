@@ -8,7 +8,7 @@ This repository contains ESA application code, its Redmine plugin, replay orches
 | PostgreSQL | Official `postgres:17-alpine` Docker image | Redmine database |
 | Eclipse Temurin | Official `eclipse-temurin:8-jdk` Docker image | Replay JVM; the runner records and uses its repository digest |
 | Apache Kafka | `https://github.com/apache/kafka.git` | External historical source checkout for replay |
-| Historical Kafka binaries | Apache archive release URLs selected by the runner | Optional server profile; validated against official checksums |
+| Historical Kafka binaries | Apache archive URLs used by legacy application runtime utilities | Optional application-side setup; not used by the standalone client replay |
 | Historical client dependencies | Maven Central coordinates from historical Kafka `build.gradle` | Client replay compilation; downloaded with checksum validation |
 | Go | Go 1.27+ | ESA backend and local commands; standard library only |
 | Python | Python 3.9+ | Replay/download/verification scripts; standard library only |
@@ -32,4 +32,4 @@ The `kafka/` directory is ignored by Git. Jira exports in `data/`, runtime evide
 4. Build and start Compose services using the root README. Outside this Mac, replace `colima-redmine` with the appropriate Docker context and set `ESA_GO_ARCH` as needed.
 5. Configure Redmine users, project modules and ESA roles. Local administrator bootstrap scripts read the password from an environment variable; no credentials are shipped.
 
-Replay additionally requires the external Kafka checkout and preserved Jira exports. They are separate inputs, not repository contents. Live Codex replay also requires a registered evidence bundle and local CLI authentication. Third-party images and archives retain their upstream licensing and notices.
+The standalone tester is built separately with `sh scripts/build_system_replay.sh`; its module has no ESA imports or third-party Go/Python packages. The lifecycle manifest requires a separately built host ESA binary but no Jira archive or Kafka checkout. The Kafka manifest additionally requires the external source checkout, preserved Jira export and Docker runtime. These are separate inputs, not repository contents. Live Codex replay also requires a registered evidence bundle and local CLI authentication. Third-party images and archives retain their upstream licensing and notices.

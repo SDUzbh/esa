@@ -1,5 +1,7 @@
 # Codex historical replay trial
 
+This document describes the focused application-provider trial, not the current external system tester. Its retained reports are historical artifacts. For current replay and evaluation, use [external system replay](TICKET_BACKTEST.md).
+
 This trial connects the installed, already authenticated Codex CLI through a Go HTTP adapter. ESA keeps deterministic routing hints and the asynchronous worker; the Agent returns its classification, issue assignment and specific code findings. Existing display fields are derived for engineer review. Ruby remains the Redmine integration layer. No Kafka or original Jira files are edited.
 
 ## Selected issue and scope
@@ -44,13 +46,15 @@ python3 scripts/manage_codex_provider.py start
 
 Set the public endpoint `ESA_ANALYZER_URL=http://host.lima.internal:8091/analyze` in the private Compose `.env`, rebuild/recreate ESA, then run `python3 scripts/verify_codex_replay.py`. This script imports one historical ticket through Redmine; it does not import the Jira archive. `--retry` explicitly forces a new run and must only be used after inspecting previous provider activity.
 
-After the diagnosis is complete and frozen, invoke the separate evaluator:
+The previous imported-report evaluator has been removed. The current command below starts a **new system replay** through public APIs. It does not ingest or evaluate the diagnosis from this historical provider trial:
 
 ```sh
 python3 scripts/replay_pipeline.py --pipeline --manifest system_replay/examples/esa-api-kafka.json --output reports/new-system-run
 ```
 
-The evaluator exports the later upstream fix into `.esa/evaluation`, outside the Agent bundle, and runs the **same unchanged test**. It preserves the frozen diagnosis hash, upstream patch, fixed revision and test logs. Diagnostic assertions compare cited locations and recommendations with the actual upstream correction; they are not a general accuracy score.
+The default manifest disables the engineering provider and expects `awaiting_configuration`. It exports baseline, upstream parent and repaired snapshots below the new report directory, runs the same neutral client fixture, and checks external failure/healthy assertions. It verifies product behavior without claiming Agent accuracy.
+
+For engineering accuracy evaluation, configure the new system-under-test instance with its own registered provider and historical environment adapter. The tester must observe the actual initial report through the public API and freeze it before reading repair evidence. An optional independent HTTP semantic evaluator can then judge localization, problem explanation and solution against supplied PR/source/runtime evidence after `behavior_verified`. The default manifest has no semantic evaluator; patch overlap alone is not semantic correctness. See [the manifest contract](../system_replay/README.md).
 
 To stop only the host adapter, use `python3 scripts/manage_codex_provider.py stop`. The adapter does not install a system-wide service. Registered evidence for other tickets and a production service supervisor are future work.
 
@@ -62,5 +66,3 @@ To stop only the host adapter, use `python3 scripts/manage_codex_provider.py sto
 - Universal historical build profiles, attachment replay, archive-wide ground-truth scoring and release lifecycle verification remain future work. Controlled source/log retrieval is available only within the registered replay environment.
 
 The Codex execution mechanism follows [official non-interactive documentation](https://learn.chatgpt.com/docs/non-interactive-mode).
-
-The imported-report evaluator has been removed. The [external system tester](TICKET_BACKTEST.md) now observes the actual backend workflow through public APIs. Its default examples do not invoke Codex; configure the system under test with its own provider and environment adapter to evaluate the actual engineering Agent. Earlier trial reports and metrics remain historical artifacts.

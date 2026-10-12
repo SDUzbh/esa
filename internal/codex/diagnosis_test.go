@@ -3,7 +3,7 @@ package codex
 import (
 	"context"
 	"encoding/json"
-	"esa/internal/backtest"
+	"esa/internal/codexreview"
 	"esa/internal/esa"
 	"os"
 	"path/filepath"
@@ -45,8 +45,8 @@ func TestStructuredLocationMustBeHistoricalAndInspected(t *testing.T) {
 func TestRetrospectiveProviderUsesSeparateToolsAndRecordsUsage(t *testing.T) {
 	dir := t.TempDir()
 	fixture := filepath.Join(dir, "fixture.json")
-	request := backtest.ReviewRequest{SourceKey: "BUG-1", Baseline: "old", Candidate: backtest.Candidate{Commit: "fix", PRs: []string{"#1"}}, Prediction: esa.Report{AgentClassification: &esa.Classification{Category: "code_defect"}, Findings: []esa.Finding{{Commit: "old", File: "x.java", StartLine: 2, EndLine: 2}}}, Documents: []backtest.Document{{Source: "patch", Prefix: "fix:patch:", First: 1, Lines: []string{"+ fail(disconnected);"}}}}
-	answer := map[string]any{"commit": "fix", "verdict": "resolved", "explanation": "The PR fails a disconnected response instead of completing it successfully.", "findings": []backtest.FindingReview{{Index: 0, Localization: "correct", Problem: "correct", Solution: "correct", Explanation: "The finding describes the completion correction."}}, "evidence": []esa.Evidence{{Source: "patch", Reference: "fix:patch:1", Quote: "fail(disconnected)"}}, "limitations": []string{"Static PR review only."}}
+	request := codexreview.ReviewRequest{SourceKey: "BUG-1", Baseline: "old", Candidate: codexreview.Candidate{Commit: "fix", PRs: []string{"#1"}}, Prediction: esa.Report{AgentClassification: &esa.Classification{Category: "code_defect"}, Findings: []esa.Finding{{Commit: "old", File: "x.java", StartLine: 2, EndLine: 2}}}, Documents: []codexreview.Document{{Source: "patch", Prefix: "fix:patch:", First: 1, Lines: []string{"+ fail(disconnected);"}}}}
+	answer := map[string]any{"commit": "fix", "verdict": "resolved", "explanation": "The PR fails a disconnected response instead of completing it successfully.", "findings": []codexreview.FindingReview{{Index: 0, Localization: "correct", Problem: "correct", Solution: "correct", Explanation: "The finding describes the completion correction."}}, "evidence": []esa.Evidence{{Source: "patch", Reference: "fix:patch:1", Quote: "fail(disconnected)"}}, "limitations": []string{"Static PR review only."}}
 	b, _ := json.Marshal(answer)
 	if e := os.WriteFile(fixture, b, 0600); e != nil {
 		t.Fatal(e)

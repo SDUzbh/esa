@@ -1,0 +1,157 @@
+{
+  "schema_version": 1,
+  "target": {
+    "url": "http://127.0.0.1:18090",
+    "start": {
+      "args": [
+        "{{manifest_dir}}/../../bin/esa-host",
+        "-listen",
+        "127.0.0.1:18090",
+        "-store",
+        "{{run_dir}}/target/state.json",
+        "-rules",
+        "{{manifest_dir}}/../../config/rules.json"
+      ],
+      "env": {
+        "ESA_API_TOKEN": "{{token}}",
+        "ESA_REDMINE_URL": "",
+        "ESA_ANALYZER_URL": ""
+      }
+    },
+    "headers": {
+      "X-ESA-Project-IDs": "{{project_id}}"
+    },
+    "submit": {
+      "method": "POST",
+      "path": "/v1/events",
+      "body": {
+        "id": "{{event_id}}",
+        "origin": "system_replay",
+        "occurred_at": "{{event_time}}",
+        "ticket": "{{ticket}}"
+      }
+    },
+    "observe": {
+      "path": "/v1/tickets/{{ticket_id}}"
+    },
+    "extract": {
+      "state": [
+        "/ticket/latest_run/state",
+        "/ticket/case/state"
+      ],
+      "category": [
+        "/ticket/latest_run/classification/category",
+        "/ticket/case/category"
+      ],
+      "route": [
+        "/ticket/latest_run/route"
+      ],
+      "issue_id": [
+        "/ticket/latest_run/report/issue/existing_id"
+      ],
+      "findings": [
+        "/ticket/latest_run/report/findings"
+      ],
+      "usage": [
+        "/ticket/latest_run/report/usage"
+      ],
+      "run_id": [
+        "/ticket/latest_run/id"
+      ]
+    },
+    "capture": {
+      "case_id": "/ticket/case/id",
+      "run_id": "/ticket/latest_run/id"
+    },
+    "terminal_states": [
+      "completed",
+      "awaiting_configuration",
+      "awaiting_information",
+      "awaiting_review",
+      "failed",
+      "restricted",
+      "invalidated",
+      "draft",
+      "trusted",
+      "rejected",
+      "duplicate",
+      "archived"
+    ],
+    "timeout_seconds": 30,
+    "poll_milliseconds": 100
+  },
+  "warn_input_tokens": 16000,
+  "warn_output_tokens": 6000,
+  "warn_total_tokens": 22000,
+  "jobs": [
+    {
+      "id": "KAFKA-2880",
+      "raw": "../../data/jira/raw/KAFKA-2880.json",
+      "environment": {
+        "details": "Explicit replay profile: Java 8 client, simulated disconnected response"
+      },
+      "expect": [
+        {
+          "path": "/category",
+          "op": "eq",
+          "value": "code_defect"
+        },
+        {
+          "path": "/route",
+          "op": "eq",
+          "value": "engineering_analysis"
+        },
+        {
+          "path": "/state",
+          "op": "eq",
+          "value": "awaiting_configuration"
+        }
+      ],
+      "scenario": {
+        "profile": "metadata-disconnect",
+        "controls": [
+          {
+            "path": "/log",
+            "op": "contains",
+            "value": "CLIENT_MODULE_COMPILATION=PASS"
+          },
+          {
+            "path": "/log",
+            "op": "contains",
+            "value": "SUCCESSFUL_METADATA_CONTROL=PASS"
+          }
+        ],
+        "bug": [
+          {
+            "path": "/log",
+            "op": "contains",
+            "value": "DISCONNECTED_METADATA_RESULT=java.lang.NullPointerException"
+          }
+        ],
+        "healthy": [
+          {
+            "path": "/log",
+            "op": "contains",
+            "value": "DISCONNECTED_METADATA_RESULT=org.apache.kafka.common.errors.TimeoutException"
+          }
+        ]
+      }
+    }
+  ],
+  "repo": "../../kafka",
+  "mainline": "origin/trunk",
+  "versions": 1,
+  "runtime": {
+    "args": [
+      "python3",
+      "{{manifest_dir}}/../runtime_driver.py",
+      "--context",
+      "colima-redmine",
+      "--cache",
+      "{{manifest_dir}}/../../.esa/replay-cache"
+    ],
+    "env": {
+      "SYSTEM_REPLAY_SESSIONS": "{{session_dir}}"
+    }
+  }
+}

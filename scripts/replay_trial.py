@@ -73,19 +73,8 @@ def prepare():
     write(BUNDLE / 'evidence.json', packet)
     print(json.dumps({'stage': 'historical_replay', **result, 'evidence': str(BUNDLE / 'evidence.json')}, indent=2))
 
-def evaluate(report_path, versions=5, review_fixes=False):
-    # The ticket-centered pipeline replaces the selected-fix keyword evaluator.
-    path = Path(report_path).resolve()
-    report = json.loads(path.read_text())
-    if not report.get('agent_classification') or not report.get('issue'):
-        raise RuntimeError('Legacy prose reports cannot be scored as structured locations; generate a new engineering report first.')
-    output = ROOT / 'reports' / ('ticket-backtest-' + __import__('uuid').uuid4().hex)
-    imports = ROOT / '.esa' / ('predictions-' + __import__('uuid').uuid4().hex + '.json')
-    imports.parent.mkdir(exist_ok=True); write(imports, {'KAFKA-2880': str(path)})
-    args = ['python3', str(ROOT / 'scripts/replay_pipeline.py'), '--pipeline', '--profile', 'metadata-disconnect',
-            '--predictions', str(imports), '--versions', str(versions), '--output', str(output), 'KAFKA-2880']
-    if review_fixes: args.append('--review-fixes')
-    subprocess.run(args, check=True)
+def evaluate(*args, **kwargs):
+    raise RuntimeError('Imported Agent reports are no longer a system replay test. Use scripts/replay_pipeline.py --manifest system_replay/examples/esa-api-kafka.json --pipeline with an isolated target.')
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(); parser.add_argument('stage', choices=['prepare', 'evaluate']); parser.add_argument('--report'); parser.add_argument('--versions', type=int, default=5); parser.add_argument('--review-fixes', action='store_true')

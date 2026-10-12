@@ -1,8 +1,7 @@
-package backtest
+package systemreplay
 
 import (
 	"context"
-	"esa/internal/esa"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -63,7 +62,7 @@ func history(t *testing.T) (Git, string, string) {
 }
 func TestMainlineScopeVersionsRenameAndUnmerged(t *testing.T) {
 	g, base, fix := history(t)
-	issue := Issue{ID: "issue_BUG-1", TicketKeys: []string{"BUG-1"}, Findings: []esa.Finding{{Commit: base, File: "old.java", StartLine: 2, EndLine: 2}}}
+	issue := Issue{ID: "issue_BUG-1", TicketKeys: []string{"BUG-1"}, Findings: []Finding{{Commit: base, File: "old.java", StartLine: 2, EndLine: 2}}}
 	trace, e := g.Trace(issue, base, "main", "2020-01-02T00:00:01Z", "", 3)
 	if e != nil {
 		t.Fatal(e)
@@ -102,66 +101,6 @@ func TestMainlineScopeVersionsRenameAndUnmerged(t *testing.T) {
 		t.Fatal("future baseline accepted")
 	}
 }
-func TestReverseAssessmentAndRegression(t *testing.T) {
-	prediction := esa.Report{AgentClassification: &esa.Classification{Category: "code_defect"}, Findings: []esa.Finding{{File: "x.java"}}}
-	trace := Trace{Issue: Issue{ID: "issue_1"}, Candidates: []Candidate{{Commit: "fix"}, {Commit: "revert"}}, State: "awaiting_review"}
-	r := Review{Commit: "fix", Verdict: "resolved", Findings: []FindingReview{{0, "correct", "correct", "correct", "PR confirms root cause."}}}
-	e, err := Evaluate("BUG-1", trace, prediction, []Review{r})
-	if err != nil || e.Correct != 1 || e.Pending != 1 || e.State != "resolved" {
-		t.Fatalf("%+v %v", e, err)
-	}
-	e, err = Evaluate("BUG-1", trace, prediction, []Review{{Commit: "revert", Verdict: "regressed"}, r})
-	if err != nil || e.State != "reopened" || e.Correct != 1 {
-		t.Fatalf("%+v %v", e, err)
-	}
-	e, err = Evaluate("BUG-1", trace, prediction, nil)
-	if err != nil || e.Unknown != 1 {
-		t.Fatal(e, err)
-	}
-	if _, err = Evaluate("BUG-1", trace, prediction, []Review{r, r}); err == nil {
-		t.Fatal("duplicate reviews accepted")
-	}
-}
-func TestReviewRejectsUnconfirmedAccuracyAndInventedEvidence(t *testing.T) {
-	request := ReviewRequest{Candidate: Candidate{Commit: "fix", PRs: []string{"#1"}}, Prediction: esa.Report{Findings: []esa.Finding{{}}}, Documents: []Document{{"patch", "fix:patch:", 1, []string{"+ fail(disconnect);"}}}}
-	r := Review{Commit: "fix", Verdict: "resolved", Explanation: "PR repairs completion.", Findings: []FindingReview{{0, "correct", "correct", "correct", "Verified patch."}}, Evidence: []esa.Evidence{{Source: "patch", Reference: "fix:patch:1", Quote: "fail(disconnect)"}}}
-	if e := ValidateReview(r, request); e != nil {
-		t.Fatal(e)
-	}
-	r.Verdict = "uncertain"
-	if ValidateReview(r, request) == nil {
-		t.Fatal("accuracy inferred without confirmed fix")
-	}
-	r.Verdict = "resolved"
-	r.Evidence[0].Quote = "invented"
-	if ValidateReview(r, request) == nil {
-		t.Fatal("invented patch quote accepted")
-	}
-	r.Evidence[0].Quote = "fail(disconnect)"
-	request.Candidate.PRs = nil
-	if ValidateReview(r, request) == nil {
-		t.Fatal("resolution accepted without PR")
-	}
-}
-func TestIssueAssignmentProjectAndCategory(t *testing.T) {
-	t1 := esa.Ticket{SourceKey: "BUG-1", ProjectID: "A"}
-	p := esa.Report{AgentClassification: &esa.Classification{Category: "code_defect"}, Issue: &esa.IssueAssignment{Title: "Failure", Reason: "New"}}
-	items, first, e := Assign(nil, t1, p)
-	if e != nil {
-		t.Fatal(e)
-	}
-	p.Issue.ExistingID = first.ID
-	t1.SourceKey = "BUG-2"
-	items, second, e := Assign(items, t1, p)
-	if e != nil || len(items) != 1 || len(second.TicketKeys) != 2 {
-		t.Fatal(second, e)
-	}
-	t1.ProjectID = "B"
-	if _, _, e = Assign(items, t1, p); e == nil {
-		t.Fatal("cross-project grouping accepted")
-	}
-}
-
 func TestTicketReferenceInMergedBranchLandsAtMainlineMerge(t *testing.T) {
 	g, base, _ := history(t)
 	git := func(date string, args ...string) string {

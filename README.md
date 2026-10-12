@@ -16,7 +16,7 @@ This repository contains ESA code and deployment definitions. Redmine is referen
 - A bounded asynchronous HTTP engineering-provider interface, explicit unconfigured/failed states, evidence validation, and human report review.
 - Tests in `replay_test` establish temporal visibility of case revisions and reconstruct conservative Jira snapshots without future comments or diagnostic field values.
 - A Go Codex CLI adapter accepts an explicitly registered historical evidence packet, validates exact source quotes, records actual usage, and returns engineering reports for human review.
-- A ticket-centered backtest freezes structured Agent classification and code locations, follows mainline versions, reviews candidate PRs with a separate Agent and assesses the initial diagnosis. See [the backtest design and commands](docs/TICKET_BACKTEST.md).
+- A standalone external system replay tester submits historical events through public APIs, observes actual system output, follows mainline versions and requires unchanged failure/pass scenarios to verify repairs. See [system replay](docs/TICKET_BACKTEST.md).
 - A CLI replay pipeline resolves historical affected versions, sorts batches, reuses one isolated environment, synchronizes file differences and cleans owned runtime resources.
 - Registered MCP tools support installation, system/debugger execution, frozen source inspection and environment change requests. Source, dependencies and baseline bytecode remain read-only.
 - Per-ticket token warnings appear in provider logs, audit files, batch results and ESA reports without cancelling analysis.

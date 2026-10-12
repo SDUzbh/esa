@@ -1,5 +1,5 @@
-// Package backtest follows ticket-centered issues through mainline versions.
-package backtest
+// Package codexreview defines the application provider PR-review protocol.
+package codexreview
 
 import "esa/internal/esa"
 
@@ -78,17 +78,4 @@ type Review struct {
 	Limitations []string        `json:"limitations"`
 	Usage       esa.Usage       `json:"usage"`
 	Alerts      []esa.Alert     `json:"alerts,omitempty"`
-}
-type Evaluation struct {
-	SourceKey       string          `json:"source_key"`
-	IssueID         string          `json:"issue_id"`
-	State           string          `json:"state"`
-	ResolvedCommits []string        `json:"resolved_commits"`
-	Reviews         []Review        `json:"reviews"`
-	Findings        []FindingReview `json:"findings"`
-	Pending         int             `json:"pending_candidates"`
-	Correct         int             `json:"correct_findings"`
-	Incorrect       int             `json:"incorrect_findings"`
-	Unknown         int             `json:"unknown_findings"`
-	Limitations     []string        `json:"limitations"`
 }

@@ -1,99 +1,22 @@
-# Ticket-centered mainline backtesting
+# External system replay
 
-This implements the original ESA design: the engineering Agent classifies a ticket, creates or joins an issue and freezes specific code locations, problem descriptions and proposed solutions. The pipeline then follows subsequent versions on the main branch. Changes in issue scope trigger a separate backtest Agent, which uses the PR and patch to confirm a repair and assess the original prediction. This is retrospective PR-based assessment, not an independent ground-truth construction workflow.
+The current tester is the standalone [`system_replay`](../system_replay/README.md) Go module. It can build and test outside the ESA project and has no application imports. The former direct-provider pipeline, local issue assignment engine and imported-prediction evaluation entry point were removed.
 
-## Run
+Replay enters the system through configured public requests. The system itself performs classification, issue/case handling, routing, queuing and engineering-provider invocation. The tester observes those results, freezes them, advances product Git snapshots and applies unchanged runtime assertions. It does not reproduce business logic inside the test harness.
 
-Build all Go commands:
-
-```sh
-sh scripts/build_esa.sh
-```
-
-Plan a batch without Docker or model calls:
+Build the application artifact and tester independently, then run:
 
 ```sh
-python3 scripts/replay_pipeline.py --pipeline --plan KAFKA-3258 KAFKA-2880
+GOCACHE="$PWD/.tools/go-cache" GOTOOLCHAIN=local .tools/go/bin/go build -o bin/esa-host ./cmd/esa
+sh scripts/build_system_replay.sh
+python3 scripts/replay_pipeline.py --pipeline --manifest system_replay/examples/esa-api-lifecycle.json --output reports/new-system-lifecycle
+python3 scripts/replay_pipeline.py --pipeline --manifest system_replay/examples/esa-api-kafka.json --output reports/new-system-kafka
 ```
 
-Inspect later Git versions and issue-key candidates without invoking either Agent:
+The first example verifies actual case collection, approval, zero-provider-call case reuse, withdrawal after reopening and customer-support routing through the ESA HTTP API. The second submits a real historical ticket through the same API and verifies baseline / PR parent / fixed Kafka behavior in an independent runtime. Both use a fresh managed application process and independent state; the defaults do not call a model. Neither modifies the running Redmine or live ESA store.
 
-```sh
-python3 scripts/replay_pipeline.py --pipeline --track-only --versions 3 --mainline origin/trunk KAFKA-2880
-```
+A repair is `behavior_verified` only if the same scenario reproduces the baseline and parent failure, all controls pass, and repaired code passes healthy assertions without reproducing the failure. PR/file hits alone cannot pass this gate. A separate configured HTTP evaluator can assess the actual initial findings against PR/source evidence after this runtime gate. Without it, root-cause/solution semantics remain unassessed.
 
-Diagnose the ticket and review all candidate fixes in the next release observation point:
+`--plan` validates without executing systems; `--track-only` inspects Git without submitting tickets. `--attach` explicitly opts into an existing target and does not reset or stop it. Numeric version ordering must not deliver future events before older ones; use `--order time` when needed. Related, overlapping event histories should be expressed as a single chronological job stream.
 
-```sh
-python3 scripts/replay_pipeline.py --pipeline --agent --review-fixes --profile metadata-disconnect --versions 1 KAFKA-2880
-```
-
-`--agent` enables initial diagnosis. `--review-fixes` separately enables runtime replay and retrospective model calls. Neither is implicit. `--versions N` defaults to five subsequent release observation points. `--until RFC3339` adds an upper timestamp bound. `--mainline` selects the main branch and defaults to `origin/trunk` for Kafka. Multiple tickets require `--pipeline`; initial environments remain sorted by numeric affected version. Version development refs still require explicit historical provenance and an ordering label.
-
-A JSON job manifest supports the existing `raw`, `profile`, `ref`, `at`, `version`, `environment`, `project`, `command`, `command_timeout` and `scala_version` fields. Operator-supplied commands execute in the owned runtime. Ticket text is never executed as a command.
-
-Use `--issue-history <prior-run>/issue-history.json` to supply previously established issues. The runner exposes only revisions visible at each ticket cutoff and writes the extended history to the new run.
-
-Use `--predictions predictions.json` to import existing structured reports. The file maps ticket keys to absolute report paths. Reports are copied into the new run, checked against historical source, made read-only and SHA-256 pinned. External report provenance and runtime evidence remain operator supplied. Old prose-only reports cannot be converted into scored line locations automatically.
-
-## Engineering output
-
-The model returns only these structured diagnostic fields:
-
-```json
-{
-  "classification": "code_defect",
-  "issue": {"existing_id": "", "title": "Metadata completion fails on disconnect", "reason": "New issue supported by the ticket"},
-  "findings": [{
-    "commit": "<historical SHA>", "file": "<repository path>",
-    "start_line": 200, "end_line": 205,
-    "problem": "Specific faulty behavior and its cause",
-    "solution": "Proposed correction, without applying a patch",
-    "evidence": [{"source": "git", "reference": "<SHA>:<path>:200", "quote": "Exact source substring"}]
-  }],
-  "limitations": []
-}
-```
-
-A finding's commit must equal the registered historical revision. Both endpoint lines must have been inspected; each finding needs an exact quote from its own file and range. Empty findings explicitly mean that no concrete location was established. Support categories cannot contain engineering findings. The adapter derives the existing ESA report fields for display compatibility; usage, alerts and environment requests come from the runner and audited tools.
-
-Classification belongs to the Agent; deterministic rules supply a hint. Categories are `code_defect`, `compatibility`, `performance`, `configuration`, `usage_question`, `feature_request` and `unknown`. Only the first three receive engineering fix assessment. Existing issue assignments must refer to a supplied issue in the same project and category. The pipeline records issue revisions and exposes only revisions observed at or before the next ticket's cutoff. It does not merge issues merely because their keywords match.
-
-## Pipeline stages
-
-1. **Diagnosis:** reconstruct historical ticket fields, prepare the affected version, run the registered baseline and invoke the engineering Agent when requested. Every report is frozen before future Git history is read. Known issue membership contains no subsequent fix data.
-2. **Version tracking:** resolve an immutable mainline head, build the first-parent graph and label subsequent observation points with numeric release tags. Branch release tags identify publication observation points; the source being evaluated is always the mainline snapshot at that time. Branch-only code is not substituted for mainline code. Duplicate tags observing the same mainline snapshot count once.
-3. **Scope matching:** inspect every mainline change in the window. An exact ticket-key reference or a change to an initially localized file creates a candidate. Line offsets and renames are followed between commits. File matching is deliberately broad so nearby fixes can be reviewed. Unmerged branches and commits before ticket receipt are excluded. Matching does not itself establish correctness.
-4. **Retrospective replay:** combine all jobs' version observation points and candidate before/after revisions in mainline order. One owned environment is reused; only source and runtime differences are synchronized. Customer state and helper state reset between observations. The same neutral observation harness runs before and after a candidate. It contains no expected future exception type.
-5. **PR assessment:** start a fresh, tool-free backtest Agent session with the frozen prediction, issue, local PR reference/message, actual patch, numbered before/after source and runtime observations. This Agent intentionally sees the initial prediction for reverse assessment. It never shares state with the engineering Agent.
-6. **Aggregation:** record repair verdicts and assess each original finding's specific location, problem description and solution independently. A confirmed later regression reopens the issue. All candidates remain in the trace, including unsuccessful and uncertain ones; tracking continues after the first confirmed repair.
-
-A version tag's commit time is a local Git observation timestamp, not proof of a public release date. If an affected snapshot differs from the mainline state at ticket receipt, its line locations are mapped to that state and the divergence is retained as a limitation. No Git checkout or reset modifies the product repository.
-
-## Review and interpretation
-
-The review verdict is `resolved`, `not_resolved`, `regressed` or `uncertain`. A resolved verdict requires a PR reference in the local Git record and exact evidence citations. Each initial finding gets `correct`, `incorrect` or `unknown` for localization, problem and solution, with an explanation. Without a confirmed repair, accuracy remains unknown. A proposed solution can be causally correct without matching the PR's exact implementation. Inconsistent confirmed assessments remain unknown for engineer review.
-
-`evaluation.json` records the issue state, confirmed repair commits, every completed review, counts of fully correct / incorrect / unknown findings, and pending candidates. A missing prediction, execution failure, unknown localization or unfinished review is not a successful diagnosis. A file hit or keyword hit is not an accuracy score. Static PR assessment is not runtime verification; the output retains the exact runtime scope.
-
-PR records currently come from local commit messages, linked PR identifiers and actual committed changes. Review discussions and external PR metadata are not automatically downloaded; their absence must be disclosed. The `source` profile establishes runtime readiness only. The registered metadata profile reproduces a specific client scenario; `kafka-server` release binaries cannot verify an arbitrary mainline source commit and are explicitly marked unsupported for that part of evaluation. Additional product/runtime profiles require operator registration.
-
-## Artifacts and operational controls
-
-A new output directory contains `pipeline.json`, `issues.json`, `issue-history.json` and per-ticket plans, frozen reports with hashes, `trace.json`, runtime observations, review packets, CLI events/audits and `evaluation.json`. Failed attempts retain private logs. Reports and verified source/artifact caches persist across cleanup.
-
-All existing engineering permissions remain: only registered installation, isolated system/debugger execution, source reads and auxiliary scripts are available; product files remain read-only. Environment defects are reported for engineer review. Token thresholds emit warnings without terminating Agent work. The pipeline also warns on per-ticket aggregate measured usage across initial diagnosis and retrospective attempts. Missing usage is unknown; failed calls may have consumed unreported tokens. Runtime profiles and explicit execution deadlines remain separate from token warnings.
-
-Normal exit, exceptions, Ctrl-C and SIGTERM clean owned containers, volume and temporary state. Recovery after SIGKILL remains available through `--cleanup`. A failed environment setup can leave no runnable diagnosis; that condition must not become a product defect claim.
-
-## Verification
-
-```sh
-GOCACHE="$PWD/.tools/go-cache" GOTOOLCHAIN=local .tools/go/bin/go test -race ./...
-GOCACHE="$PWD/.tools/go-cache" GOTOOLCHAIN=local .tools/go/bin/go vet ./...
-python3 -m unittest discover -s scripts -p 'test_backtest_pipeline.py' -v
-python3 scripts/verify_mainline_backtest.py
-python3 scripts/verify_mainline_backtest.py --runtime
-```
-
-Synthetic Git tests verify version windows, temporal boundaries, line changes, renames, unmerged exclusion, explicit grouping, evidence validation, unknown judgments and reopened issues. Pipeline tests verify phase isolation, temporal issue visibility, advisory aggregate usage and cleanup on failures. The real Kafka check tracks KAFKA-2880 / PR #581, optionally observes historical baseline, PR parent and repaired source, and checks cleanup without model calls. It does not assign Agent accuracy labels.
+The initial adapter tests the backend HTTP boundary. Browser actions, Redmine outbox behavior, universal customer-environment reconstruction and virtual business time require corresponding external adapters/capabilities. Missing capabilities are recorded as limitations instead of supplied by substitute business implementations. Full protocol, safety boundaries, runtime profiles, cleanup and assertion details are in the [standalone module documentation](../system_replay/README.md).

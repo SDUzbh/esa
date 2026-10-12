@@ -3,7 +3,7 @@ package codex
 import (
 	"context"
 	"encoding/json"
-	"esa/internal/backtest"
+	"esa/internal/codexreview"
 	"esa/internal/esa"
 	"fmt"
 	"os"
@@ -22,8 +22,8 @@ func ReviewSchema() []byte {
 // Review starts a fresh retrospective session after the original report is frozen.
 // It receives the prediction intentionally: this implements PR-based reverse
 // assessment, rather than an independently constructed ground-truth dataset.
-func (p *Provider) Review(ctx context.Context, request backtest.ReviewRequest, budget esa.Budget, runID string) (backtest.Review, error) {
-	var r backtest.Review
+func (p *Provider) Review(ctx context.Context, request codexreview.ReviewRequest, budget esa.Budget, runID string) (codexreview.Review, error) {
+	var r codexreview.Review
 	if budget.MaxCalls != 1 || p.ToolsConfig != "" || !strings.HasPrefix(runID, "run_") || strings.ContainsAny(runID, "/\\.") {
 		return r, fmt.Errorf("retrospective review requires a separate tool-free run")
 	}
@@ -43,7 +43,7 @@ func (p *Provider) Review(ctx context.Context, request backtest.ReviewRequest, b
 		Lines          []string
 	}
 	visible := struct {
-		Request           backtest.ReviewRequest
+		Request           codexreview.ReviewRequest
 		NumberedDocuments []numbered
 	}{Request: request}
 	// Keep full packets on disk, but avoid sending duplicate patch, message,
@@ -95,7 +95,7 @@ func (p *Provider) Review(ctx context.Context, request backtest.ReviewRequest, b
 	}
 	r.Usage = usage
 	r.Alerts = alerts
-	if err = backtest.ValidateReview(r, request); err != nil {
+	if err = codexreview.ValidateReview(r, request); err != nil {
 		return r, err
 	}
 	if err = os.WriteFile(filepath.Join(dir, "review.json"), mustJSON(r), 0600); err != nil {

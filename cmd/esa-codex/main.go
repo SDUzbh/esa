@@ -17,8 +17,8 @@ import (
 	"syscall"
 	"time"
 
-	"esa/internal/backtest"
 	"esa/internal/codex"
+	"esa/internal/codexreview"
 	"esa/internal/esa"
 	"esa/internal/replaytools"
 )
@@ -143,7 +143,7 @@ func run() error {
 		if err != nil {
 			return err
 		}
-		var request backtest.ReviewRequest
+		var request codexreview.ReviewRequest
 		if err = json.Unmarshal(b, &request); err != nil {
 			return err
 		}

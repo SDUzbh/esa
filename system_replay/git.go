@@ -1,8 +1,7 @@
-package backtest
+package systemreplay
 
 import (
 	"context"
-	"esa/internal/esa"
 	"fmt"
 	"os/exec"
 	"regexp"
@@ -15,6 +14,29 @@ import (
 type Git struct {
 	Repo    string
 	Context context.Context
+}
+
+// Created only after public predictions freeze. Successful reads are shared
+// across tickets; mutable refs therefore resolve once for this evaluation run.
+type historyReader struct {
+	Git
+	reads map[string]string
+}
+
+func (g *historyReader) run(args ...string) (string, error) {
+	key := strings.Join(args, "\x00")
+	if value, ok := g.reads[key]; ok {
+		return value, nil
+	}
+	value, err := g.Git.run(args...)
+	if err == nil {
+		g.reads[key] = value
+	}
+	return value, err
+}
+
+func (g *historyReader) resolve(ref string) (string, error) {
+	return g.run("rev-parse", "--verify", "--end-of-options", ref+"^{commit}")
 }
 
 func (g Git) run(args ...string) (string, error) {
@@ -93,8 +115,10 @@ func pullRequests(message string) []string {
 	sort.Strings(out)
 	return out
 }
-func validStamp(s string) (time.Time, error) { return time.Parse(time.RFC3339, s) }
 func (g Git) Trace(issue Issue, baseline, mainline, cutoff, until string, count int) (Trace, error) {
+	return (&historyReader{g, map[string]string{}}).Trace(issue, baseline, mainline, cutoff, until, count)
+}
+func (g *historyReader) Trace(issue Issue, baseline, mainline, cutoff, until string, count int) (Trace, error) {
 	out := Trace{Issue: issue, Candidates: []Candidate{}, Versions: []Version{}, State: "window_exhausted", Limitations: []string{"Scope matching triggers review; a file or line overlap alone does not establish a fix.", "PR evidence comes from local commit messages and patches. Missing PR discussion remains a review limitation.", "Release tags label observation points; all evaluated code is from the chosen main branch."}}
 	if count < 1 {
 		return out, fmt.Errorf("versions must be positive")
@@ -114,13 +138,13 @@ func (g Git) Trace(issue Issue, baseline, mainline, cutoff, until string, count 
 	out.Baseline = base
 	out.Mainline = mainline
 	out.MainlineHead = head
-	at, e := validStamp(cutoff)
+	at, e := timestamp(cutoff)
 	if e != nil {
 		return out, e
 	}
 	end := time.Time{}
 	if until != "" {
-		end, e = validStamp(until)
+		end, e = timestamp(until)
 		if e != nil || !end.After(at) {
 			return out, fmt.Errorf("until must follow the ticket cutoff")
 		}
@@ -129,7 +153,7 @@ func (g Git) Trace(issue Issue, baseline, mainline, cutoff, until string, count 
 	if e != nil {
 		return out, e
 	}
-	bt, e := validStamp(stamp)
+	bt, e := timestamp(stamp)
 	if e != nil || bt.After(at) {
 		return out, fmt.Errorf("baseline is after ticket cutoff")
 	}
@@ -150,7 +174,7 @@ func (g Git) Trace(issue Issue, baseline, mainline, cutoff, until string, count 
 		if len(xs) != 2 {
 			continue
 		}
-		ts, e := validStamp(xs[1])
+		ts, e := timestamp(xs[1])
 		if e != nil {
 			return out, e
 		}
@@ -203,9 +227,14 @@ func (g Git) Trace(issue Issue, baseline, mainline, cutoff, until string, count 
 		}
 	}
 	ids := []string{}
+	unique := map[string]bool{}
 	for _, id := range tags {
-		ids = append(ids, id)
+		if !unique[id] {
+			ids = append(ids, id)
+			unique[id] = true
+		}
 	}
+	sort.Strings(ids)
 	dates := map[string]string{}
 	// One Git log supplies tag commit dates, including branch-only release nodes.
 	if len(ids) > 0 {
@@ -222,7 +251,7 @@ func (g Git) Trace(issue Issue, baseline, mainline, cutoff, until string, count 
 		}
 	}
 	for name, id := range tags {
-		ts, e := validStamp(dates[id])
+		ts, e := timestamp(dates[id])
 		if e != nil || !ts.After(at) || (!end.IsZero() && ts.After(end)) {
 			continue
 		}
@@ -269,7 +298,7 @@ func (g Git) Trace(issue Issue, baseline, mainline, cutoff, until string, count 
 		return out, nil
 	}
 	stop := indices[versions[len(versions)-1].MainlineCommit]
-	tracked := append([]esa.Finding(nil), issue.Findings...)
+	tracked := append([]Finding(nil), issue.Findings...)
 	// Each linked ticket may have localized the same issue in a different
 	// historical revision. Map every original finding into this mainline anchor.
 	remaps := map[string][]Change{}
@@ -290,7 +319,7 @@ func (g Git) Trace(issue Issue, baseline, mainline, cutoff, until string, count 
 			delta = changes(p)
 			remaps[original] = delta
 		}
-		tracked[i] = mapFindings([]esa.Finding{f}, delta)[0]
+		tracked[i] = mapFindings([]Finding{f}, delta)[0]
 	}
 	// Batch metadata and touched paths, then obtain patches only for issue-scope
 	// commits. Most mainline changes cost no extra Git invocation.
@@ -315,6 +344,12 @@ func (g Git) Trace(issue Issue, baseline, mainline, cutoff, until string, count 
 		}
 		meta[strings.TrimSpace(parts[0])] = m
 	}
+	patterns := make([]string, len(issue.TicketKeys))
+	keyPatterns := make([]*regexp.Regexp, len(issue.TicketKeys))
+	for i, key := range issue.TicketKeys {
+		patterns[i] = regexp.QuoteMeta(key)
+		keyPatterns[i] = regexp.MustCompile(`\b` + patterns[i] + `\b`)
+	}
 	previous := chain[anchor].id
 	for i := anchor + 1; i <= stop; i++ {
 		id := chain[i].id
@@ -322,10 +357,6 @@ func (g Git) Trace(issue Issue, baseline, mainline, cutoff, until string, count 
 		// Merge subjects need not mention the ticket. Include key-referencing
 		// branch commits only when they actually land in this mainline step.
 		if len(strings.Fields(m.parents)) > 1 && len(issue.TicketKeys) > 0 {
-			patterns := []string{}
-			for _, key := range issue.TicketKeys {
-				patterns = append(patterns, regexp.QuoteMeta(key))
-			}
 			related, e := g.run("log", "--format=%H%n%B", "--extended-regexp", "--grep", strings.Join(patterns, "|"), previous+".."+id)
 			if e != nil {
 				return out, e
@@ -335,8 +366,8 @@ func (g Git) Trace(issue Issue, baseline, mainline, cutoff, until string, count 
 			}
 		}
 		matched := false
-		for _, key := range issue.TicketKeys {
-			if regexp.MustCompile(`\b` + regexp.QuoteMeta(key) + `\b`).MatchString(m.message) {
+		for _, pattern := range keyPatterns {
+			if pattern.MatchString(m.message) {
 				matched = true
 			}
 		}
@@ -356,8 +387,8 @@ func (g Git) Trace(issue Issue, baseline, mainline, cutoff, until string, count 
 		delta := changes(patch)
 		message := m.message
 		reasons := []string{}
-		for _, key := range issue.TicketKeys {
-			if regexp.MustCompile(`\b` + regexp.QuoteMeta(key) + `\b`).MatchString(message) {
+		for n, key := range issue.TicketKeys {
+			if keyPatterns[n].MatchString(message) {
 				reasons = append(reasons, "Ticket reference: "+key)
 			}
 		}
@@ -398,8 +429,8 @@ func overlap(start, end, old, count int) bool {
 	}
 	return start <= old+count-1 && end >= old
 }
-func mapFindings(fs []esa.Finding, cs []Change) []esa.Finding {
-	out := append([]esa.Finding(nil), fs...)
+func mapFindings(fs []Finding, cs []Change) []Finding {
+	out := append([]Finding(nil), fs...)
 	for i := range out {
 		f := &out[i]
 		file := f.File

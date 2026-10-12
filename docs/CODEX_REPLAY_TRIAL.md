@@ -47,7 +47,7 @@ Set the public endpoint `ESA_ANALYZER_URL=http://host.lima.internal:8091/analyze
 After the diagnosis is complete and frozen, invoke the separate evaluator:
 
 ```sh
-python3 scripts/replay_trial.py evaluate --report .esa/codex-runs/<run-id>/report.json --versions 1 --review-fixes
+python3 scripts/replay_pipeline.py --pipeline --manifest system_replay/examples/esa-api-kafka.json --output reports/new-system-run
 ```
 
 The evaluator exports the later upstream fix into `.esa/evaluation`, outside the Agent bundle, and runs the **same unchanged test**. It preserves the frozen diagnosis hash, upstream patch, fixed revision and test logs. Diagnostic assertions compare cited locations and recommendations with the actual upstream correction; they are not a general accuracy score.
@@ -63,4 +63,4 @@ To stop only the host adapter, use `python3 scripts/manage_codex_provider.py sto
 
 The Codex execution mechanism follows [official non-interactive documentation](https://learn.chatgpt.com/docs/non-interactive-mode).
 
-The old selected-fix keyword evaluator has been removed. Evaluation requires a new structured report and delegates to the [ticket-centered pipeline](TICKET_BACKTEST.md). Earlier trial reports and metrics remain historical artifacts.
+The imported-report evaluator has been removed. The [external system tester](TICKET_BACKTEST.md) now observes the actual backend workflow through public APIs. Its default examples do not invoke Codex; configure the system under test with its own provider and environment adapter to evaluate the actual engineering Agent. Earlier trial reports and metrics remain historical artifacts.

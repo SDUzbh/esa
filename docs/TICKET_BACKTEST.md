@@ -6,12 +6,12 @@ The current tester is the standalone [`system_replay`](../system_replay/README.m
 
 | Component | Responsibility |
 | --- | --- |
-| System under test | Receive tickets; classify and group issues; retrieve cases; route work; invoke engineering providers; expose results and usage |
+| System under test | Receive manually forwarded tickets and group issues; retrieve cases; route work; invoke engineering providers; expose results and usage |
 | External tester | Reconstruct historical inputs; submit/poll public interfaces; freeze outputs; follow Git history; run unchanged scenarios; record assertions and cleanup |
 | Product runtime driver | Prepare isolated historical code and dependencies; run observations; reset mutable state; clean owned resources |
 | Optional semantic evaluator | Judge frozen initial findings using supplied PR, code and runtime evidence after a repair passes the behavior gate |
 
-The tester does not create substitute business issues or call application functions. Engineering diagnosis remains read-only. The target-owned provider returns classification and findings with immutable commit, file, start/end lines, problem description and solution recommendation. Restrictions on source writes and debugging tools belong to that provider's registered runtime; an arbitrary remote provider is not sandboxed by the tester.
+The tester does not create substitute business issues or call application functions. Engineering diagnosis remains read-only. The target-owned provider returns issue assignment and findings with immutable commit, file, start/end lines, problem description and solution recommendation. Restrictions on source writes and debugging tools belong to that provider's registered runtime; an arbitrary remote provider is not sandboxed by the tester.
 
 ## Flow and historical boundaries
 
@@ -30,7 +30,7 @@ Numeric version ordering is the default in `--pipeline`, but historical ordering
 
 | Evaluation | Evidence | Meaning |
 | --- | --- | --- |
-| Business assertions | Public receipts and observations | The actual system returned the configured classification, route, state or other behavior |
+| Business assertions | Public receipts and observations | The actual system returned the configured intake, route, state or other behavior |
 | Baseline reproduction | Historical code, neutral scenario and control/bug assertions | The registered failure occurs in that historical environment |
 | Repair behavior | Baseline + PR parent + repaired observations | The same scenario fails before the change and is healthy after it |
 | Patch overlap | Initial finding lines mapped to the candidate parent and diff | A location metric; it does not establish root cause |
@@ -44,11 +44,14 @@ Semantic evaluation is optional and cannot override the behavior gate. It requir
 
 | Manifest | Actual coverage | Model calls by default |
 | --- | --- | --- |
-| `esa-api-lifecycle.json` | 8 public events, 23 assertions: collect/approve/reuse cases, duplicate and stale events, reopen withdrawal, support routing, denied project submission | 0 |
-| `esa-api-kafka.json` | Historical KAFKA-2880 submission, observed `code_defect` / `engineering_analysis` / `awaiting_configuration`, and client failure/repair replay | 0 |
+| `esa-api-lifecycle.json` | Manually forwarded lifecycle events: collect/approve/reuse cases, duplicate and stale events, reopen withdrawal, manual support requests, denied project submission | 0 |
 
 Both examples start a separate backend on port 18090 with a new state file and disable Redmine synchronization. The Kafka fixture compiles unmodified historical clients and uses the shipped MockClient to inject a disconnected response. It is a client-code replay, not a full broker cluster or Kafka Connect deployment.
 
 For the registered Kafka scenario, the baseline `fc7243c2af4b2b4affcdf14d80826986fe6d4ce8` and upstream parent `8c3c9548b636cdf760d2537afe115942d13bc003` exhibit NullPointerException. Upstream fix `9fb1e25738f89b75a36ef69f730b0e138ccd55b1` (PR #581) instead exhibits TimeoutException with the successful-response control passing. This establishes the registered behavioral change, not an engineering Agent accuracy result.
 
 The backend HTTP adapter does not cover Redmine browser actions or its outbox. Universal scenario generation, customer environment reconstruction, external release listening and generalized per-ticket provider environment registration remain outside current coverage. See [operations](REPLAY_PIPELINE.md) for commands and artifacts, and [the standalone contract](../system_replay/README.md) for manifest details.
+
+Current ESA intake requires explicit `forwarded_by` and `forwarded_at`. External fixtures declare the manual action; the tester does not infer it. Classification and label learning are removed from the active application. See [manual forwarding](MANUAL_FORWARDING.md).
+
+`esa-api-forwarding.json` verifies explicit actor/time requirements, rejection of automatic intake, missing-context handling, category-independent diagnosis and removal of the label endpoint. `esa-api-kafka.json` explicitly forwards the historical ticket and expects an unconfigured provider while independently verifying product repair behavior.

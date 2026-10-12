@@ -9,10 +9,12 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--runtime', action='store_true')
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument('--runtime', action='store_true')
+    mode.add_argument('--forwarding', action='store_true')
     parser.add_argument('--output', default=str(ROOT / 'reports' / ('system-replay-' + uuid.uuid4().hex)))
     args = parser.parse_args()
-    example = 'esa-api-kafka.json' if args.runtime else 'esa-api-lifecycle.json'
+    example = 'esa-api-forwarding.json' if args.forwarding else ('esa-api-kafka.json' if args.runtime else 'esa-api-lifecycle.json')
     subprocess.run(['python3', str(ROOT / 'scripts/replay_pipeline.py'), '--build-tools', '--pipeline', '--manifest',
                     str(ROOT / 'system_replay/examples' / example), '--output', args.output], check=True)
 

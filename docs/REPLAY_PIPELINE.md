@@ -11,6 +11,7 @@ GOCACHE="$PWD/.tools/go-cache" GOTOOLCHAIN=local .tools/go/bin/go build -o bin/e
 sh scripts/build_system_replay.sh
 python3 scripts/replay_pipeline.py --pipeline --manifest system_replay/examples/esa-api-lifecycle.json --output reports/new-lifecycle-run
 python3 scripts/replay_pipeline.py --pipeline --manifest system_replay/examples/esa-api-kafka.json --output reports/new-kafka-run
+python3 scripts/replay_pipeline.py --pipeline --manifest system_replay/examples/esa-api-forwarding.json --output reports/new-forwarding-run
 ```
 
 Use a new output directory for every invocation. The lifecycle example needs the host target artifact. The Kafka example also needs the ignored external `kafka/` checkout, `data/jira/raw/KAFKA-2880.json`, Docker and verified client dependencies. Manifests resolve paths relative to their own directory. The bundled Docker context defaults to `colima-redmine`; configure the runtime command for another context or verified cache.
@@ -84,3 +85,6 @@ SYSTEM_REPLAY_SESSIONS=/absolute/path/run/sessions python3 system_replay/runtime
 The cleanup utility protects live sessions and resources with different ownership labels. Verified caches and reports are retained. The Docker runtime has disabled networking, read-only inputs and no host, credential or Docker socket mounts. The managed target process has independent state and process-group ownership; stronger filesystem isolation requires target configuration.
 
 `warn_input_tokens`, `warn_output_tokens` and `warn_total_tokens` are advisory per-job thresholds, independent of application rules. Public run IDs deduplicate measured usage; absent usage is unknown. Warnings appear on stderr and in result alerts and never terminate the target or Agent. `timeout_seconds` is a separate test deadline. Token usage and semantic evaluation require actual configured providers; the default examples make no model calls.
+
+
+Current ESA intake requires explicit `forwarded_by` and `forwarded_at`. External fixtures declare the manual action; the tester does not infer it. Classification and label learning are removed from the active application. See [manual forwarding](MANUAL_FORWARDING.md).

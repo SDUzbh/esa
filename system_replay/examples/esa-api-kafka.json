@@ -28,7 +28,9 @@
         "id": "{{event_id}}",
         "origin": "system_replay",
         "occurred_at": "{{event_time}}",
-        "ticket": "{{ticket}}"
+        "ticket": "{{ticket}}",
+        "forwarded_by": "fixture-human",
+        "forwarded_at": "{{event_time}}"
       }
     },
     "observe": {
@@ -38,10 +40,6 @@
       "state": [
         "/ticket/latest_run/state",
         "/ticket/case/state"
-      ],
-      "category": [
-        "/ticket/latest_run/classification/category",
-        "/ticket/case/category"
       ],
       "route": [
         "/ticket/latest_run/route"
@@ -91,11 +89,6 @@
         "details": "Explicit replay profile: Java 8 client, simulated disconnected response"
       },
       "expect": [
-        {
-          "path": "/category",
-          "op": "eq",
-          "value": "code_defect"
-        },
         {
           "path": "/route",
           "op": "eq",

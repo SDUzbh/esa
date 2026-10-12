@@ -3,7 +3,8 @@
 <h2>ESA · #<%= @issue.id %> <%= @issue.subject %></h2>
 <% run = @row['latest_run']; record = @row['case'] %>
 <div class="box"><p><strong>ESA state:</strong> <%= esa_label(esa_row_state(@row)) %></p>
-<% if run && !@issue.closed? %><p><strong>Category:</strong> <%= esa_label(run.dig('classification', 'category')) %> · <strong>Route:</strong> <%= esa_label(run['route']) %></p>
+<p><strong>Intake:</strong> <%= @row.dig('ticket', 'forwarded_by').present? ? "Forwarded by #{@row.dig('ticket', 'forwarded_by')}" : 'Not forwarded to ESA' %></p>
+<% if run && !@issue.closed? %><p><strong>Route:</strong> <%= esa_label(run['route']) %></p>
 <p><%= run.dig('report', 'summary') %></p>
 <% Array(run.dig('report', 'alerts')).each do |alert| %><p class="warning"><strong>Analysis warning:</strong> <%= alert['message'] %></p><% end %>
 <% Array(run.dig('report', 'environment_requests')).each do |request| %><div class="box"><h3>Environment change requested</h3><p><%= request['reason'] %></p><p><strong>Proposed change:</strong> <%= request['proposed_change'] %></p><p><strong>Validation:</strong> <%= request['validation'] %></p><p>Pending engineer review.</p></div><% end %>
@@ -16,18 +17,41 @@
 <% end %>
 <% if record %><h3>Collected case · <%= esa_label(record['state']) %></h3><p><%= record['summary'] %></p><% %w[cause solution validation].each do |field| %><p><strong><%= esa_label(field) %>:</strong> <%= record.dig('resolution', field) %></p><% end %><p>Case revision <%= record['version'] %>. Reviewed by <%= record['reviewed_by'] %>. <%= record['review_note'] %></p><% end %>
 </div>
+<% classifier = @result['classifier'] %>
+<% if classifier && classifier['enabled'] %>
+<div class="box"><h3>Optional label suggestions</h3>
+<p>Suggestions describe the last manually forwarded subject and description. Human labels are saved for supervised training and do not change engineering routing.</p>
+<p><strong>Model:</strong> <%= classifier['model_version'] %> · <strong>Training through:</strong> <%= classifier['training_through'] %></p>
+<% if classifier['blocked_reason'].present? %><p class="warning"><%= classifier['blocked_reason'] %></p>
+<% elsif User.current.allowed_to?(:submit_esa, @issue.project) %><%= form_tag esa_classifier_predict_path(@issue) do %><%= submit_tag 'Suggest labels' %><% end %><% end %>
+<% prediction = classifier['prediction']; feedback = classifier['feedback'] %>
+<% if prediction %>
+<p><strong>Prediction:</strong> <%= esa_label(prediction.dig('prediction', 'status')) %></p>
+<p>Scores are independent model estimates, not calibrated confidence.</p>
+<table class="list"><thead><tr><th>Label</th><th>Score</th><th>Suggested</th></tr></thead><tbody>
+<% Array(prediction.dig('prediction', 'scores')).each do |score| %><tr><td><%= score['label'] %></td><td><%= format('%.3f', score['score']) %></td><td><%= Array(prediction.dig('prediction', 'labels')).include?(score['label']) ? 'Yes' : 'No' %></td></tr><% end %>
+</tbody></table>
+<% if feedback %><p><strong>Human labels:</strong> <%= Array(feedback.dig('example', 'labels')).join(', ').presence || 'None' %> · Reviewed by <%= feedback.dig('example', 'reviewer') %></p><% end %>
+<% if User.current.allowed_to?(:review_esa, @issue.project) %>
+<%= form_tag esa_classifier_feedback_path(@issue) do %>
+<%= hidden_field_tag :prediction_id, prediction['id'] %><%= hidden_field_tag :feedback_id, SecureRandom.uuid %>
+<% selected = feedback ? Array(feedback.dig('example', 'labels')) : [] %>
+<p>Confirm all applicable labels. Leave all unchecked to confirm that none apply.</p>
+<% Array(classifier['labels']).each_with_index do |label, index| %><p><%= check_box_tag 'labels[]', label, selected.include?(label), id: "esa_classifier_label_#{index}" %> <%= label_tag "esa_classifier_label_#{index}", label %></p><% end %>
+<p><%= label_tag :feedback_note, 'Review note' %> <%= text_field_tag :feedback_note, '', size: 65, maxlength: 4000 %></p>
+<%= submit_tag 'Confirm human labels' %><% end %><% end %>
+<% end %></div><% end %>
 <% if User.current.allowed_to?(:submit_esa, @issue.project) %>
-<%= form_tag esa_analyze_path(@issue) do %><%= submit_tag @issue.closed? ? 'Collect current case' : 'Analyze current snapshot' %> <%= check_box_tag :force, '1' %> <%= label_tag :force, 'Force a new run (may consume the analysis budget)' %><% end %>
+<%= form_tag esa_forward_path(@issue) do %><%= submit_tag @issue.closed? ? 'Forward resolved issue to ESA' : 'Forward to ESA' %> <%= check_box_tag :force, '1' %> <%= label_tag :force, 'Force a new run (may consume the analysis budget)' %><% end %>
 <h3>ESA metadata</h3>
 <%= form_tag esa_metadata_path(@issue) do %><div class="box tabular">
 <p><%= label_tag :components, 'Components' %><%= text_field_tag :components, Array(@metadata['components']).join('; '), size: 60 %></p>
 <p><%= label_tag :versions, 'Affected versions' %><%= text_field_tag :versions, Array(@metadata['versions']).join('; '), size: 60 %></p>
 <p><%= label_tag :environment, 'Environment (JSON)' %><%= text_area_tag :environment, JSON.pretty_generate(@metadata['environment'] || {}), rows: 4, cols: 75 %></p>
-<p><%= label_tag :category_override, 'Category override' %><%= select_tag :category_override, options_for_select(['', 'unknown', 'code_defect', 'compatibility', 'performance', 'configuration', 'usage_question', 'feature_request'].map { |v| [v.blank? ? 'Automatic rules' : esa_label(v), v] }, @metadata['category_override']) %></p>
 <% { 'resolution_reason' => 'reason', 'cause' => 'cause', 'solution' => 'solution', 'validation' => 'validation' }.each do |name, field| %><p><%= label_tag name, esa_label(name) %><%= text_area_tag name, @metadata.dig('resolution', field), rows: 3, cols: 75 %></p><% end %>
-</div><%= submit_tag 'Save metadata and submit' %><% end %><% end %>
+</div><%= submit_tag 'Save metadata locally' %><% end %><% end %>
 <% if User.current.allowed_to?(:review_esa, @issue.project) %>
 <% if record && @issue.closed? %><h3>Case review</h3><%= form_tag esa_review_case_path(@issue) do %><%= text_field_tag :note, '', placeholder: 'Review evidence and applicability', size: 65 %><%= button_tag 'Approve trusted case', name: :review_action, value: 'approve' %><%= button_tag 'Reject case', name: :review_action, value: 'reject' %><% end %><% end %>
 <% if run && run['state'] == 'awaiting_review' %><h3>Engineering review</h3><%= form_tag esa_review_run_path(@issue) do %><%= text_field_tag :note, '', placeholder: 'Review note', size: 65 %><%= button_tag 'Approve report', name: :review_action, value: 'approve' %><%= button_tag 'Reject report', name: :review_action, value: 'reject' %><% end %><% end %>
 <% end %>
-<h3>Run history</h3><table class="list"><thead><tr><th>Created</th><th>State</th><th>Category</th><th>Route</th><th>Rule version</th><th>Provider calls</th></tr></thead><tbody><% @result['history'].each do |item| %><tr><td><%= item['created_at'] %></td><td><%= esa_label(item['state']) %></td><td><%= esa_label(item.dig('classification', 'category')) %></td><td><%= esa_label(item['route']) %></td><td><%= item['rule_version'] %></td><td><%= item.dig('report', 'usage', 'calls') || 0 %></td></tr><% end %></tbody></table>
+<h3>Run history</h3><table class="list"><thead><tr><th>Created</th><th>State</th><th>Route</th><th>Config version</th><th>Provider calls</th></tr></thead><tbody><% @result['history'].each do |item| %><tr><td><%= item['created_at'] %></td><td><%= esa_label(item['state']) %></td><td><%= esa_label(item['route']) %></td><td><%= item['rule_version'] %></td><td><%= item.dig('report', 'usage', 'calls') || 0 %></td></tr><% end %></tbody></table>

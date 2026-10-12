@@ -82,7 +82,6 @@ The tester does not choose or instantiate a model; engineering invocation is own
 
 ## Isolation, cleanup and limits
 
-The included ESA examples bind port 18090 and write a new state file below each run's output. They disable live Redmine sync. They make no model calls by default: the lifecycle example tests actual business transitions, while the Kafka example expects actual `awaiting_configuration` after the asynchronous worker runs. To test an engineering Agent, configure the target's own provider and environment-preparation capability, and change assertions to expect its actual completed report. The tester does not bypass this by calling a provider itself.
 
 Managed process isolation is process-group ownership and an independent state path, not an OS filesystem sandbox. Target configuration determines stronger isolation. SIGTERM/Ctrl-C stop owned process groups and close the owned runtime; a failed cleanup is reported. A crash/SIGKILL can prevent cleanup. Recover bundled runtime sessions using `SYSTEM_REPLAY_SESSIONS=<run>/sessions python3 runtime_driver.py --cleanup`; live sessions and foreign ownership are protected. Attached systems are never stopped or reset.
 
@@ -99,3 +98,6 @@ go list -deps ./...
 ```
 
 Tests cover public submission/polling, withholding assertion labels, refusing existing targets, historical order, unchanged failure/pass scenarios, malformed evidence, source/history boundaries, mainline merges/renames and owned-process cleanup. HTTP tests need permission to bind local test ports. The examples additionally verify real ESA business transitions and real Kafka client behavior; their lack of model calls must not be interpreted as an Agent accuracy result.
+
+
+Current ESA intake requires explicit `forwarded_by` and `forwarded_at`. External fixtures declare the manual action; the tester does not infer it. Classification and label learning are removed from the active application. See [manual forwarding](../docs/MANUAL_FORWARDING.md).

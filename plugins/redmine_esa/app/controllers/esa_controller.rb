@@ -1,11 +1,11 @@
 class EsaController < ApplicationController
   before_action :require_login
   before_action :load_scope
-  before_action :load_issue, only: [:show, :analyze, :metadata, :review_case, :review_run]
+  before_action :load_issue, only: [:show, :forward, :metadata, :review_case, :review_run, :classifier_predict, :classifier_feedback]
   rescue_from Esa::Error, with: :service_error
 
   def index
-    @query = params.permit(:project_id, :tracker, :status, :assignee, :source, :esa_state, :category, :route, :q, :sort, :direction, :page, :limit, :updated_from, :updated_to).to_h
+    @query = params.permit(:project_id, :tracker, :status, :assignee, :source, :esa_state, :route, :q, :sort, :direction, :page, :limit, :updated_from, :updated_to).to_h
     @result = @projects.empty? ? { 'tickets' => [], 'total_count' => 0, 'page' => 1, 'limit' => 25 } : @client.request(:get, '/v1/tickets', nil, @query)
   end
 
@@ -13,6 +13,10 @@ class EsaController < ApplicationController
     @result = @client.request(:get, "/v1/tickets/redmine:#{@issue.id}")
     @row = @result['ticket']
     @metadata = Esa::Payload.ticket(@issue)
+  rescue Esa::NotFound
+    @metadata = Esa::Payload.ticket(@issue)
+    @row = { 'ticket' => @metadata }
+    @result = { 'ticket' => @row, 'history' => [] }
   end
 
   def upload
@@ -55,24 +59,37 @@ class EsaController < ApplicationController
         issue = Issue.new(project: project, tracker: tracker, author: User.current, subject: ticket.fetch('subject'), description: ticket['description'].to_s, status: status)
         issue.save!
         EsaTicketSource.create!(issue: issue, project_id: project.id, source_key: key, esa_upload: upload, snapshot: ticket.to_json)
-        EsaEvent.enqueue(issue)
         count += 1
       end
       upload.update!(imported_at: Time.current)
     end
-    flash[:notice] = "Imported #{count} tickets; skipped #{skipped} existing source keys. Analysis will start through the ESA outbox."
-    redirect_to esa_path(project_id: project.id)
+    flash[:notice] = "Imported #{count} tickets; skipped #{skipped} existing source keys. Open each issue and choose Forward to ESA when engineering assistance is needed."
+    redirect_to project_issues_path(project)
   rescue ActiveRecord::RecordInvalid, ActiveRecord::RecordNotUnique => e
     raise Esa::Error, "Import was rolled back: #{e.message}"
   end
 
-  def analyze
+  def forward
     return unless require_permission(:submit_esa)
-    # Push the current snapshot first so manual analysis never uses stale input.
-    ticket = Esa::Payload.ticket(@issue)
-    @client.request(:post, '/v1/events', { id: "manual_#{SecureRandom.uuid}", origin: 'redmine', occurred_at: Time.current.iso8601(6), ticket: ticket })
-    @client.request(:post, "/v1/tickets/redmine:#{@issue.id}/analyze", { force: params[:force] == '1' }) unless @issue.closed?
-    flash[:notice] = 'The ticket snapshot was submitted to ESA.'
+    EsaEvent.forward(@issue, User.current, force: params[:force] == '1')
+    flash[:notice] = 'Manual forwarding queued. ESA will receive this snapshot through the durable outbox.'
+    redirect_to esa_ticket_path(@issue)
+  end
+
+  def classifier_predict
+    return unless require_permission(:submit_esa)
+    @client.request(:post, "/v1/tickets/redmine:#{@issue.id}/classifier/predict", {})
+    flash[:notice] = 'Label suggestions generated for the last forwarded snapshot. Human confirmation is required.'
+    redirect_to esa_ticket_path(@issue)
+  end
+
+  def classifier_feedback
+    return unless require_permission(:review_esa)
+    @client.request(:post, "/v1/tickets/redmine:#{@issue.id}/classifier/feedback", {
+      id: params[:feedback_id].to_s, prediction_id: params[:prediction_id].to_s,
+      labels: Array(params[:labels]).reject(&:blank?), reviewer: User.current.login, note: params[:feedback_note].to_s
+    })
+    flash[:notice] = 'Human labels recorded for future supervised training. Engineering routing is unchanged.'
     redirect_to esa_ticket_path(@issue)
   end
 
@@ -84,9 +101,8 @@ class EsaController < ApplicationController
     environment = JSON.parse(params[:environment].presence || '{}')
     raise Esa::Error, 'Environment must be a JSON object containing string values.' unless environment.is_a?(Hash) && environment.values.all? { |v| v.is_a?(String) }
     data['environment'] = environment
-    category = params[:category_override].to_s
-    raise Esa::Error, 'Unsupported category.' unless ['', 'unknown', 'code_defect', 'compatibility', 'performance', 'configuration', 'usage_question', 'feature_request'].include?(category)
-    data['category_override'] = category
+    data.delete('labels')
+    data.delete('category_override')
     data['resolution'] = { 'reason' => params[:resolution_reason].to_s, 'cause' => params[:cause].to_s, 'solution' => params[:solution].to_s, 'validation' => params[:validation].to_s }
     EsaTicketSource.transaction do
       source = EsaTicketSource.find_or_initialize_by(issue_id: @issue.id)
@@ -94,9 +110,8 @@ class EsaController < ApplicationController
       source.source_key ||= "REDMINE-#{@issue.id}"
       source.snapshot = data.to_json
       source.save!
-      EsaEvent.enqueue(@issue)
     end
-    flash[:notice] = 'ESA metadata saved. Original upload data remains available in the import record.'
+    flash[:notice] = 'Metadata saved locally. Forward the issue to ESA to submit this snapshot.'
     redirect_to esa_ticket_path(@issue)
   rescue JSON::ParserError
     raise Esa::Error, 'Environment must be valid JSON.'

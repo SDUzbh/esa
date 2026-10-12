@@ -28,7 +28,9 @@
         "id": "{{event_id}}",
         "origin": "system_replay",
         "occurred_at": "{{event_time}}",
-        "ticket": "{{ticket}}"
+        "ticket": "{{ticket}}",
+        "forwarded_by": "fixture-human",
+        "forwarded_at": "{{event_time}}"
       }
     },
     "observe": {
@@ -38,10 +40,6 @@
       "state": [
         "/ticket/latest_run/state",
         "/ticket/case/state"
-      ],
-      "category": [
-        "/ticket/latest_run/classification/category",
-        "/ticket/case/category"
       ],
       "route": [
         "/ticket/latest_run/route"
@@ -175,11 +173,6 @@
               "value": "completed"
             },
             {
-              "path": "/category",
-              "op": "eq",
-              "value": "code_defect"
-            },
-            {
               "path": "/route",
               "op": "eq",
               "value": "case_reuse"
@@ -190,7 +183,19 @@
               "value": 0
             }
           ],
-          "id": "case-reuse-idempotency"
+          "id": "case-reuse-idempotency",
+          "request": {
+            "method": "POST",
+            "path": "/v1/events",
+            "body": {
+              "id": "{{event_id}}",
+              "origin": "system_replay",
+              "occurred_at": "{{event_time}}",
+              "ticket": "{{ticket}}",
+              "forwarded_by": "fixture-human",
+              "forwarded_at": "2020-01-03T00:00:00Z"
+            }
+          }
         },
         {
           "at": "2020-01-03T00:00:01Z",
@@ -224,11 +229,6 @@
               "value": "completed"
             },
             {
-              "path": "/category",
-              "op": "eq",
-              "value": "code_defect"
-            },
-            {
               "path": "/route",
               "op": "eq",
               "value": "case_reuse"
@@ -251,7 +251,19 @@
               "op": "eq",
               "value": "duplicate"
             }
-          ]
+          ],
+          "request": {
+            "method": "POST",
+            "path": "/v1/events",
+            "body": {
+              "id": "{{event_id}}",
+              "origin": "system_replay",
+              "occurred_at": "{{event_time}}",
+              "ticket": "{{ticket}}",
+              "forwarded_by": "fixture-human",
+              "forwarded_at": "2020-01-03T00:00:00Z"
+            }
+          }
         },
         {
           "at": "2020-01-03T00:00:02Z",
@@ -283,11 +295,6 @@
               "path": "/state",
               "op": "eq",
               "value": "completed"
-            },
-            {
-              "path": "/category",
-              "op": "eq",
-              "value": "code_defect"
             },
             {
               "path": "/route",
@@ -373,17 +380,12 @@
             {
               "path": "/state",
               "op": "eq",
-              "value": "completed"
-            },
-            {
-              "path": "/category",
-              "op": "eq",
-              "value": "usage_question"
+              "value": "awaiting_configuration"
             },
             {
               "path": "/route",
               "op": "eq",
-              "value": "customer_support"
+              "value": "engineering_analysis"
             },
             {
               "path": "/raw/ticket/latest_run/report/usage/calls",
@@ -427,7 +429,9 @@
                 "updated_at": "2020-01-05T00:00:00Z",
                 "closed": false,
                 "resolution": {}
-              }
+              },
+              "forwarded_by": "fixture-human",
+              "forwarded_at": "{{event_time}}"
             }
           },
           "receipt_expect": [
@@ -436,7 +440,8 @@
               "op": "eq",
               "value": 404
             }
-          ]
+          ],
+          "expect": []
         }
       ]
     }

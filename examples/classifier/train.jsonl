@@ -1,0 +1,8 @@
+{"id": "train-1", "project_id": "1", "text": "Consumer crash null pointer on empty assignment", "labels": ["bug"], "reviewer": "synthetic-human", "reviewed_at": "2025-01-01T00:00:00Z"}
+{"id": "train-2", "project_id": "1", "text": "Broker crash null pointer during startup", "labels": ["bug"], "reviewer": "synthetic-human", "reviewed_at": "2025-01-01T00:00:00Z"}
+{"id": "train-3", "project_id": "1", "text": "Consumer slow latency throughput regression", "labels": ["performance"], "reviewer": "synthetic-human", "reviewed_at": "2025-01-01T00:00:00Z"}
+{"id": "train-4", "project_id": "1", "text": "Broker slow latency throughput under load", "labels": ["performance"], "reviewer": "synthetic-human", "reviewed_at": "2025-01-01T00:00:00Z"}
+{"id": "train-5", "project_id": "1", "text": "How configure consumer group settings documentation", "labels": ["usage"], "reviewer": "synthetic-human", "reviewed_at": "2025-01-01T00:00:00Z"}
+{"id": "train-6", "project_id": "1", "text": "How configure broker settings documentation", "labels": ["usage"], "reviewer": "synthetic-human", "reviewed_at": "2025-01-01T00:00:00Z"}
+{"id": "train-7", "project_id": "1", "text": "Consumer crash null pointer and slow latency regression", "labels": ["bug", "performance"], "reviewer": "synthetic-human", "reviewed_at": "2025-01-01T00:00:00Z"}
+{"id": "train-8", "project_id": "1", "text": "Broker crash and slow throughput regression", "labels": ["bug", "performance"], "reviewer": "synthetic-human", "reviewed_at": "2025-01-01T00:00:00Z"}

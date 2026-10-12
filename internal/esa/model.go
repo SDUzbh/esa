@@ -3,9 +3,11 @@ package esa
 import (
 	"encoding/json"
 	"time"
+
+	"esa/internal/classifier"
 )
 
-const WorkflowVersion = "2"
+const WorkflowVersion = "4"
 
 type Comment struct {
 	ID        string    `json:"id"`
@@ -23,6 +25,8 @@ type Resolution struct {
 }
 
 type Ticket struct {
+	ForwardedBy      string            `json:"forwarded_by,omitempty"`
+	ForwardedAt      time.Time         `json:"forwarded_at,omitempty"`
 	ID               string            `json:"id"`
 	SourceKey        string            `json:"source_key,omitempty"`
 	ProjectID        string            `json:"project_id"`
@@ -44,33 +48,50 @@ type Ticket struct {
 	Private          bool              `json:"private"`
 	Resolution       Resolution        `json:"resolution"`
 	CategoryOverride string            `json:"category_override,omitempty"`
+	Labels           json.RawMessage   `json:"labels,omitempty"`
 }
 
 type Event struct {
-	ID         string    `json:"id"`
-	Origin     string    `json:"origin"`
-	OccurredAt time.Time `json:"occurred_at"`
-	ReceivedAt time.Time `json:"received_at"`
-	Ticket     Ticket    `json:"ticket"`
-	Raw        jsonRaw   `json:"raw,omitempty"`
+	ForwardedBy string    `json:"forwarded_by"`
+	ForwardedAt time.Time `json:"forwarded_at"`
+	Force       bool      `json:"force,omitempty"`
+	ID          string    `json:"id"`
+	Origin      string    `json:"origin"`
+	OccurredAt  time.Time `json:"occurred_at"`
+	ReceivedAt  time.Time `json:"received_at"`
+	Ticket      Ticket    `json:"ticket"`
+	Raw         jsonRaw   `json:"raw,omitempty"`
 }
 
 type jsonRaw = json.RawMessage
 
-type Rule struct {
-	ID       string   `json:"id"`
-	Category string   `json:"category"`
-	Any      []string `json:"any"`
-	All      []string `json:"all"`
-	None     []string `json:"none"`
-	Trackers []string `json:"trackers"`
+type Config struct {
+	Version    string           `json:"version"`
+	Budget     Budget           `json:"budget"`
+	Classifier ClassifierConfig `json:"classifier"`
 }
 
-type Config struct {
-	Version               string   `json:"version"`
-	EngineeringCategories []string `json:"engineering_categories"`
-	Rules                 []Rule   `json:"rules"`
-	Budget                Budget   `json:"budget"`
+type ClassifierConfig struct {
+	Enabled bool              `json:"enabled"`
+	Models  map[string]string `json:"models,omitempty"`
+}
+
+type ClassifierPrediction struct {
+	ID          string                `json:"id"`
+	TicketID    string                `json:"ticket_id"`
+	ProjectID   string                `json:"project_id"`
+	Text        string                `json:"text"`
+	ForwardedAt time.Time             `json:"forwarded_at"`
+	CreatedAt   time.Time             `json:"created_at"`
+	Prediction  classifier.Prediction `json:"prediction"`
+}
+
+type ClassifierFeedback struct {
+	ID           string             `json:"id"`
+	PredictionID string             `json:"prediction_id"`
+	ModelVersion string             `json:"model_version"`
+	Note         string             `json:"note"`
+	Example      classifier.Example `json:"example"`
 }
 
 type Budget struct {
@@ -81,10 +102,17 @@ type Budget struct {
 	WarnTotalTokens int `json:"warn_total_tokens,omitempty"`
 }
 
+// Classification is retained solely to preserve historical stored reports.
+// New intake, routing and provider contracts do not produce it.
 type Classification struct {
-	Category   string   `json:"category"`
-	RuleIDs    []string `json:"rule_ids"`
-	Candidates []string `json:"candidates,omitempty"`
+	Category    string            `json:"category"`
+	Categories  []string          `json:"categories,omitempty"`
+	Tags        []string          `json:"tags,omitempty"`
+	Confirmed   bool              `json:"confirmed"`
+	Source      string            `json:"source,omitempty"`
+	Suggestions []json.RawMessage `json:"suggestions,omitempty"`
+	RuleIDs     []string          `json:"rule_ids"`
+	Candidates  []string          `json:"candidates,omitempty"`
 }
 
 type Case struct {
@@ -96,6 +124,8 @@ type Case struct {
 	Subject     string            `json:"subject"`
 	Summary     string            `json:"summary"`
 	Category    string            `json:"category"`
+	Categories  []string          `json:"categories,omitempty"`
+	Tags        []string          `json:"tags,omitempty"`
 	Components  []string          `json:"components"`
 	Versions    []string          `json:"versions"`
 	Environment map[string]string `json:"environment"`
@@ -112,6 +142,7 @@ type Case struct {
 }
 
 type Match struct {
+	Categories  []string `json:"categories,omitempty"`
 	CaseID      string   `json:"case_id"`
 	CaseVersion int      `json:"case_version"`
 	Subject     string   `json:"subject"`
@@ -177,23 +208,23 @@ type EnvironmentRequest struct {
 }
 
 type Run struct {
-	ID                 string         `json:"id"`
-	TicketID           string         `json:"ticket_id"`
-	ProjectID          string         `json:"project_id"`
-	InputHash          string         `json:"input_hash"`
-	WorkflowVersion    string         `json:"workflow_version"`
-	RuleVersion        string         `json:"rule_version"`
-	CaseGeneration     int            `json:"case_generation"`
-	Input              Ticket         `json:"input"`
-	Classification     Classification `json:"classification"`
-	Route              string         `json:"route"`
-	State              string         `json:"state"`
-	Matches            []Match        `json:"matches"`
-	MissingInformation []string       `json:"missing_information"`
-	Report             Report         `json:"report"`
-	Error              string         `json:"error,omitempty"`
-	CreatedAt          time.Time      `json:"created_at"`
-	UpdatedAt          time.Time      `json:"updated_at"`
+	ID                 string          `json:"id"`
+	TicketID           string          `json:"ticket_id"`
+	ProjectID          string          `json:"project_id"`
+	InputHash          string          `json:"input_hash"`
+	WorkflowVersion    string          `json:"workflow_version"`
+	RuleVersion        string          `json:"rule_version"`
+	CaseGeneration     int             `json:"case_generation"`
+	Input              Ticket          `json:"input"`
+	Classification     *Classification `json:"classification,omitempty"`
+	Route              string          `json:"route"`
+	State              string          `json:"state"`
+	Matches            []Match         `json:"matches"`
+	MissingInformation []string        `json:"missing_information"`
+	Report             Report          `json:"report"`
+	Error              string          `json:"error,omitempty"`
+	CreatedAt          time.Time       `json:"created_at"`
+	UpdatedAt          time.Time       `json:"updated_at"`
 }
 
 type Receipt struct {
@@ -205,13 +236,15 @@ type Receipt struct {
 }
 
 type State struct {
-	SchemaVersion int                `json:"schema_version"`
-	Generation    int                `json:"generation"`
-	Tickets       map[string]Ticket  `json:"tickets"`
-	Events        map[string]Event   `json:"events"`
-	Receipts      map[string]Receipt `json:"receipts"`
-	Runs          map[string]Run     `json:"runs"`
-	Latest        map[string]string  `json:"latest"`
-	Cases         map[string]Case    `json:"cases"`
-	CaseHistory   []Case             `json:"case_history"`
+	ClassifierPredictions map[string]ClassifierPrediction `json:"classifier_predictions,omitempty"`
+	ClassifierFeedback    map[string]ClassifierFeedback   `json:"classifier_feedback,omitempty"`
+	SchemaVersion         int                             `json:"schema_version"`
+	Generation            int                             `json:"generation"`
+	Tickets               map[string]Ticket               `json:"tickets"`
+	Events                map[string]Event                `json:"events"`
+	Receipts              map[string]Receipt              `json:"receipts"`
+	Runs                  map[string]Run                  `json:"runs"`
+	Latest                map[string]string               `json:"latest"`
+	Cases                 map[string]Case                 `json:"cases"`
+	CaseHistory           []Case                          `json:"case_history"`
 }

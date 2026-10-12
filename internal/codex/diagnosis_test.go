@@ -14,7 +14,7 @@ import (
 func TestStructuredLocationMustBeHistoricalAndInspected(t *testing.T) {
 	packet := Packet{Commit: "old", Documents: []Document{{Source: "git", Prefix: "old:x.java:", First: 2, Lines: []string{"bug();", "tail();"}}}}
 	f := esa.Finding{Commit: "old", File: "x.java", StartLine: 2, EndLine: 2, Problem: "Null completion", Solution: "Fail future", Evidence: []esa.Evidence{{Source: "git", Reference: "old:x.java:2", Quote: "bug();"}}}
-	out := EngineeringOutput{Classification: "code_defect", Issue: esa.IssueAssignment{Title: "Completion failure", Reason: "New issue"}, Findings: []esa.Finding{f}}
+	out := EngineeringOutput{Issue: esa.IssueAssignment{Title: "Completion failure", Reason: "New issue"}, Findings: []esa.Finding{f}}
 	if _, e := out.Report(packet); e != nil {
 		t.Fatal(e)
 	}
@@ -28,13 +28,9 @@ func TestStructuredLocationMustBeHistoricalAndInspected(t *testing.T) {
 		t.Fatal("future source accepted")
 	}
 	out.Findings[0] = f
-	out.Classification = "usage_question"
-	if _, e := out.Report(packet); e == nil {
-		t.Fatal("support engineering finding accepted")
-	}
 	out.Findings = nil
 	if _, e := out.Report(packet); e != nil {
-		t.Fatal("support classification must remain possible", e)
+		t.Fatal("unlocated diagnosis must remain possible", e)
 	}
 	out.Issue.ExistingID = "unknown"
 	if _, e := out.Report(packet); e == nil {
@@ -68,5 +64,14 @@ func TestRetrospectiveProviderUsesSeparateToolsAndRecordsUsage(t *testing.T) {
 	p.ToolsConfig = "unexpected"
 	if _, e = p.Review(context.Background(), request, esa.Budget{}, "run_tools"); e == nil {
 		t.Fatal("retrospective tools accepted")
+	}
+}
+
+func TestDiagnosisSchemaDoesNotAskForClassification(t *testing.T) {
+	schema := string(EngineeringSchema())
+	for _, field := range []string{"classification", "categories", "tags"} {
+		if strings.Contains(schema, `"`+field+`"`) {
+			t.Fatal("classification remains in active schema", schema)
+		}
 	}
 }

@@ -26,7 +26,7 @@ func main() {
 func run() error {
 	address := flag.String("listen", "127.0.0.1:8090", "HTTP listen address")
 	data := flag.String("store", "runtime/esa/state.json", "Single-process durable state file")
-	rules := flag.String("rules", "config/rules.json", "Rules and analysis budget configuration")
+	rules := flag.String("rules", "config/rules.json", "Workflow configuration and analysis budget")
 	health := flag.Bool("healthcheck", false, "Check the local ESA HTTP server and exit")
 	flag.Parse()
 	if *health {

@@ -27,7 +27,7 @@ func (p *Provider) Review(ctx context.Context, request codexreview.ReviewRequest
 	if budget.MaxCalls != 1 || p.ToolsConfig != "" || !strings.HasPrefix(runID, "run_") || strings.ContainsAny(runID, "/\\.") {
 		return r, fmt.Errorf("retrospective review requires a separate tool-free run")
 	}
-	if request.Candidate.Commit == "" || request.Prediction.AgentClassification == nil || request.Baseline == "" {
+	if request.Candidate.Commit == "" || request.Baseline == "" {
 		return r, fmt.Errorf("frozen prediction and candidate are required")
 	}
 	dir := filepath.Join(p.RunsDir, runID)
@@ -52,7 +52,7 @@ func (p *Provider) Review(ctx context.Context, request codexreview.ReviewRequest
 	visible.Request.Candidate.Patch = ""
 	visible.Request.Candidate.Message = ""
 	visible.Request.Issue.Findings = nil
-	visible.Request.Prediction = esa.Report{AgentClassification: request.Prediction.AgentClassification, Issue: request.Prediction.Issue, Findings: request.Prediction.Findings, Limitations: request.Prediction.Limitations}
+	visible.Request.Prediction = esa.Report{Issue: request.Prediction.Issue, Findings: request.Prediction.Findings, Limitations: request.Prediction.Limitations}
 	if request.Runtime != nil {
 		visible.Request.Runtime = map[string]any{}
 		for phase, value := range request.Runtime {

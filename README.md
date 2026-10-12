@@ -9,10 +9,12 @@ This repository contains ESA code and deployment definitions. Redmine is referen
 - A native Redmine **ESA** menu, ticket list, filters, sorting, pagination, ticket details, and review controls.
 - UTF-8 Jira JSON, ESA JSON, and Jira CSV upload with preview, validation, preserved original input, and source-key deduplication.
 - Durable Redmine event outbox, acknowledgement after backend commit, idempotent ingestion, and stale-event handling.
-- Deterministic classification and routing. Only configured engineering categories may enter engineering analysis.
+- Explicit manual forwarding from Redmine with actor/time provenance. Creating, editing, importing or saving metadata does not submit a ticket.
+- Classification rules, preset labels and Agent classification are removed from intake and routing.
+- An optional Go TF-IDF + Logistic Regression classifier (disabled by default) supplies multiple label suggestions for human confirmation, with independent train/test/predict/retrain commands and scoped correction exports. See [classifier operations](docs/CLASSIFIER.md).
 - Project-scoped case retrieval with component, affected-version, environment, and symptom checks.
-- Collection of all closed tickets as case drafts; duplicates and rejected resolutions have separate states. Engineer approval requires cause, solution, validation, component, version, and category.
-- Automatic applicable-case recommendations with zero model calls. Reopening, changing, rejecting, or making a source ticket private withdraws its trusted evidence.
+- Collection of manually forwarded closed tickets as case drafts; duplicates and rejected resolutions have separate states. Engineer approval requires cause, solution, validation, component and version.
+- Automatic applicable-case recommendations with zero model calls. Forwarding a reopened, changed or private source snapshot withdraws obsolete trusted evidence; rejecting a case also withdraws it.
 - A bounded asynchronous HTTP engineering-provider interface, explicit unconfigured/failed states, evidence validation, and human report review.
 - Application tests in `replay_test` check temporal case visibility and conservative Jira snapshots. They are separate from the standalone external system tester.
 - A Go Codex CLI adapter accepts an explicitly registered historical evidence packet, validates exact source quotes, records actual usage, and returns engineering reports for human review.
@@ -21,9 +23,31 @@ This repository contains ESA code and deployment definitions. Redmine is referen
 - Registered MCP tools support installation, system/debugger execution, frozen source inspection and environment change requests. Source, dependencies and baseline bytecode remain read-only.
 - Per-ticket token warnings appear in provider logs, audit files, batch results and ESA reports without cancelling analysis.
 
+## Ticket workflow
+
+1. Create or import an ordinary Redmine issue and prepare its diagnostic metadata. These actions do not submit it to ESA.
+2. An authorized user selects **Forward to ESA**. The durable outbox sends the snapshot with the human actor and forwarding time.
+3. A forwarded open issue checks applicable trusted cases from the same project. If no case applies, missing context is requested or read-only engineering analysis is queued. This decision does not depend on a category or Tracker.
+4. An engineer reviews the diagnosis, evidence, concrete code findings, repair recommendations and verification steps. ESA does not modify product source or automatically close the Redmine issue.
+5. Forward a resolved issue to collect a case draft. Engineer approval makes it available for applicable recommendations on already forwarded tickets. Forward subsequent source changes to refresh or withdraw its evidence.
+
+The optional classifier supplies label suggestions alongside this workflow. Human confirmation and feedback training do not control admission, engineering routing or case approval. See [manual forwarding](docs/MANUAL_FORWARDING.md) and [backend workflow](docs/ESA_BACKEND_WORKFLOW.md).
+
+## Repository layout
+
+| Path | Responsibility |
+| --- | --- |
+| `cmd/esa`, `internal/esa` | Go HTTP service, manual intake, diagnosis orchestration, cases and durable state |
+| `plugins/redmine_esa` | Native Redmine UI, authorization, imports and forwarding outbox |
+| `cmd/esa-classifier`, `internal/classifier` | Optional local classifier and independent supervised training/testing |
+| `cmd/esa-codex`, `internal/codex` | Read-only engineering provider and historical evidence validation |
+| `system_replay` | Independent Go module for external API replay and subsequent Git repair evaluation |
+| `replay_test` | Application-level temporal snapshot and case tests |
+| `deploy`, `scripts`, `docs`, `examples` | Deployment definitions, command wrappers, documentation and synthetic fixtures |
+
 ## Run
 
-The existing local Redmine deployment is at http://127.0.0.1:8080/. The **ESA Demo** project contains synthetic validation data and one frozen real KAFKA-2880 replay ticket. Enable the **ESA** project module for other projects and grant View ESA, Submit ESA, and Review ESA permissions to the appropriate roles. Uploading also requires Add issues permission.
+The local Compose configuration publishes Redmine at http://127.0.0.1:8080/. Follow [fresh-checkout setup](docs/DEPENDENCIES.md) for the required runtime and private deployment configuration. Enable the **ESA** project module and grant View ESA, Submit ESA, and Review ESA permissions to the appropriate roles. Uploading also requires Add issues permission.
 
 Build using Go 1.27 or the verified project-local toolchain:
 
@@ -33,7 +57,7 @@ DOCKER_CONTEXT=colima-redmine docker-compose -f deploy/redmine/compose.yaml buil
 DOCKER_CONTEXT=colima-redmine docker-compose -f deploy/redmine/compose.yaml up -d
 ```
 
-The build defaults to Linux ARM64 for this machine. Set `ESA_GO_ARCH=amd64` for an AMD64 deployment. No external Go modules or Python packages are required.
+The build produces Linux ARM64 `bin/esa` and host binaries for `esa-replay`, `esa-codex` and `esa-classifier`. Set `ESA_GO_ARCH=amd64` for an AMD64 service deployment. No external Go modules or Python packages are required. Building does not activate an existing deployment: rebuild and restart its images to use updated code. The Redmine service runs plugin migrations at startup, including the migration adding manual forwarding provenance to the outbox.
 
 For direct development, configure a service token and use a separate store:
 
@@ -44,6 +68,43 @@ export ESA_API_TOKEN='<at least 24 random characters>'
 
 The service token in `deploy/redmine/.env` is private. The browser never receives it. The plugin derives project and issue visibility from the current Redmine user. The Go service is reachable only inside the Compose network.
 
+## Optional classifier
+
+`config/rules.json` ships with `classifier.enabled: false`. When enabled for a project, a user with **Submit ESA** can request **Suggest labels** on a forwarded ticket; a user with **Review ESA** confirms or corrects the complete label set. Opening the page and forwarding a ticket do not automatically run the classifier.
+
+The Go implementation uses TF-IDF features and independent Logistic Regression models for multiple labels. Online features are limited to the last forwarded subject and description. Labels come from human-reviewed training data or an explicit training label set. Scores are advisory and uncalibrated; inputs with no known features abstain. Classification makes no Agent calls.
+
+After building, run the independent commands from the repository root:
+
+```sh
+bin/esa-classifier train \
+  -data examples/classifier/train.jsonl \
+  -cutoff 2025-01-01T00:00:00Z \
+  -output runtime/classifier/demo-candidate.json
+bin/esa-classifier test \
+  -model runtime/classifier/demo-candidate.json \
+  -data examples/classifier/test.jsonl
+bin/esa-classifier predict \
+  -model runtime/classifier/demo-candidate.json \
+  -text 'Consumer crash null pointer and slow latency regression'
+```
+
+Each output model path must be new. These fixtures are synthetic; their results do not establish accuracy on real Jira tickets. Raw Jira exports require curation into reviewed JSONL examples with stable ticket IDs, project IDs, snapshot text, complete human labels, reviewer and review time. Testing rejects training-group/text overlap and requires later held-out reviews. Metrics include per-label and micro/macro F1, exact label-set accuracy, Hamming loss and abstentions.
+
+Human feedback retains the exact predicted snapshot, model version, reviewer and review time. Export it at an explicit cutoff and create a new candidate:
+
+```sh
+bin/esa-classifier retrain \
+  -data runtime/classifier/human-training.jsonl \
+  -feedback runtime/classifier/feedback.jsonl \
+  -cutoff 2026-10-13T00:00:00Z \
+  -output runtime/classifier/candidate-v2.json
+```
+
+Retraining uses the newest human correction per ticket at the cutoff and fully refits TF-IDF and Logistic Regression. Keep the test population out of both base training data and feedback. Test the candidate independently, then manually configure `classifier.enabled: true` and `classifier.models` with project-specific model paths and restart ESA. Container deployments also need read-only model/config mounts and appropriate file access for the service user. A historical snapshot cannot use a model trained from reviews after its forwarding time. There is no automatic model promotion.
+
+See [classifier operations](docs/CLASSIFIER.md) for the JSONL contract, feedback export API, training options, model activation and temporal evaluation safeguards. Keep real datasets, feedback and models in ignored `runtime/` or `reports/` directories.
+
 ## Tests
 
 ```sh
@@ -51,7 +112,7 @@ GOCACHE="$PWD/.tools/go-cache" GOTOOLCHAIN=local .tools/go/bin/go test -race ./.
 GOCACHE="$PWD/.tools/go-cache" GOTOOLCHAIN=local .tools/go/bin/go vet ./...
 ```
 
-Use `examples/resolved-case.json` to import a resolved synthetic issue. Open its ESA detail and approve the case after reviewing its evidence. Upload `examples/new-issues.csv`: the matching engineering issue receives the trusted recommendation, while the usage question follows customer support. Reopen the source issue to withdraw the recommendation.
+Use `examples/resolved-case.json` to import a resolved synthetic issue, manually forward it, then approve its case after reviewing the evidence. Upload `examples/new-issues.csv` and manually forward the matching engineering issue to receive the trusted recommendation. Forward the usage question only if engineering assistance is needed. Reopen the source issue and forward its changed snapshot to withdraw the recommendation.
 
 ## External system replay
 
@@ -62,13 +123,14 @@ GOCACHE="$PWD/.tools/go-cache" GOTOOLCHAIN=local .tools/go/bin/go build -o bin/e
 sh scripts/build_system_replay.sh
 python3 scripts/replay_pipeline.py --pipeline --manifest system_replay/examples/esa-api-lifecycle.json --output reports/new-lifecycle-run
 python3 scripts/replay_pipeline.py --pipeline --manifest system_replay/examples/esa-api-kafka.json --output reports/new-kafka-run
+python3 scripts/replay_pipeline.py --pipeline --manifest system_replay/examples/esa-api-forwarding.json --output reports/new-forwarding-run
 ```
 
-The lifecycle example exercises the actual ESA public API: case collection/approval/reuse, duplicate and stale events, reopening, support routing and project permissions. The Kafka example additionally runs historical client code before and after the upstream repair. Both start a fresh backend on port 18090 with a separate state file and disable Redmine synchronization. The lifecycle example needs no Kafka checkout or Jira export; the Kafka example needs those external inputs and Docker.
+The lifecycle example exercises the actual ESA public API: case collection/approval/reuse, duplicate and stale events, reopening, forwarded support requests and project permissions. The Kafka example additionally runs historical client code before and after the upstream repair. Both start a fresh backend on port 18090 with a separate state file and disable Redmine synchronization. The lifecycle example needs no Kafka checkout or Jira export; the Kafka example needs those external inputs and Docker.
 
-The defaults make no model calls. Kafka's expected backend state is `awaiting_configuration`; a successful runtime repair test does not establish engineering Agent accuracy. To test a provider, configure it in the system under test and update the external assertions. The tester never invokes that provider directly.
+The defaults make no model calls. The explicitly forwarded Kafka ticket reaches `awaiting_configuration` without a provider; a successful runtime repair test does not establish engineering Agent accuracy. To test a provider, configure it in the system under test and update the external assertions. The tester never invokes that provider directly.
 
-See [architecture and evaluation](docs/TICKET_BACKTEST.md), [CLI operations](docs/REPLAY_PIPELINE.md), and [the standalone manifest/runtime contract](system_replay/README.md). Root application tests do not include the nested module:
+See [manual forwarding](docs/MANUAL_FORWARDING.md), [architecture and evaluation](docs/TICKET_BACKTEST.md), [CLI operations](docs/REPLAY_PIPELINE.md), and [the standalone manifest/runtime contract](system_replay/README.md). Root application tests do not include the nested module:
 
 ```sh
 GOCACHE="$PWD/.tools/go-cache" GOTOOLCHAIN=local .tools/go/bin/go -C system_replay test -race ./...
@@ -83,8 +145,8 @@ The Codex adapter disables native host tools and exposes only four registered re
 
 ## Boundaries of this first version
 
-This is a working development foundation with one focused historical replay trial. Automatic customer environment inference, universal historical build profiles, document retrieval, recovery of unavailable historical comment bodies, archive-wide accuracy validation, external release listening, universal runtime verification and a rules administration page remain to be implemented. Replay profiles explicitly separate environment readiness from reproduction of a customer issue. Importing a current Jira export does not make it a valid historical snapshot.
+This is a working development foundation with one focused historical replay trial. Automatic customer environment inference, universal historical build profiles, document retrieval, recovery of unavailable historical comment bodies, archive-wide diagnosis/classifier accuracy validation, external release listening and universal runtime verification remain to be implemented. Replay profiles explicitly separate environment readiness from reproduction of a customer issue. Importing a current Jira export does not make it a valid historical snapshot.
 
-State is stored as an atomic JSON snapshot with a single-writer process lock. It preserves immutable events, run inputs, and case revisions; it is intended for this local prototype. The plugin limits access to 2,000 visible ESA issues per request. Move state to a transactional database and implement scalable authorization before importing the full Jira archive. Cross-project issue moves, deletions, bulk-edit hooks, REST-created issues, and retroactive ingestion need a dedicated reconciliation mechanism; use the manual submit action for existing visible issues. Private issues are excluded from shared analysis and case recommendations.
+State is stored as an atomic JSON snapshot with a single-writer process lock. It preserves immutable events, run inputs, case revisions, classifier predictions and human feedback; it is intended for this local prototype. The plugin limits access to 2,000 visible ESA issues per request. Move state to a transactional database and implement scalable authorization before importing the full Jira archive. Source edits, reopening and resolution do not automatically reach ESA; manually forward updated visible snapshots. The plugin excludes current private issues from forwarding. Privacy changes affecting previously forwarded snapshots, cross-project moves, deletions and retroactive ingestion need a dedicated reconciliation mechanism. Backend snapshots marked private are excluded from shared analysis, case recommendations and classifier operations.
 
 Original `data/` and `kafka/` remain untouched. Old audit reports retain their original language.

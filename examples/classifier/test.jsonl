@@ -1,0 +1,4 @@
+{"id": "test-1", "project_id": "1", "text": "New consumer crash null pointer reproduced", "labels": ["bug"], "reviewer": "synthetic-human", "reviewed_at": "2025-02-01T00:00:00Z"}
+{"id": "test-2", "project_id": "1", "text": "New broker slow latency throughput measured", "labels": ["performance"], "reviewer": "synthetic-human", "reviewed_at": "2025-02-01T00:00:00Z"}
+{"id": "test-3", "project_id": "1", "text": "How configure documentation for new settings", "labels": ["usage"], "reviewer": "synthetic-human", "reviewed_at": "2025-02-01T00:00:00Z"}
+{"id": "test-4", "project_id": "1", "text": "New consumer crash slow latency reproduced regression", "labels": ["bug", "performance"], "reviewer": "synthetic-human", "reviewed_at": "2025-02-01T00:00:00Z"}

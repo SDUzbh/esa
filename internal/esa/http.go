@@ -103,11 +103,16 @@ func (api *API) Handler() http.Handler {
 	mux.HandleFunc("GET /v1/tickets", api.tickets)
 	mux.HandleFunc("GET /v1/tickets/{id}", api.ticket)
 	mux.HandleFunc("POST /v1/tickets/{id}/analyze", api.analyze)
+	mux.HandleFunc("GET /v1/tickets/{id}/classifier", api.classifierStatus)
+	mux.HandleFunc("POST /v1/tickets/{id}/classifier/predict", api.classifierPredict)
+	mux.HandleFunc("POST /v1/tickets/{id}/classifier/feedback", api.classifierFeedback)
+	mux.HandleFunc("GET /v1/classifier/feedback", api.classifierExport)
 	mux.HandleFunc("GET /v1/runs/{id}", api.run)
 	mux.HandleFunc("POST /v1/runs/{id}/review", api.reviewRun)
 	mux.HandleFunc("GET /v1/cases", api.cases)
 	mux.HandleFunc("POST /v1/cases/{id}/review", api.reviewCase)
 	mux.HandleFunc("POST /v1/import/preview", api.preview)
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) { writeError(w, ErrNotFound) })
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		if r.URL.Path != "/healthz" {
@@ -171,7 +176,7 @@ func (api *API) tickets(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	rows := []TicketRow{}
 	for _, t := range s.Tickets {
-		if t.Private || !ticketAllowed(r, t.ID) || !allowed(r, t.ProjectID) || !queryMatches(t.ProjectID, q.Get("project_id")) || !queryMatches(t.Tracker, q.Get("tracker")) || !queryMatches(t.Status, q.Get("status")) || !queryMatches(t.Assignee, q.Get("assignee")) || !queryMatches(t.Source, q.Get("source")) {
+		if t.ForwardedBy == "" || t.ForwardedAt.IsZero() || t.Private || !ticketAllowed(r, t.ID) || !allowed(r, t.ProjectID) || !queryMatches(t.ProjectID, q.Get("project_id")) || !queryMatches(t.Tracker, q.Get("tracker")) || !queryMatches(t.Status, q.Get("status")) || !queryMatches(t.Assignee, q.Get("assignee")) || !queryMatches(t.Source, q.Get("source")) {
 			continue
 		}
 		row := rowFor(s, t)
@@ -179,19 +184,17 @@ func (api *API) tickets(w http.ResponseWriter, r *http.Request) {
 			v := visibleRun(r, s, *row.LatestRun)
 			row.LatestRun = &v
 		}
-		state, category, route := "", "", "case_collection"
+		state, route := "", "case_collection"
 		updated := t.UpdatedAt
 		if row.LatestRun != nil && !t.Closed {
 			state = row.LatestRun.State
-			category = row.LatestRun.Classification.Category
 			route = row.LatestRun.Route
 			updated = row.LatestRun.UpdatedAt
 		} else if row.Case != nil {
 			state = row.Case.State
-			category = row.Case.Category
 			updated = row.Case.UpdatedAt
 		}
-		if !queryMatches(state, q.Get("esa_state")) || !queryMatches(category, q.Get("category")) || !queryMatches(route, q.Get("route")) {
+		if !queryMatches(state, q.Get("esa_state")) || !queryMatches(route, q.Get("route")) {
 			continue
 		}
 		if search := lower(q.Get("q")); search != "" && !strings.Contains(lower(t.ID+" "+t.SourceKey+" "+t.Subject), search) {
@@ -304,7 +307,7 @@ func (api *API) tickets(w http.ResponseWriter, r *http.Request) {
 func (api *API) ticket(w http.ResponseWriter, r *http.Request) {
 	s := api.Engine.Store.Snapshot()
 	t, ok := s.Tickets[r.PathValue("id")]
-	if !ok || !ticketAllowed(r, t.ID) || !allowed(r, t.ProjectID) {
+	if !ok || t.ForwardedBy == "" || t.ForwardedAt.IsZero() || !ticketAllowed(r, t.ID) || !allowed(r, t.ProjectID) {
 		writeError(w, ErrNotFound)
 		return
 	}
@@ -320,23 +323,28 @@ func (api *API) ticket(w http.ResponseWriter, r *http.Request) {
 		v := visibleRun(r, s, *row.LatestRun)
 		row.LatestRun = &v
 	}
-	writeJSON(w, 200, map[string]any{"ticket": row, "history": history})
+	result := map[string]any{"ticket": row, "history": history}
+	if api.Engine.Config.Classifier.Enabled && !t.Private {
+		result["classifier"] = api.Engine.classifierView(s, t)
+	}
+	writeJSON(w, 200, result)
 }
 
 func (api *API) analyze(w http.ResponseWriter, r *http.Request) {
 	t, ok := api.Engine.Store.Snapshot().Tickets[r.PathValue("id")]
-	if !ok || !ticketAllowed(r, t.ID) || !allowed(r, t.ProjectID) {
+	if !ok || t.ForwardedBy == "" || t.ForwardedAt.IsZero() || !ticketAllowed(r, t.ID) || !allowed(r, t.ProjectID) {
 		writeError(w, ErrNotFound)
 		return
 	}
 	var input struct {
-		Force bool `json:"force"`
+		Force       bool   `json:"force"`
+		ForwardedBy string `json:"forwarded_by"`
 	}
 	if err := decodeJSON(w, r, &input); err != nil {
 		writeError(w, err)
 		return
 	}
-	receipt, err := api.Engine.AnalyzeTicket(t.ID, input.Force)
+	receipt, err := api.Engine.AnalyzeTicket(t.ID, input.Force, input.ForwardedBy)
 	if err != nil {
 		writeError(w, err)
 		return

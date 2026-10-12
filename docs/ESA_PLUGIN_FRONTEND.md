@@ -1,17 +1,13 @@
-# ESA Redmine Frontend
+# ESA Redmine frontend
 
-The plugin follows the native Redmine layout, tables, forms, links, and role permissions. Its interface and all new development artifacts use English. The Redmine core remains unchanged.
+The English plugin follows Redmine's native layout and permissions. The ESA menu lists manually forwarded issues visible to the logged-in user, with filters, sorting and pagination. The former category/tag routing controls and Agent classification reports have been removed. When explicitly enabled, an optional ticket detail panel offers local label suggestions and human correction; it does not change forwarding or engineering routing. See [classifier operations](CLASSIFIER.md).
 
-The global **ESA** menu opens a list of processed issues visible to the signed-in user. Columns include issue ID, subject, source key, project, tracker, status, ESA state, assignee, source, update time, category, and route. Column headers sort on the server. Filters support project, tracker, status, assignee, source, category, route, ESA state, subject/source-key search, and update-time bounds. Pages contain 25 records by default.
+The link on an ordinary issue opens its ESA page even before forwarding. **Forward to ESA** submits the current snapshot through the durable outbox. The optional force choice creates a fresh diagnosis and may spend again. Only this action forwards an issue; new/edit hooks do not.
 
-**Upload tickets** accepts UTF-8 `.json` and `.csv` files, up to 10 MB and 2,000 records. The user selects an authorized project, previews valid rows and validation errors, then imports valid records. Existing source keys are skipped rather than overwritten. The original upload is preserved in the plugin database. Header aliases are fixed in this version; configurable mapping is future work. Source timestamps without a timezone are interpreted as UTC.
+Upload accepts UTF-8 JSON/CSV, previews rows and creates Redmine issues while preserving original uploads and source-key deduplication. Import does not forward or analyze them. Metadata saves component/version/environment and resolution information locally; forward the issue separately to submit an updated snapshot.
 
-Ticket detail links back to the original Redmine issue and shows classification, route, state, missing information, candidate causes, evidence, recommendations, verification steps, limitations, provider usage, advisory token warnings, pending environment change requests, and run history. **Analyze current snapshot** submits current visible issue content before queuing analysis. Forced runs are explicit and may consume another budget.
+The detail shows intake provenance, processing state, missing information, recommendations, concrete code findings, evidence, usage, advisory alerts and review controls. A forwarded closed issue becomes a case draft. Case/report approval does not close the Redmine issue.
 
-The metadata form accepts components and affected versions separated by semicolons, an environment JSON object, an optional category override, resolution reason, cause, solution, and validation. It saves supplemental ESA metadata and retains the original upload.
+View ESA, Submit ESA and Review ESA permissions remain required; import also requires Add issues. Issue visibility can be narrower than project visibility, and private issues are excluded from shared pages. The service token never enters browser requests. The prototype limits authorized scopes to 2,000 visible ESA issues.
 
-Closed tickets expose case review. A trusted case needs explicit cause, solution, validation, component, affected version, and category. Approval updates applicable recommendations without extra model calls. Engineering reports expose a separate approval/rejection control while awaiting review. These actions do not close the original issue.
-
-Enable the **ESA** project module, then grant **View ESA**, **Submit ESA**, and **Review ESA** permissions. Upload additionally requires **Add issues**. Issue visibility may be narrower than project visibility; the plugin supplies both scopes to Go. Private issues are excluded from shared handling. The service credential never appears in HTML or client requests.
-
-The current deployment limits each authorized scope to 2,000 visible ESA issues. A database-backed authorization implementation is required before full-archive use. Git execution, release verification, configurable import mappings, and rules administration have no UI yet because their backend capabilities remain future work.
+The forwarding-column migration is required for the new outbox. Old automatic events remain stored but are not delivered. See [manual forwarding](MANUAL_FORWARDING.md).

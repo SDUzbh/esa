@@ -11,6 +11,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"esa/internal/classifier"
 )
 
 var ErrInvalid = errors.New("invalid request")
@@ -22,23 +24,33 @@ var exceptions = regexp.MustCompile(`\b[A-Za-z][A-Za-z0-9_.]*(?:Exception|Error)
 var stopWords = map[string]bool{"the": true, "this": true, "that": true, "with": true, "from": true, "have": true, "when": true, "then": true, "there": true, "issue": true, "error": true, "exception": true, "timeout": true, "oom": true, "using": true, "after": true, "before": true, "does": true, "should": true, "could": true, "would": true, "and": true, "for": true, "not": true, "are": true, "was": true, "can": true, "but": true, "our": true, "has": true, "will": true, "how": true}
 
 type Engine struct {
-	Store  *Store
-	Config Config
-	Now    func() time.Time
+	Store       *Store
+	Config      Config
+	Now         func() time.Time
+	classifiers map[string]*classifier.Model
 }
 
 func NewEngine(store *Store, config Config) (*Engine, error) {
-	if config.Version == "" || len(config.Rules) == 0 || config.Budget.MaxCalls < 0 || config.Budget.MaxCalls > 1 || config.Budget.TimeoutSeconds < 1 || config.Budget.MaxInputTokens < 1 || config.Budget.MaxOutputTokens < 1 {
-		return nil, fmt.Errorf("%w: invalid rules or budget", ErrInvalid)
+	if config.Version == "" || config.Budget.MaxCalls < 0 || config.Budget.MaxCalls > 1 || config.Budget.TimeoutSeconds < 1 || config.Budget.MaxInputTokens < 1 || config.Budget.MaxOutputTokens < 1 {
+		return nil, fmt.Errorf("%w: invalid workflow configuration or budget", ErrInvalid)
 	}
-	ids := map[string]bool{}
-	for _, r := range config.Rules {
-		if r.ID == "" || r.Category == "" || ids[r.ID] || len(r.Any)+len(r.All)+len(r.Trackers) == 0 {
-			return nil, fmt.Errorf("%w: invalid or duplicate rule", ErrInvalid)
+	e := &Engine{Store: store, Config: config, Now: func() time.Time { return time.Now().UTC() }, classifiers: map[string]*classifier.Model{}}
+	if config.Classifier.Enabled {
+		if len(config.Classifier.Models) == 0 {
+			return nil, fmt.Errorf("%w: enabled classifier requires project models", ErrInvalid)
 		}
-		ids[r.ID] = true
+		for project, path := range config.Classifier.Models {
+			m, err := classifier.Load(path)
+			if err != nil {
+				return nil, fmt.Errorf("classifier for project %s: %w", project, err)
+			}
+			if m.ProjectID != project {
+				return nil, fmt.Errorf("%w: classifier project mismatch", ErrInvalid)
+			}
+			e.classifiers[project] = m
+		}
 	}
-	return &Engine{Store: store, Config: config, Now: func() time.Time { return time.Now().UTC() }}, nil
+	return e, nil
 }
 
 func randomID(prefix string) string {
@@ -116,77 +128,6 @@ func signals(t Ticket) []string {
 	}
 	return filtered
 }
-func hasPhrase(text, phrase string) bool {
-	phrase = lower(phrase)
-	if phrase == "" {
-		return false
-	}
-	text = strings.ToLower(text)
-	word := func(b byte) bool { return b >= 'a' && b <= 'z' || b >= '0' && b <= '9' || b == '_' }
-	for offset := 0; offset <= len(text)-len(phrase); {
-		i := strings.Index(text[offset:], phrase)
-		if i < 0 {
-			return false
-		}
-		i += offset
-		end := i + len(phrase)
-		if (i == 0 || !word(text[i-1])) && (end == len(text) || !word(text[end])) {
-			return true
-		}
-		offset = i + 1
-	}
-	return false
-}
-
-func (e *Engine) Classify(t Ticket) Classification {
-	if t.CategoryOverride != "" {
-		return Classification{Category: t.CategoryOverride, RuleIDs: []string{"human_override"}}
-	}
-	text := strings.ToLower(ticketText(t))
-	out := Classification{Category: "unknown", RuleIDs: []string{}}
-	categories := []string{}
-	for _, r := range e.Config.Rules {
-		if len(r.Trackers) > 0 && !contains(r.Trackers, t.Tracker) {
-			continue
-		}
-		blocked := false
-		for _, p := range r.None {
-			if hasPhrase(text, p) {
-				blocked = true
-			}
-		}
-		if blocked {
-			continue
-		}
-		all := true
-		for _, p := range r.All {
-			if !hasPhrase(text, p) {
-				all = false
-			}
-		}
-		if !all {
-			continue
-		}
-		any := len(r.Any) == 0
-		for _, p := range r.Any {
-			if hasPhrase(text, p) {
-				any = true
-			}
-		}
-		if !any {
-			continue
-		}
-		categories = append(categories, r.Category)
-		out.RuleIDs = append(out.RuleIDs, r.ID)
-	}
-	categories = unique(categories)
-	if len(categories) == 1 {
-		out.Category = categories[0]
-	} else if len(categories) > 1 {
-		out.Candidates = categories
-	}
-	return out
-}
 
 // CasesAt selects the latest case revision visible at the observation time.
 func CasesAt(history []Case, at time.Time) []Case {
@@ -210,15 +151,12 @@ func CasesAt(history []Case, at time.Time) []Case {
 	return out
 }
 
-func MatchCases(t Ticket, category string, cases []Case) []Match {
+func MatchCases(t Ticket, cases []Case) []Match {
 	out := []Match{}
 	kw := keywords(ticketText(t))
 	sig := signals(t)
 	for _, c := range cases {
 		if c.State != "trusted" || c.ProjectID != t.ProjectID || c.TicketID == t.ID {
-			continue
-		}
-		if category != "unknown" && c.Category != category {
 			continue
 		}
 		commonWords := intersects(kw, c.Keywords)
@@ -273,22 +211,18 @@ func MatchCases(t Ticket, category string, cases []Case) []Match {
 	return out
 }
 
-func (e *Engine) Decide(t Ticket, history []Case, at time.Time) (Classification, []Match, string, string, []string) {
-	c := e.Classify(t)
+func (e *Engine) Decide(t Ticket, history []Case, at time.Time) ([]Match, string, string, []string) {
 	if t.Private {
-		return c, nil, "restricted", "restricted", nil
+		return nil, "restricted", "restricted", nil
 	}
-	matches := MatchCases(t, c.Category, CasesAt(history, at))
-	for _, m := range matches {
-		if m.Applicable {
-			return c, matches, "case_reuse", "completed", nil
+	if t.ForwardedBy == "" || t.ForwardedAt.IsZero() || t.ForwardedAt.After(at) {
+		return nil, "manual_forward", "awaiting_forward", nil
+	}
+	matches := MatchCases(t, CasesAt(history, at))
+	for _, match := range matches {
+		if match.Applicable {
+			return matches, "case_reuse", "completed", nil
 		}
-	}
-	if c.Category == "unknown" {
-		return c, matches, "request_information", "awaiting_information", []string{"Confirm the issue category and provide a specific symptom or diagnostic signal."}
-	}
-	if !contains(e.Config.EngineeringCategories, c.Category) {
-		return c, matches, "customer_support", "completed", nil
 	}
 	missing := []string{}
 	if len(t.Components) == 0 {
@@ -304,21 +238,20 @@ func (e *Engine) Decide(t Ticket, history []Case, at time.Time) (Classification,
 		missing = append(missing, "Observed behavior and reproduction conditions")
 	}
 	if len(missing) > 0 {
-		return c, matches, "request_information", "awaiting_information", missing
+		return matches, "request_information", "awaiting_information", missing
 	}
-	return c, matches, "engineering_analysis", "queued", nil
+	return matches, "engineering_analysis", "queued", nil
 }
-
 func diagnosticHash(t Ticket) string {
 	comments := []string{}
 	for _, c := range t.Comments {
 		comments = append(comments, c.Body)
 	}
 	return hash(struct {
-		Subject, Description, Tracker, Override string
-		Components, Versions, Errors, Comments  []string
-		Environment                             map[string]string
-	}{t.Subject, t.Description, t.Tracker, t.CategoryOverride, unique(t.Components), unique(t.Versions), unique(t.ErrorCodes), comments, t.Environment})
+		Subject, Description, Tracker          string
+		Components, Versions, Errors, Comments []string
+		Environment                            map[string]string
+	}{t.Subject, t.Description, t.Tracker, unique(t.Components), unique(t.Versions), unique(t.ErrorCodes), comments, t.Environment})
 }
 
 func (e *Engine) enqueue(s *State, t Ticket, now time.Time, force bool) Receipt {
@@ -326,8 +259,8 @@ func (e *Engine) enqueue(s *State, t Ticket, now time.Time, force bool) Receipt 
 	if previous, ok := s.Runs[s.Latest[t.ID]]; ok && !force && previous.InputHash == h && previous.RuleVersion == e.Config.Version && previous.CaseGeneration == s.Generation && previous.WorkflowVersion == WorkflowVersion {
 		return Receipt{TicketID: t.ID, RunID: previous.ID, Action: "cached"}
 	}
-	c, matches, route, status, missing := e.Decide(t, s.CaseHistory, now)
-	r := Run{ID: randomID("run_"), TicketID: t.ID, ProjectID: t.ProjectID, InputHash: h, WorkflowVersion: WorkflowVersion, RuleVersion: e.Config.Version, CaseGeneration: s.Generation, Input: t, Classification: c, Route: route, State: status, Matches: matches, MissingInformation: missing, CreatedAt: now, UpdatedAt: now}
+	matches, route, status, missing := e.Decide(t, s.CaseHistory, now)
+	r := Run{ID: randomID("run_"), TicketID: t.ID, ProjectID: t.ProjectID, InputHash: h, WorkflowVersion: WorkflowVersion, RuleVersion: e.Config.Version, CaseGeneration: s.Generation, Input: t, Route: route, State: status, Matches: matches, MissingInformation: missing, CreatedAt: now, UpdatedAt: now}
 	if route == "case_reuse" {
 		r.Report.Summary = "Applicable resolved cases were found. Review their evidence and verify the proposed solution."
 		for _, m := range matches {
@@ -336,9 +269,6 @@ func (e *Engine) enqueue(s *State, t Ticket, now time.Time, force bool) Receipt 
 				r.Report.Evidence = append(r.Report.Evidence, Evidence{Source: "resolved_case", Reference: fmt.Sprintf("%s@%d", m.CaseID, m.CaseVersion), Quote: m.Solution})
 			}
 		}
-	}
-	if route == "customer_support" {
-		r.Report.Summary = "This category is routed to customer support without an engineering Agent call."
 	}
 	s.Runs[r.ID] = r
 	s.Latest[t.ID] = r.ID
@@ -350,17 +280,13 @@ func (e *Engine) Receive(event Event) (Receipt, error) {
 	if strings.TrimSpace(event.ID) == "" || strings.TrimSpace(t.ID) == "" || strings.TrimSpace(t.ProjectID) == "" || strings.TrimSpace(t.Subject) == "" {
 		return Receipt{}, fmt.Errorf("%w: event ID, ticket ID, project ID, and subject are required", ErrInvalid)
 	}
-	if t.CategoryOverride != "" {
-		known := t.CategoryOverride == "unknown"
-		for _, r := range e.Config.Rules {
-			if r.Category == t.CategoryOverride {
-				known = true
-			}
-		}
-		if !known {
-			return Receipt{}, fmt.Errorf("%w: unknown category override", ErrInvalid)
-		}
+	if strings.TrimSpace(event.ForwardedBy) == "" || event.ForwardedAt.IsZero() || event.ForwardedAt.After(e.Now()) {
+		return Receipt{}, fmt.Errorf("%w: explicit manual forwarding identity and time required", ErrInvalid)
 	}
+	t.ForwardedBy = event.ForwardedBy
+	t.ForwardedAt = event.ForwardedAt
+	t.CategoryOverride = ""
+	t.Labels = nil
 	now := e.Now()
 	event.ReceivedAt = now
 	if event.OccurredAt.IsZero() {
@@ -380,7 +306,7 @@ func (e *Engine) Receive(event Event) (Receipt, error) {
 	err := e.Store.Update(func(s *State) error {
 		generation := s.Generation
 		if old, ok := s.Events[event.ID]; ok {
-			if hash(old.Ticket) != hash(t) || old.Origin != event.Origin {
+			if hash(old.Ticket) != hash(t) || old.Origin != event.Origin || old.Force != event.Force {
 				return fmt.Errorf("%w: event ID was reused with different content", ErrConflict)
 			}
 			receipt = s.Receipts[event.ID]
@@ -439,7 +365,7 @@ func (e *Engine) Receive(event Event) (Receipt, error) {
 						s.Generation++
 					}
 				}
-				receipt = e.enqueue(s, t, now, false)
+				receipt = e.enqueue(s, t, now, event.Force)
 				receipt.EventID = event.ID
 			}
 		}
@@ -454,7 +380,7 @@ func (e *Engine) Receive(event Event) (Receipt, error) {
 }
 
 func (e *Engine) collectCase(s *State, t Ticket, now time.Time) Case {
-	c := Case{ID: "case_" + hash(t.ID)[:24], TicketID: t.ID, ProjectID: t.ProjectID, SourceKey: t.SourceKey, Subject: t.Subject, Summary: t.Description, Category: e.Classify(t).Category, Components: unique(t.Components), Versions: unique(t.Versions), Environment: t.Environment, Signals: signals(t), Keywords: keywords(ticketText(t)), Resolution: t.Resolution, State: "draft", CreatedAt: now, UpdatedAt: now, Version: 1}
+	c := Case{ID: "case_" + hash(t.ID)[:24], TicketID: t.ID, ProjectID: t.ProjectID, SourceKey: t.SourceKey, Subject: t.Subject, Summary: t.Description, Components: unique(t.Components), Versions: unique(t.Versions), Environment: t.Environment, Signals: signals(t), Keywords: keywords(ticketText(t)), Resolution: t.Resolution, State: "draft", CreatedAt: now, UpdatedAt: now, Version: 1}
 	c.SourceHash = hash(struct {
 		Input      string
 		Resolution Resolution
@@ -508,7 +434,7 @@ func (e *Engine) ReviewCase(id string, review Review) (Case, error) {
 			if !ok || !t.Closed || t.Private || c.State == "duplicate" || c.State == "archived" || c.State == "invalidated" {
 				return fmt.Errorf("%w: source ticket is not eligible for a trusted case", ErrInvalid)
 			}
-			if c.Resolution.Cause == "" || c.Resolution.Solution == "" || c.Resolution.Validation == "" || len(c.Components) == 0 || len(c.Versions) == 0 || c.Category == "unknown" {
+			if c.Resolution.Cause == "" || c.Resolution.Solution == "" || c.Resolution.Validation == "" || len(c.Components) == 0 || len(c.Versions) == 0 {
 				return fmt.Errorf("%w: confirmed cause, solution, validation, category, component, and affected version are required", ErrInvalid)
 			}
 			c.State = "trusted"
@@ -536,10 +462,10 @@ func (e *Engine) ReviewCase(id string, review Review) (Case, error) {
 // Refresh only recommendations. Learning a case never triggers a new model call.
 func (e *Engine) refreshRecommendations(s *State, now time.Time) {
 	for _, t := range s.Tickets {
-		if t.Closed {
+		if t.Closed || t.ForwardedBy == "" || t.ForwardedAt.IsZero() {
 			continue
 		}
-		_, _, route, _, _ := e.Decide(t, s.CaseHistory, now)
+		_, route, _, _ := e.Decide(t, s.CaseHistory, now)
 		old := s.Runs[s.Latest[t.ID]]
 		if route == "case_reuse" {
 			if old.State == "queued" || old.State == "running" {
@@ -557,18 +483,13 @@ func (e *Engine) refreshRecommendations(s *State, now time.Time) {
 	}
 }
 
-func (e *Engine) AnalyzeTicket(id string, force bool) (Receipt, error) {
-	var receipt Receipt
-	err := e.Store.Update(func(s *State) error {
-		t, ok := s.Tickets[id]
-		if !ok {
-			return ErrNotFound
-		}
-		if t.Closed {
-			return fmt.Errorf("%w: closed tickets are collected as cases", ErrInvalid)
-		}
-		receipt = e.enqueue(s, t, e.Now(), force)
-		return nil
-	})
-	return receipt, err
+func (e *Engine) AnalyzeTicket(id string, force bool, actor string) (Receipt, error) {
+	ticket, ok := e.Store.Snapshot().Tickets[id]
+	if !ok || ticket.ForwardedBy == "" {
+		return Receipt{}, ErrNotFound
+	}
+	if ticket.Closed {
+		return Receipt{}, fmt.Errorf("%w: forward the latest closed snapshot to collect a case", ErrInvalid)
+	}
+	return e.Receive(Event{ID: randomID("manual_"), Origin: "manual_forward", ForwardedBy: actor, ForwardedAt: e.Now(), OccurredAt: e.Now(), Force: force, Ticket: ticket})
 }

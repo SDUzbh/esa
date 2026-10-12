@@ -2,7 +2,7 @@
 
 This document describes the focused application-provider trial, not the current external system tester. Its retained reports are historical artifacts. For current replay and evaluation, use [external system replay](TICKET_BACKTEST.md).
 
-This trial connects the installed, already authenticated Codex CLI through a Go HTTP adapter. ESA keeps deterministic routing hints and the asynchronous worker; the Agent returns its classification, issue assignment and specific code findings. Existing display fields are derived for engineer review. Ruby remains the Redmine integration layer. No Kafka or original Jira files are edited.
+This trial connects the installed, already authenticated Codex CLI through a Go HTTP adapter. ESA keeps deterministic routing hints and the asynchronous worker; the Agent returns issue assignment and specific code findings. Existing display fields are derived for engineer review. Ruby remains the Redmine integration layer. No Kafka or original Jira files are edited.
 
 ## Selected issue and scope
 
@@ -22,7 +22,7 @@ The session uses `codex exec`, an ephemeral read-only sandbox, disabled native h
 
 Private audit artifacts under `.esa/codex-runs/<run-id>` preserve input, exact prompt, schema, CLI events, usage, errors and the final report. Repeating the same completed run returns its cached report. Interrupted or failed attempts cannot automatically restart with the same run ID; a new forced run is explicit. Missing usage from an interrupted CLI run is unknown, not zero.
 
-Rule version 3 retains classification rules, one provider invocation and a separate 900-second execution deadline. Input 16,000, output 6,000 and total 22,000 tokens trigger warnings without terminating analysis. The CLI can report usage only at completion; no hard generation-token ceiling is applied. See [pipeline operations](REPLAY_PIPELINE.md) for automatic setup, delta reuse, cleanup and permissions. Historical trial reports retain their original usage and conditions.
+The original trial used rule version 3. Current workflow version 4 / configuration version 5 remove classification and require explicit manual forwarding, one provider invocation and a separate 900-second execution deadline. Input 16,000, output 6,000 and total 22,000 tokens trigger warnings without terminating analysis. The CLI can report usage only at completion; no hard generation-token ceiling is applied. See [pipeline operations](REPLAY_PIPELINE.md) for automatic setup, delta reuse, cleanup and permissions. Historical trial reports retain their original usage and conditions.
 
 ## Reproduce
 
@@ -52,9 +52,8 @@ The previous imported-report evaluator has been removed. The current command bel
 python3 scripts/replay_pipeline.py --pipeline --manifest system_replay/examples/esa-api-kafka.json --output reports/new-system-run
 ```
 
-The default manifest disables the engineering provider and expects `awaiting_configuration`. It exports baseline, upstream parent and repaired snapshots below the new report directory, runs the same neutral client fixture, and checks external failure/healthy assertions. It verifies product behavior without claiming Agent accuracy.
+The default manifest disables the engineering provider and expects `awaiting_configuration` after explicit forwarding. It exports baseline, upstream parent and repaired snapshots below the new report directory, runs the same neutral client fixture, and checks external failure/healthy assertions. It verifies product behavior without claiming Agent accuracy.
 
-For engineering accuracy evaluation, configure the new system-under-test instance with its own registered provider and historical environment adapter. The tester must observe the actual initial report through the public API and freeze it before reading repair evidence. An optional independent HTTP semantic evaluator can then judge localization, problem explanation and solution against supplied PR/source/runtime evidence after `behavior_verified`. The default manifest has no semantic evaluator; patch overlap alone is not semantic correctness. See [the manifest contract](../system_replay/README.md).
 
 To stop only the host adapter, use `python3 scripts/manage_codex_provider.py stop`. The adapter does not install a system-wide service. Registered evidence for other tickets and a production service supervisor are future work.
 
@@ -66,3 +65,5 @@ To stop only the host adapter, use `python3 scripts/manage_codex_provider.py sto
 - Universal historical build profiles, attachment replay, archive-wide ground-truth scoring and release lifecycle verification remain future work. Controlled source/log retrieval is available only within the registered replay environment.
 
 The Codex execution mechanism follows [official non-interactive documentation](https://learn.chatgpt.com/docs/non-interactive-mode).
+
+Current ESA intake requires explicit `forwarded_by` and `forwarded_at`. External fixtures declare the manual action; the tester does not infer it. Classification and label learning are removed from the active application. See [manual forwarding](MANUAL_FORWARDING.md).

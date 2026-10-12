@@ -14,17 +14,15 @@ import (
 
 type IssueBrief struct {
 	ID         string   `json:"id"`
-	Category   string   `json:"category"`
 	Title      string   `json:"title"`
 	TicketKeys []string `json:"ticket_keys"`
 }
 type AnalyzeRequest struct {
-	RunID          string         `json:"run_id"`
-	Ticket         Ticket         `json:"ticket"`
-	Classification Classification `json:"classification"`
-	Cases          []Case         `json:"cases"`
-	Budget         Budget         `json:"budget"`
-	ReadOnly       bool           `json:"read_only"`
+	RunID    string `json:"run_id"`
+	Ticket   Ticket `json:"ticket"`
+	Cases    []Case `json:"cases"`
+	Budget   Budget `json:"budget"`
+	ReadOnly bool   `json:"read_only"`
 }
 
 type Analyzer interface {
@@ -113,6 +111,14 @@ func (e *Engine) ProcessOne(ctx context.Context, analyzer Analyzer) (bool, error
 				s.Runs[id] = r
 				continue
 			}
+			if r.WorkflowVersion != WorkflowVersion || r.Input.ForwardedBy == "" || r.Input.ForwardedAt.IsZero() || r.Input.ForwardedAt.After(e.Now()) {
+				r.State = "awaiting_forward"
+				r.Route = "manual_forward"
+				r.MissingInformation = []string{"Forward the current ticket manually before ESA processing."}
+				r.UpdatedAt = e.Now()
+				s.Runs[id] = r
+				continue
+			}
 			found = true
 			r.UpdatedAt = e.Now()
 			if analyzer == nil || e.Config.Budget.MaxCalls == 0 {
@@ -141,11 +147,11 @@ func (e *Engine) ProcessOne(ctx context.Context, analyzer Analyzer) (bool, error
 			}
 		}
 	}
-	input := AnalyzeRequest{RunID: run.ID, Ticket: run.Input, Classification: run.Classification, Cases: matched, Budget: e.Config.Budget, ReadOnly: true}
+	input := AnalyzeRequest{RunID: run.ID, Ticket: run.Input, Cases: matched, Budget: e.Config.Budget, ReadOnly: true}
 	callCtx, cancel := context.WithTimeout(ctx, time.Duration(e.Config.Budget.TimeoutSeconds)*time.Second)
 	report, callErr := analyzer.Analyze(callCtx, input)
 	cancel()
-	if callErr == nil && (report.Summary == "" || (report.AgentClassification == nil && len(report.Evidence) == 0)) {
+	if callErr == nil && (report.Summary == "" || (len(report.Evidence) == 0 && (len(report.Findings) > 0 || len(report.Limitations) == 0))) {
 		callErr = errors.New("engineering provider did not return a summary and evidence")
 	}
 	if callErr == nil {
@@ -156,6 +162,7 @@ func (e *Engine) ProcessOne(ctx context.Context, analyzer Analyzer) (bool, error
 			}
 		}
 	}
+	report.AgentClassification = nil // Classification output is no longer an active contract.
 	if report.Usage.InputTokens < 0 || report.Usage.OutputTokens < 0 || report.Usage.Calls > e.Config.Budget.MaxCalls {
 		callErr = errors.New("engineering provider reported invalid usage or exceeded the invocation limit")
 	}
@@ -170,9 +177,6 @@ func (e *Engine) ProcessOne(ctx context.Context, analyzer Analyzer) (bool, error
 			return nil
 		}
 		r.Report = report
-		if callErr == nil && report.AgentClassification != nil {
-			r.Classification = *report.AgentClassification
-		}
 		r.UpdatedAt = e.Now()
 		if s.Latest[r.TicketID] != r.ID || s.Tickets[r.TicketID].Closed {
 			r.State = "superseded"
@@ -181,13 +185,8 @@ func (e *Engine) ProcessOne(ctx context.Context, analyzer Analyzer) (bool, error
 			r.Error = callErr.Error()
 		} else {
 			r.State = "awaiting_review"
-			if report.AgentClassification != nil {
-				if !contains(e.Config.EngineeringCategories, r.Classification.Category) && r.Classification.Category != "unknown" {
-					r.Route = "customer_support"
-					r.State = "completed"
-				} else if len(report.Findings) == 0 {
-					r.State = "awaiting_information"
-				}
+			if len(report.Findings) == 0 && len(report.Evidence) == 0 {
+				r.State = "awaiting_information"
 			}
 			r.Error = ""
 		}

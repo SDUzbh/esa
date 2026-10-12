@@ -4,6 +4,7 @@ require 'uri'
 
 module Esa
   class Error < StandardError; end
+  class NotFound < Error; end
   class Client
     def initialize(projects, issues = nil)
       @projects = projects.map { |p| p.id.to_s }
@@ -26,6 +27,7 @@ module Esa
       req.body = JSON.generate(body) if body
       response = http.request(req)
       result = JSON.parse(response.body)
+      raise NotFound, 'This issue has not been forwarded to ESA.' if response.code == '404'
       raise Error, result.fetch('error', "ESA returned HTTP #{response.code}") unless response.is_a?(Net::HTTPSuccess)
       result
     rescue KeyError, JSON::ParserError, IOError, SocketError, SystemCallError, Timeout::Error => e

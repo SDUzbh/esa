@@ -1,13 +1,5 @@
 {
-  "version": "3",
-  "engineering_categories": ["code_defect", "compatibility", "performance"],
-  "budget": {"max_calls": 1, "max_input_tokens": 16000, "max_output_tokens": 6000, "warn_total_tokens": 22000, "timeout_seconds": 900},
-  "rules": [
-    {"id": "configuration", "category": "configuration", "any": ["misconfigured", "configuration error", "invalid configuration", "unknown configuration", "authentication failed", "authorization failed", "permission denied"]},
-    {"id": "compatibility", "category": "compatibility", "any": ["incompatible", "unsupported version", "version mismatch", "protocol mismatch", "nosuchmethoderror", "unsupportedclassversionerror"]},
-    {"id": "performance", "category": "performance", "any": ["high latency", "throughput regression", "memory leak", "outofmemoryerror", "high cpu", "performance regression"]},
-    {"id": "code-defect", "category": "code_defect", "any": ["nullpointerexception", "assertionerror", "data loss", "incorrect result", "crashes", "race condition", "deadlock", "indexoutofboundsexception"]},
-    {"id": "feature", "category": "feature_request", "trackers": ["Feature", "New Feature", "Improvement"]},
-    {"id": "usage", "category": "usage_question", "any": ["how to", "how do i", "is it possible", "documentation question"], "none": ["exception", "regression", "crashes"]}
-  ]
+  "version": "5",
+  "classifier": { "enabled": false, "models": {} },
+  "budget": {"max_calls": 1, "max_input_tokens": 16000, "max_output_tokens": 6000, "warn_total_tokens": 22000, "timeout_seconds": 900}
 }

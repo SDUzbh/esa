@@ -45,11 +45,13 @@ func TestFutureKnowledgeExcludedAndWithdrawalVersioned(t *testing.T) {
 		t.Fatal(err)
 	}
 	ticket := esa.Ticket{ID: "new", ProjectID: "1", Subject: "NullPointerException", Description: "Consumer partition assignment", Components: []string{"consumer"}, Versions: []string{"3.7.0"}, Environment: map[string]string{"jdk": "17"}}
-	_, _, route, _, _ := engine.Decide(ticket, history, before.Add(time.Minute))
+	ticket.ForwardedBy = "fixture-human"
+	ticket.ForwardedAt = before
+	_, route, _, _ := engine.Decide(ticket, history, before.Add(time.Minute))
 	if route == "case_reuse" {
 		t.Fatal("workflow used future solution")
 	}
-	_, _, route, _, _ = engine.Decide(ticket, history, approved)
+	_, route, _, _ = engine.Decide(ticket, history, approved)
 	if route != "case_reuse" {
 		t.Fatal("workflow did not use visible trusted case")
 	}

@@ -35,11 +35,12 @@ func testEngine(t *testing.T) *Engine {
 	return e
 }
 func fixture(e *Engine, id string) Ticket {
-	return Ticket{ID: id, SourceKey: id, ProjectID: "1", Subject: "Consumer crashes with NullPointerException", Description: "Consumer crashes with NullPointerException during empty partition assignment.", Tracker: "Bug", Status: "New", Source: "test", Components: []string{"consumer"}, Versions: []string{"3.7.0"}, Environment: map[string]string{"details": "JDK 17"}, CreatedAt: e.Now(), UpdatedAt: e.Now()}
+	ticket := Ticket{ID: id, SourceKey: id, ProjectID: "1", Subject: "Consumer crashes with NullPointerException", Description: "Consumer crashes with NullPointerException during empty partition assignment.", Tracker: "Bug", Status: "New", Source: "test", Components: []string{"consumer"}, Versions: []string{"3.7.0"}, Environment: map[string]string{"details": "JDK 17"}, CreatedAt: e.Now(), UpdatedAt: e.Now()}
+	return ticket
 }
 func receive(t *testing.T, e *Engine, id string, ticket Ticket) Receipt {
 	t.Helper()
-	r, err := e.Receive(Event{ID: id, Origin: "test", Ticket: ticket})
+	r, err := e.Receive(Event{ID: id, Origin: "test", ForwardedBy: "fixture-human", ForwardedAt: e.Now(), Ticket: ticket})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -51,27 +52,6 @@ func resolved(t *testing.T, e *Engine) (Ticket, Receipt) {
 	ticket.Status = "Resolved"
 	ticket.Resolution = Resolution{Reason: "fixed", Cause: "Empty assignment", Solution: "Upgrade after checking the assignment guard", Validation: "Verified empty assignment regression test"}
 	return ticket, receive(t, e, "closed-event", ticket)
-}
-func TestRulesRouteAndAmbiguity(t *testing.T) {
-	e := testEngine(t)
-	for _, tc := range []struct{ subject, tracker, category, route string }{
-		{"How do I configure retention?", "Support", "usage_question", "customer_support"},
-		{"Feature requested", "Feature", "feature_request", "customer_support"},
-		{"NullPointerException and incompatible protocol", "Bug", "unknown", "request_information"},
-		{"NullPointerExceptionSuffix", "Bug", "unknown", "request_information"},
-		{"Consumer crashes with NullPointerException", "Bug", "code_defect", "engineering_analysis"},
-	} {
-		t.Run(tc.subject, func(t *testing.T) {
-			ticket := fixture(e, tc.subject)
-			ticket.Subject = tc.subject
-			ticket.Description = "Reproduction attached"
-			ticket.Tracker = tc.tracker
-			c, _, route, _, _ := e.Decide(ticket, nil, e.Now())
-			if c.Category != tc.category || route != tc.route {
-				t.Fatalf("got %s/%s", c.Category, route)
-			}
-		})
-	}
 }
 func TestIdempotencyAndChangedInput(t *testing.T) {
 	e := testEngine(t)
@@ -88,7 +68,7 @@ func TestIdempotencyAndChangedInput(t *testing.T) {
 		t.Fatal("metadata created a run")
 	}
 	ticket.Description += " Different reproduction"
-	if _, err := e.Receive(Event{ID: "event", Origin: "test", Ticket: ticket}); !errors.Is(err, ErrConflict) {
+	if _, err := e.Receive(Event{ID: "event", Origin: "test", ForwardedBy: "fixture-human", ForwardedAt: e.Now(), Ticket: ticket}); !errors.Is(err, ErrConflict) {
 		t.Fatal(err)
 	}
 	stale := fixture(e, "1")
@@ -147,7 +127,7 @@ func TestCaseApplicabilityAndAllResolvedCollection(t *testing.T) {
 	for _, change := range []func(*Ticket){func(t *Ticket) { t.ProjectID = "2" }, func(t *Ticket) { t.Versions = []string{"4.0.0"} }, func(t *Ticket) { t.Components = []string{"broker"} }, func(t *Ticket) { t.Environment = map[string]string{"details": "JDK 8"} }} {
 		ticket := fixture(e, "other")
 		change(&ticket)
-		_, _, route, _, _ := e.Decide(ticket, history, e.Now())
+		_, route, _, _ := e.Decide(ticket, history, e.Now())
 		if route == "case_reuse" {
 			t.Fatal("unsafe applicability")
 		}
@@ -161,7 +141,7 @@ func TestCaseApplicabilityAndAllResolvedCollection(t *testing.T) {
 		r := receive(t, e, reason, ticket)
 		c := e.Store.Snapshot().Cases[r.CaseID]
 		want := map[string]string{"fixed": "draft", "duplicate": "duplicate", "rejected": "archived"}[reason]
-		if c.State != want || c.Category != "usage_question" {
+		if c.State != want {
 			t.Fatal(c)
 		}
 	}
@@ -292,7 +272,7 @@ func TestAPIAuthenticationScopeFilteringAndVisibility(t *testing.T) {
 			t.Fatalf("%s: %d", tc.path, w.Code)
 		}
 	}
-	w := request("/v1/tickets?category=code_defect&sort=subject&direction=asc&limit=1", "Bearer test-token", "1", "")
+	w := request("/v1/tickets?sort=subject&direction=asc&limit=1", "Bearer test-token", "1", "")
 	if w.Code != http.StatusOK || strings.Contains(w.Body.String(), "redmine:2") {
 		t.Fatal(w.Body.String())
 	}
@@ -328,20 +308,5 @@ func TestImportFormatsAndErrors(t *testing.T) {
 	p, err = ParseImport("comments.csv", "1", []byte("Issue key,Summary,Comment,Comment\na,Subject,First,Second\n"), now)
 	if err != nil || len(p.Tickets[0].Comments) != 2 {
 		t.Fatal(p, err)
-	}
-}
-
-func TestAgentClassificationUpdatesSupportRoute(t *testing.T) {
-	e := testEngine(t)
-	receipt := receive(t, e, "classification-event", fixture(e, "classification-ticket"))
-	_, err := e.ProcessOne(context.Background(), analyzerFunc(func(context.Context, AnalyzeRequest) (Report, error) {
-		return Report{Summary: "Configuration problem", AgentClassification: &Classification{Category: "configuration", RuleIDs: []string{"engineering_agent"}}, Issue: &IssueAssignment{Title: "Configuration problem", Reason: "Reported settings"}}, nil
-	}))
-	if err != nil {
-		t.Fatal(err)
-	}
-	run := e.Store.Snapshot().Runs[receipt.RunID]
-	if run.Classification.Category != "configuration" || run.Route != "customer_support" || run.State != "completed" {
-		t.Fatal(run)
 	}
 }

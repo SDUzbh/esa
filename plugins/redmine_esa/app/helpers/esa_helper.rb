@@ -10,6 +10,6 @@ module EsaHelper
 
   def esa_row_state(row)
     record = row.dig('ticket', 'closed') ? row['case'] : row['latest_run']
-    record&.fetch('state', nil) || 'pending'
+    record&.fetch('state', nil) || 'awaiting_forward'
   end
 end

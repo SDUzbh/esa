@@ -42,7 +42,7 @@ func run() error {
 	toolServer := flag.Bool("tool-server", false, "Serve only the registered replay MCP tools over stdio")
 	once := flag.Bool("once", false, "Diagnose one registered packet and exit; used by replay pipelines")
 	runID := flag.String("run-id", "", "Unique diagnosis ID for once mode")
-	rules := flag.String("rules", "config/rules.json", "Classification and advisory token thresholds")
+	rules := flag.String("rules", "config/rules.json", "Workflow budget and advisory token thresholds")
 	managed := flag.Bool("managed-tools", true, "Automatically prepare and clean the registered packet's replay environment")
 	flag.Parse()
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -188,14 +188,14 @@ func run() error {
 			return err
 		}
 		store, _ := esa.OpenStore("")
-		engine, err := esa.NewEngine(store, config)
+		_, err = esa.NewEngine(store, config)
 		if err != nil {
 			return err
 		}
 		if *runID == "" {
 			*runID = fmt.Sprintf("run_replay_%d", time.Now().UnixNano())
 		}
-		in := esa.AnalyzeRequest{RunID: *runID, Ticket: packet.Ticket, Classification: engine.Classify(packet.Ticket), Budget: config.Budget, ReadOnly: true}
+		in := esa.AnalyzeRequest{RunID: *runID, Ticket: packet.Ticket, Budget: config.Budget, ReadOnly: true}
 		report, err := provider.Analyze(ctx, in)
 		if err != nil {
 			return err

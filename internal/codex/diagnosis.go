@@ -12,13 +12,10 @@ import (
 
 // EngineeringOutput is the model contract. Display fields are derived locally.
 type EngineeringOutput struct {
-	Classification string              `json:"classification"`
-	Issue          esa.IssueAssignment `json:"issue"`
-	Findings       []esa.Finding       `json:"findings"`
-	Limitations    []string            `json:"limitations"`
+	Issue       esa.IssueAssignment `json:"issue"`
+	Findings    []esa.Finding       `json:"findings"`
+	Limitations []string            `json:"limitations"`
 }
-
-var Categories = []string{"code_defect", "compatibility", "performance", "configuration", "usage_question", "feature_request", "unknown"}
 
 func object(properties map[string]any) map[string]any {
 	required := make([]string, 0, len(properties))
@@ -41,27 +38,18 @@ func evidenceSchema(sources ...string) map[string]any {
 func EngineeringSchema(sources ...string) []byte {
 	integer := map[string]any{"type": "integer", "minimum": 1}
 	finding := object(map[string]any{"commit": str(), "file": str(), "start_line": integer, "end_line": integer, "problem": str(), "solution": str(), "evidence": array(evidenceSchema(sources...))})
-	schema := object(map[string]any{"classification": enum(Categories...), "issue": object(map[string]any{"existing_id": str(), "title": str(), "reason": str()}), "findings": array(finding), "limitations": array(str())})
+	schema := object(map[string]any{"issue": object(map[string]any{"existing_id": str(), "title": str(), "reason": str()}), "findings": array(finding), "limitations": array(str())})
 	b, _ := json.Marshal(schema)
 	return b
 }
-func EngineeringCategory(s string) bool {
-	return s == "code_defect" || s == "compatibility" || s == "performance"
-}
 func (out EngineeringOutput) Report(packet Packet) (esa.Report, error) {
-	valid := false
-	for _, c := range Categories {
-		if c == out.Classification {
-			valid = true
-		}
-	}
-	if !valid || strings.TrimSpace(out.Issue.Title) == "" || strings.TrimSpace(out.Issue.Reason) == "" {
-		return esa.Report{}, errors.New("classification and issue assignment are required")
+	if strings.TrimSpace(out.Issue.Title) == "" || strings.TrimSpace(out.Issue.Reason) == "" {
+		return esa.Report{}, errors.New("issue title and reason are required")
 	}
 	if out.Issue.ExistingID != "" {
 		found := false
 		for _, issue := range packet.Issues {
-			if issue.ID == out.Issue.ExistingID && issue.Category == out.Classification {
+			if issue.ID == out.Issue.ExistingID {
 				found = true
 			}
 		}
@@ -69,10 +57,7 @@ func (out EngineeringOutput) Report(packet Packet) (esa.Report, error) {
 			return esa.Report{}, errors.New("issue assignment must refer to a supplied issue in the same category")
 		}
 	}
-	if !EngineeringCategory(out.Classification) && len(out.Findings) > 0 {
-		return esa.Report{}, errors.New("support categories must not report engineering findings")
-	}
-	r := esa.Report{AgentClassification: &esa.Classification{Category: out.Classification, RuleIDs: []string{"engineering_agent"}}, Issue: &out.Issue, Findings: out.Findings, Summary: out.Issue.Title, Limitations: out.Limitations}
+	r := esa.Report{Issue: &out.Issue, Findings: out.Findings, Summary: out.Issue.Title, Limitations: out.Limitations}
 	for _, f := range out.Findings {
 		if f.Commit != packet.Commit || f.File == "" || strings.Contains(f.File, ":") || f.StartLine < 1 || f.EndLine < f.StartLine || f.EndLine-f.StartLine >= 200 || strings.TrimSpace(f.Problem) == "" || strings.TrimSpace(f.Solution) == "" || len(f.Evidence) == 0 {
 			return r, errors.New("finding requires historical commit, file, bounded lines, problem, solution and evidence")

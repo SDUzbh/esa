@@ -11,8 +11,8 @@ Redmine::Plugin.register :redmine_esa do
   requires_redmine version_or_higher: '7.0.0'
   project_module :esa do
     permission :view_esa, { esa: [:index, :show] }, read: true
-    permission :submit_esa, { esa: [:upload, :preview, :import, :analyze, :metadata] }
-    permission :review_esa, { esa: [:review_case, :review_run] }
+    permission :submit_esa, { esa: [:upload, :preview, :import, :forward, :metadata, :classifier_predict] }
+    permission :review_esa, { esa: [:review_case, :review_run, :classifier_feedback] }
   end
   menu :top_menu, :esa, { controller: 'esa', action: 'index' }, caption: 'ESA', if: Proc.new { User.current.logged? }
 end

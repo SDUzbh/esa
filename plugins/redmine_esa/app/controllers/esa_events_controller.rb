@@ -3,8 +3,8 @@ class EsaEventsController < ActionController::Base
   before_action :authenticate_service
 
   def index
-    events = EsaEvent.where(acknowledged_at: nil).order(:id).limit(20).map do |event|
-      { id: "redmine_event_#{event.id}", origin: 'redmine', occurred_at: event.created_at.iso8601(6), ticket: JSON.parse(event.payload) }
+    events = EsaEvent.where(acknowledged_at: nil).where.not(forwarded_by: [nil, '']).where.not(forwarded_at: nil).order(:id).limit(20).map do |event|
+      { id: "redmine_event_#{event.id}", origin: 'manual_forward', forwarded_by: event.forwarded_by, forwarded_at: event.forwarded_at.iso8601(6), force: event.force, occurred_at: event.created_at.iso8601(6), ticket: JSON.parse(event.payload) }
     end
     render json: { events: events }
   end

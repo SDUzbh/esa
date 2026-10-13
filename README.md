@@ -4,24 +4,35 @@ ESA connects customer support and engineers through a Redmine plugin and an inde
 
 This repository contains ESA code and deployment definitions. Redmine is referenced through the official `redmine:7.0.2-bookworm` Docker image; only the ESA plugin is maintained here. See [external dependencies and fresh-checkout setup](docs/DEPENDENCIES.md). Preserved Jira data, Kafka source, credentials, local tools, compiled artifacts and runtime reports are excluded from Git.
 
-## Current implementation
+## Implementation
 
-- A native Redmine **ESA** menu, ticket list, filters, sorting, pagination, ticket details, and review controls.
-- UTF-8 Jira JSON, ESA JSON, and Jira CSV upload with preview, validation, preserved original input, and source-key deduplication.
-- Durable Redmine event outbox, acknowledgement after backend commit, idempotent ingestion, and stale-event handling.
-- Explicit manual forwarding from Redmine with actor/time provenance. Creating, editing, importing or saving metadata does not submit a ticket.
-- Classification rules, preset labels and Agent classification are removed from intake and routing.
-- An optional Go TF-IDF + Logistic Regression classifier (disabled by default) supplies multiple label suggestions for human confirmation, with independent train/test/predict/retrain commands and scoped correction exports. See [classifier operations](docs/CLASSIFIER.md).
-- Project-scoped case retrieval with component, affected-version, environment, and symptom checks.
-- Collection of manually forwarded closed tickets as case drafts; duplicates and rejected resolutions have separate states. Engineer approval requires cause, solution, validation, component and version.
-- Automatic applicable-case recommendations with zero model calls. Forwarding a reopened, changed or private source snapshot withdraws obsolete trusted evidence; rejecting a case also withdraws it.
-- A bounded asynchronous HTTP engineering-provider interface, explicit unconfigured/failed states, evidence validation, and human report review.
-- Application tests in `replay_test` check temporal case visibility and conservative Jira snapshots. They are separate from the standalone external system tester.
-- A Go Codex CLI adapter accepts an explicitly registered historical evidence packet, validates exact source quotes, records actual usage, and returns engineering reports for human review.
-- A standalone Go module, `system_replay`, submits historical events through public APIs and freezes the initial observed diagnosis before reading future Git evidence. It imports no ESA application packages.
-- Its pipeline orders tickets by version when compatible with historical event order, reuses one isolated product runtime, transfers source/dependency differences, and verifies candidate repairs using the same baseline/parent/fix scenario. Git reads are shared after predictions freeze; owned resources are cleaned on exit.
-- Registered MCP tools support installation, system/debugger execution, frozen source inspection and environment change requests. Source, dependencies and baseline bytecode remain read-only.
-- Per-ticket token warnings appear in provider logs, audit files, batch results and ESA reports without cancelling analysis.
+- Native Redmine ESA pages for ticket lists, filters, Jira JSON/CSV import, manual forwarding and engineer review.
+- Durable, idempotent intake of manually forwarded snapshots with project and issue visibility checks.
+- Trusted case reuse and collection of resolved cases, with human approval and recommendation withdrawal.
+- Read-only engineering diagnosis through a Go Codex adapter, with code evidence and advisory token warnings.
+- Optional TF-IDF + Logistic Regression label suggestions, human feedback and independent training/testing; disabled by default.
+- Independent API-based system replay with historical Git repair checks, reusable isolated runtimes and cleanup.
+
+## Architecture
+
+Redmine owns source issues and user permissions. The Ruby ESA plugin provides the UI, imports and a durable forwarding outbox stored in PostgreSQL. The Go service polls the outbox and acknowledges events after committing them; the plugin calls its scoped HTTP APIs to display results and submit human reviews.
+
+The Go service handles diagnostic context, trusted case retrieval and asynchronous engineering analysis. Its current persistence layer is an atomic JSON state store containing events, runs, cases and classifier feedback. A separately configured engineering provider, such as the Codex adapter, returns read-only findings and recommendations for human review.
+
+The optional classifier runs locally in Go and supplies label suggestions only. Human corrections are exported to the independent `esa-classifier` CLI for training and testing; an operator promotes a tested model and restarts the service. Classification does not control manual forwarding or engineering routing.
+
+```mermaid
+flowchart TD
+    P["Redmine + ESA plugin"] <-->|Scoped APIs / outbox poll and ack| E["ESA Go service"]
+    P --> D[("PostgreSQL: issues and outbox")]
+    E --> S[("JSON state: events, runs, cases, feedback")]
+    E <-->|HTTP diagnosis| A["Engineering provider / Codex adapter"]
+    E -.->|Optional label suggestions| C["TF-IDF + Logistic Regression"]
+    T["Independent system_replay tester"] <-->|Public API events and results| E
+    T <-->|Version and repair checks| H["Git history + isolated product runtime"]
+```
+
+`system_replay` is a separate Go module that exercises the system through public APIs. It freezes observed diagnoses before inspecting later mainline Git history, then verifies candidate repairs in an independent product runtime. It imports no ESA application packages and does not implement the system's ticket-processing decisions. Application-level `replay_test` tests remain separate.
 
 ## Ticket workflow
 

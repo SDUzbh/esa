@@ -1,0 +1,13 @@
+# Operator-owned preset tool configuration. Never execute this file as shell.
+[profile]
+id = general
+version = 2
+[release]
+os = noble
+target_image = eclipse-temurin:8-jdk-noble
+tool_jdk_image = eclipse-temurin:21-jdk-noble
+async_profiler_repository = async-profiler/async-profiler
+[apt]
+packages = ca-certificates curl git python3 ripgrep jq procps file unzip zip diffutils binutils
+[commands]
+primary = java javac python3 rg jq git curl file readelf objdump sha256sum

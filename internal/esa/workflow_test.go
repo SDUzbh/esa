@@ -122,10 +122,17 @@ func TestCasesApprovalPushWithdrawalAndPrivacy(t *testing.T) {
 func TestCaseApplicabilityAndAllResolvedCollection(t *testing.T) {
 	e := testEngine(t)
 	_, r := resolved(t, e)
-	e.ReviewCase(r.CaseID, Review{Action: "approve", Reviewer: "engineer"})
+	if _, err := e.ReviewCase(r.CaseID, Review{Action: "approve", Reviewer: "engineer"}); err != nil {
+		t.Fatal(err)
+	}
 	history := e.Store.Snapshot().CaseHistory
+	baseline := fixture(e, "matching")
+	baseline.ForwardedBy, baseline.ForwardedAt = "fixture-human", e.Now()
+	if _, route, _, _ := e.Decide(baseline, history, e.Now()); route != "case_reuse" {
+		t.Fatalf("test prerequisite failed: matching forwarded ticket took route %s", route)
+	}
 	for _, change := range []func(*Ticket){func(t *Ticket) { t.ProjectID = "2" }, func(t *Ticket) { t.Versions = []string{"4.0.0"} }, func(t *Ticket) { t.Components = []string{"broker"} }, func(t *Ticket) { t.Environment = map[string]string{"details": "JDK 8"} }} {
-		ticket := fixture(e, "other")
+		ticket := baseline
 		change(&ticket)
 		_, route, _, _ := e.Decide(ticket, history, e.Now())
 		if route == "case_reuse" {

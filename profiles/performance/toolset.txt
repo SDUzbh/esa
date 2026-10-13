@@ -1,0 +1,13 @@
+[profile]
+id = performance
+version = 2
+[release]
+os = noble
+target_image = eclipse-temurin:8-jdk-noble
+tool_jdk_image = eclipse-temurin:21-jdk-noble
+async_profiler_repository = async-profiler/async-profiler
+[apt]
+packages = procps sysstat time util-linux lsof
+[commands]
+primary = asprof jcmd jstack jmap vmstat pidstat iostat time
+jfr = /opt/esa/tool-jdk/bin/jfr

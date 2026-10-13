@@ -1,5 +1,7 @@
 # ESA backend workflow
 
+The default configuration retains workflow 4 below. Opt-in workflow 5 adds immutable snapshots, shared Engineering Issues/investigations, versioned solutions, approved Profile planning and transactional Redmine persistence. See [V2 operations](V2_OPERATIONS.md) for the upgrade path, public contracts, UI, tests and remaining staged work.
+
 ESA receives manually forwarded Redmine issues through a Ruby plugin and an independent Go service. Classification is removed from the active workflow. New code and interface text remain English; engineering diagnosis is read-only.
 
 1. An authorized user forwards the current issue snapshot. The plugin records the actor/time/force choice in its durable outbox.

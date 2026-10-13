@@ -110,7 +110,7 @@ def kafka_binary(version, scala, cache):
 
 class Environment(AbstractContextManager):
     """One owned container per pipeline; source and dependency updates are deltas."""
-    def __init__(self, cache=None, context='colima-redmine', image=DEFAULT_IMAGE):
+    def __init__(self, cache=None, context='colima-redmine', image=DEFAULT_IMAGE, profile=None):
         self.cache = Path(cache or ROOT / '.esa/replay-cache').resolve()
         self.docker = ['docker'] + (['--context', context] if context else [])
         self.context = context; self.image = image; self.session = uuid.uuid4().hex
@@ -118,6 +118,14 @@ class Environment(AbstractContextManager):
         self.writer = self.name + '-writer'; self.volume = self.name + '-data'
         self.directory = None; self.started = False; self.source_hashes = {}; self.input_hashes = {}
         self.jdk_digest = None; self.old_handlers = {}; self.base_processes = ['1']; self.transitions = 0
+        self.preset = None
+        if profile:
+            if image != DEFAULT_IMAGE:
+                raise ValueError('An explicit historical image cannot be replaced by a preset Profile')
+            from tool_images import selection
+            entry, manifest = selection(profile, context)
+            self.image = entry['image_id']
+            self.preset = {'profile': profile, 'image_id': entry['image_id'], 'tag': entry['tag'], 'release_hash': manifest['release_hash'], 'toolset_hash': entry['toolset_hash'], 'inventory': entry['inventory']}
 
     def command(self, args, **kwargs):
         kwargs.setdefault('timeout', 120)
@@ -137,20 +145,28 @@ class Environment(AbstractContextManager):
             self.old_handlers[sig] = signal.getsignal(sig)
             signal.signal(sig, self._interrupt)
         try:
-            inspected = subprocess.run(self.docker + ['image', 'inspect', self.image, '--format', '{{index .RepoDigests 0}}'], text=True, capture_output=True)
-            if inspected.returncode: self.command(['pull', self.image]); inspected = subprocess.run(self.docker + ['image', 'inspect', self.image, '--format', '{{index .RepoDigests 0}}'], check=True, text=True, capture_output=True)
-            self.jdk_digest = inspected.stdout.strip()
-            if '@sha256:' not in self.jdk_digest: raise RuntimeError('Runtime image needs a pinned repository digest')
+            if self.preset:
+                image = json.loads(self.command(['image', 'inspect', self.image]))[0]
+                labels = image['Config'].get('Labels', {})
+                if image['Id'] != self.preset['image_id'] or labels.get('esa.release.hash') != self.preset['release_hash'] or labels.get('esa.profile') != self.preset['profile']:
+                    raise RuntimeError('Preset image identity or release labels differ')
+                self.jdk_digest = image['Id']
+            else:
+                inspected = subprocess.run(self.docker + ['image', 'inspect', self.image, '--format', '{{index .RepoDigests 0}}'], text=True, capture_output=True)
+                if inspected.returncode: self.command(['pull', self.image]); inspected = subprocess.run(self.docker + ['image', 'inspect', self.image, '--format', '{{index .RepoDigests 0}}'], check=True, text=True, capture_output=True)
+                self.jdk_digest = inspected.stdout.strip()
+                if '@sha256:' not in self.jdk_digest: raise RuntimeError('Runtime image needs a pinned repository digest')
             # Mark ownership before starting: cleanup also handles a cancelled run request.
             self.started = True
             self.command(['volume', 'create', '--label', 'esa.replay.session=' + self.session, self.volume])
-            self.command(['run', '-d', '--name', self.writer, '--label', 'esa.replay.session=' + self.session,
+            self.command(['run', '-d', '--rm', '--name', self.writer, '--label', 'esa.replay.session=' + self.session,
+                          '--user', '0:0',
                           '--network', 'none', '--read-only', '--tmpfs', '/tmp:rw,nosuid,size=64m',
                           '--memory', '128m', '--cpus', '0.25', '--pids-limit', '32', '--cap-drop', 'ALL',
                           '--security-opt', 'no-new-privileges',
                           '--mount', 'type=volume,src=' + self.volume + ',dst=/state',
                           '--entrypoint', 'sleep', self.jdk_digest, 'infinity'])
-            self.command(['run', '-d', '--name', self.name, '--label', 'esa.replay.session=' + self.session,
+            self.command(['run', '-d', '--rm', '--name', self.name, '--label', 'esa.replay.session=' + self.session,
                           '--init', '--network', 'none', '--read-only', '--user', '1000:1000',
                           '--tmpfs', '/tmp:rw,nosuid,size=512m,mode=1777',
                           '--tmpfs', '/workspace:rw,nosuid,size=1g,mode=1777',

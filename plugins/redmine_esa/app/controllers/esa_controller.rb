@@ -1,12 +1,16 @@
 class EsaController < ApplicationController
   before_action :require_login
   before_action :load_scope
-  before_action :load_issue, only: [:show, :forward, :metadata, :review_case, :review_run, :classifier_predict, :classifier_feedback]
+  before_action :load_issue, only: [:show, :forward, :metadata, :review_case, :review_run, :review_investigation, :review_membership, :classifier_predict, :classifier_feedback]
   rescue_from Esa::Error, with: :service_error
 
   def index
     @query = params.permit(:project_id, :tracker, :status, :assignee, :source, :esa_state, :route, :q, :sort, :direction, :page, :limit, :updated_from, :updated_to).to_h
     @result = @projects.empty? ? { 'tickets' => [], 'total_count' => 0, 'page' => 1, 'limit' => 25 } : @client.request(:get, '/v1/tickets', nil, @query)
+  end
+
+  def engineering_issues
+    @result = @client.request(:get, '/v1/engineering-issues')
   end
 
   def show
@@ -132,6 +136,29 @@ class EsaController < ApplicationController
     run = row.fetch('latest_run') { raise Esa::Error, 'No analysis run is available.' }
     @client.request(:post, "/v1/runs/#{run.fetch('id')}/review", { action: params[:review_action], reviewer: User.current.login, note: params[:note].to_s })
     flash[:notice] = 'Analysis review recorded.'
+    redirect_to esa_ticket_path(@issue)
+  end
+
+  def review_investigation
+    return unless require_permission(:review_esa)
+    row = @client.request(:get, "/v1/tickets/redmine:#{@issue.id}").fetch('ticket')
+    task = row.fetch('investigation') { raise Esa::Error, 'No shared investigation is available.' }
+    @client.request(:post, "/v1/investigations/#{task.fetch('id')}/review", {
+      expected_solution_id: params[:solution_id].to_s, action: params[:review_action],
+      reviewer: User.current.login, note: params[:note].to_s,
+      resolution: { cause: params[:cause].to_s, solution: params[:solution].to_s, validation: params[:validation].to_s }
+    })
+    flash[:notice] = 'A new solution revision was published for this investigation scope.'
+    redirect_to esa_ticket_path(@issue)
+  end
+
+  def review_membership
+    return unless require_permission(:review_esa)
+    @client.request(:post, "/v1/tickets/redmine:#{@issue.id}/membership/review", {
+      expected_snapshot_id: params[:snapshot_id].to_s, issue_id: params[:engineering_issue_id].to_s.strip,
+      reviewer: User.current.login, reason: params[:membership_reason].to_s
+    })
+    flash[:notice] = 'Issue membership revised. Frozen investigation inputs and earlier solutions remain in history.'
     redirect_to esa_ticket_path(@issue)
   end
 

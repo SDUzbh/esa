@@ -1,0 +1,298 @@
+{
+  "schema_version": 1,
+  "target": {
+    "url": "http://127.0.0.1:18090",
+    "start": {
+      "args": [
+        "python3",
+        "{{manifest_dir}}/../../scripts/esa_v2_fixture_target.py",
+        "--esa-bin",
+        "{{manifest_dir}}/../../bin/esa-host",
+        "--store",
+        "{{run_dir}}/target/state.json",
+        "--rules",
+        "{{manifest_dir}}/../../config/rules.v2-replay.json",
+        "--listen",
+        "127.0.0.1:18090"
+      ],
+      "env": {
+        "ESA_API_TOKEN": "{{token}}"
+      }
+    },
+    "headers": {
+      "X-ESA-Project-IDs": "{{project_id}}"
+    },
+    "submit": {
+      "method": "POST",
+      "path": "/v1/events",
+      "body": {
+        "id": "{{event_id}}",
+        "origin": "system_replay",
+        "occurred_at": "{{event_time}}",
+        "forwarded_by": "fixture-human",
+        "forwarded_at": "{{event_time}}",
+        "ticket": "{{ticket}}"
+      }
+    },
+    "observe": {
+      "path": "/v1/tickets/{{ticket_id}}"
+    },
+    "advance_clock": {
+      "method": "POST",
+      "path": "/v1/replay/clock",
+      "body": {
+        "time": "{{event_time}}"
+      }
+    },
+    "extract": {
+      "state": [
+        "/ticket/latest_run/state"
+      ],
+      "route": [
+        "/ticket/latest_run/route"
+      ],
+      "run_id": [
+        "/ticket/latest_run/id"
+      ],
+      "issue_id": [
+        "/ticket/engineering_issue/id"
+      ],
+      "findings": [
+        "/ticket/latest_run/report/findings"
+      ],
+      "usage": [
+        "/ticket/latest_run/report/usage"
+      ]
+    },
+    "capture": {
+      "run_id": "/ticket/latest_run/id",
+      "task_id": "/ticket/investigation/id",
+      "solution_id": "/ticket/solution/id",
+      "snapshot_id": "/ticket/snapshot_id"
+    },
+    "terminal_states": [
+      "awaiting_review",
+      "completed",
+      "failed",
+      "awaiting_information"
+    ],
+    "timeout_seconds": 30,
+    "poll_milliseconds": 100
+  },
+  "jobs": [
+    {
+      "id": "shared-investigation",
+      "version": "1.0",
+      "at": "2020-01-01T00:00:00Z",
+      "ticket": {
+        "id": "V2-A",
+        "source_key": "V2-A",
+        "project_id": "1",
+        "subject": "Consumer empty assignment crash",
+        "description": "Consumer crashes with NullPointerException during empty assignment.",
+        "tracker": "Bug",
+        "status": "Open",
+        "components": [
+          "consumer"
+        ],
+        "versions": [
+          "1.0"
+        ],
+        "environment": {
+          "jdk": "8"
+        },
+        "created_at": "2020-01-01T00:00:00Z",
+        "updated_at": "2020-01-01T00:00:00Z"
+      },
+      "expect": [
+        {
+          "path": "/state",
+          "op": "eq",
+          "value": "awaiting_review"
+        },
+        {
+          "path": "/raw/ticket/solution/state",
+          "op": "eq",
+          "value": "proposed"
+        }
+      ],
+      "events": [
+        {
+          "at": "2020-01-01T00:00:01Z",
+          "ticket": {
+            "id": "V2-B",
+            "source_key": "V2-B",
+            "project_id": "1",
+            "subject": "Consumer empty assignment crash",
+            "description": "Consumer crashes with NullPointerException during empty assignment.",
+            "tracker": "Bug",
+            "status": "Open",
+            "components": [
+              "consumer"
+            ],
+            "versions": [
+              "1.0"
+            ],
+            "environment": {
+              "jdk": "8"
+            },
+            "created_at": "2020-01-01T00:00:00Z",
+            "updated_at": "2020-01-01T00:00:00Z"
+          },
+          "expect": [
+            {
+              "path": "/run_id",
+              "op": "eq",
+              "value": "{{run_id}}"
+            },
+            {
+              "path": "/raw/ticket/investigation/state",
+              "op": "eq",
+              "value": "agent_proposed"
+            },
+            {
+              "path": "/raw/ticket/solution/state",
+              "op": "eq",
+              "value": "proposed"
+            }
+          ]
+        },
+        {
+          "at": "2020-01-01T00:00:02Z",
+          "ticket": {
+            "id": "V2-C",
+            "source_key": "V2-C",
+            "project_id": "1",
+            "subject": "Consumer empty assignment crash",
+            "description": "Consumer crashes with NullPointerException during empty assignment.",
+            "tracker": "Bug",
+            "status": "Open",
+            "components": [
+              "consumer"
+            ],
+            "versions": [
+              "1.0"
+            ],
+            "environment": {
+              "jdk": "8"
+            },
+            "created_at": "2020-01-01T00:00:00Z",
+            "updated_at": "2020-01-01T00:00:00Z"
+          },
+          "expect": [
+            {
+              "path": "/run_id",
+              "op": "eq",
+              "value": "{{run_id}}"
+            },
+            {
+              "path": "/raw/ticket/investigation/state",
+              "op": "eq",
+              "value": "agent_proposed"
+            },
+            {
+              "path": "/raw/ticket/solution/state",
+              "op": "eq",
+              "value": "proposed"
+            }
+          ]
+        },
+        {
+          "at": "2020-01-01T00:00:03Z",
+          "ticket": {
+            "id": "V2-D",
+            "source_key": "V2-D",
+            "project_id": "1",
+            "subject": "Consumer empty assignment crash",
+            "description": "Consumer crashes with NullPointerException during empty assignment.",
+            "tracker": "Bug",
+            "status": "Open",
+            "components": [
+              "consumer"
+            ],
+            "versions": [
+              "1.0"
+            ],
+            "environment": {
+              "jdk": "8"
+            },
+            "created_at": "2020-01-01T00:00:00Z",
+            "updated_at": "2020-01-01T00:00:00Z"
+          },
+          "expect": [
+            {
+              "path": "/run_id",
+              "op": "eq",
+              "value": "{{run_id}}"
+            },
+            {
+              "path": "/raw/ticket/investigation/state",
+              "op": "eq",
+              "value": "agent_proposed"
+            },
+            {
+              "path": "/raw/ticket/solution/state",
+              "op": "eq",
+              "value": "proposed"
+            }
+          ]
+        },
+        {
+          "at": "2020-01-01T00:00:04Z",
+          "request": {
+            "method": "POST",
+            "path": "/v1/investigations/{{task_id}}/review",
+            "body": {
+              "expected_solution_id": "{{solution_id}}",
+              "action": "approve",
+              "reviewer": "fixture-engineer",
+              "note": "Scoped fixture review",
+              "resolution": {
+                "cause": "Fixture empty assignment",
+                "solution": "Guard assignment",
+                "validation": "Fixture reviewed; no runtime repair claim"
+              }
+            }
+          },
+          "expect": [
+            {
+              "path": "/raw/ticket/solution/state",
+              "op": "eq",
+              "value": "trusted"
+            },
+            {
+              "path": "/raw/ticket/solution/revision",
+              "op": "eq",
+              "value": 2
+            },
+            {
+              "path": "/raw/ticket/latest_run/report/envelope_v2/causal_verification",
+              "op": "eq",
+              "value": "unverified"
+            }
+          ]
+        },
+        {
+          "at": "2020-01-01T00:00:05Z",
+          "request": {
+            "method": "GET",
+            "path": "/v1/engineering-issues"
+          },
+          "skip_observe": true,
+          "receipt_expect": [
+            {
+              "path": "/body/total_count",
+              "op": "eq",
+              "value": 1
+            },
+            {
+              "path": "/body/issues/0/visible_ticket_count",
+              "op": "eq",
+              "value": 4
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

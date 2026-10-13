@@ -1,0 +1,6 @@
+{
+  "version": "6",
+  "v2": {"enabled": true, "lease_seconds": 60, "replay_clock": false},
+  "classifier": {"enabled": false, "models": {}},
+  "budget": {"max_calls": 1, "max_input_tokens": 16000, "max_output_tokens": 6000, "warn_total_tokens": 22000, "timeout_seconds": 900}
+}

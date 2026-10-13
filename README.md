@@ -12,35 +12,38 @@ This repository contains ESA code and deployment definitions. Redmine is referen
 - Read-only engineering diagnosis through a Go Codex adapter, with code evidence and advisory token warnings.
 - Optional TF-IDF + Logistic Regression label suggestions, human feedback and independent training/testing; disabled by default.
 - Independent API-based system replay with historical Git repair checks, reusable isolated runtimes and cleanup.
+- Opt-in V2 shared investigations, immutable snapshots/solution revisions, automatic capability planning, versioned Profiles and sandbox-local tools. See [V2 operations](docs/V2_OPERATIONS.md).
+- Preinstalled Profile tool images with stable-release checks and per-Profile TXT configuration. See [tool images](docs/TOOL_IMAGES.md).
 
 ## Architecture
 
 Redmine owns source issues and user permissions. The Ruby ESA plugin provides the UI, imports and a durable forwarding outbox stored in PostgreSQL. The Go service polls the outbox and acknowledges events after committing them; the plugin calls its scoped HTTP APIs to display results and submit human reviews.
 
-The Go service handles diagnostic context, trusted case retrieval and asynchronous engineering analysis. Its current persistence layer is an atomic JSON state store containing events, runs, cases and classifier feedback. A separately configured engineering provider, such as the Codex adapter, returns read-only findings and recommendations for human review.
+The Go service handles diagnostic context, trusted case retrieval and asynchronous engineering analysis. V1 uses atomic JSON. Opt-in V2 adds shared issues/tasks and can use a transactional Redmine PostgreSQL adapter as its single authority. The Codex adapter resolves registered historical source per task, validates automatic Profile/capability requests and returns read-only findings for review.
 
 The optional classifier runs locally in Go and supplies label suggestions only. Human corrections are exported to the independent `esa-classifier` CLI for training and testing; an operator promotes a tested model and restarts the service. Classification does not control manual forwarding or engineering routing.
 
 ```mermaid
 flowchart TD
     P["Redmine + ESA plugin"] <-->|Scoped APIs / outbox poll and ack| E["ESA Go service"]
-    P --> D[("PostgreSQL: issues and outbox")]
-    E --> S[("JSON state: events, runs, cases, feedback")]
+    P --> D[("PostgreSQL: issues, outbox, optional ESA state")]
+    E --> S[("Selected adapter: JSON or Redmine API")]
+    S -->|V2 state transactions| P
     E <-->|HTTP diagnosis| A["Engineering provider / Codex adapter"]
     E -.->|Optional label suggestions| C["TF-IDF + Logistic Regression"]
     T["Independent system_replay tester"] <-->|Public API events and results| E
     T <-->|Version and repair checks| H["Git history + isolated product runtime"]
 ```
 
-`system_replay` is a separate Go module that exercises the system through public APIs. It freezes observed diagnoses before inspecting later mainline Git history, then verifies candidate repairs in an independent product runtime. It imports no ESA application packages and does not implement the system's ticket-processing decisions. Application-level `replay_test` tests remain separate.
+`system_replay` is a separate Go module that exercises the system through public APIs. It freezes observed diagnoses before inspecting later mainline Git history, then verifies candidate repairs in an independent product runtime. It imports no ESA application packages and does not implement the system's ticket-processing decisions. Application-level tests live alongside the code they verify: case history tests in `internal/esa` and historical Jira snapshot tests in `internal/replay`.
 
 ## Ticket workflow
 
-1. Create or import an ordinary Redmine issue and prepare its diagnostic metadata. These actions do not submit it to ESA.
-2. An authorized user selects **Forward to ESA**. The durable outbox sends the snapshot with the human actor and forwarding time.
-3. A forwarded open issue checks applicable trusted cases from the same project. If no case applies, missing context is requested or read-only engineering analysis is queued. This decision does not depend on a category or Tracker.
-4. An engineer reviews the diagnosis, evidence, concrete code findings, repair recommendations and verification steps. ESA does not modify product source or automatically close the Redmine issue.
-5. Forward a resolved issue to collect a case draft. Engineer approval makes it available for applicable recommendations on already forwarded tickets. Forward subsequent source changes to refresh or withdraw its evidence.
+* Create or import an ordinary Redmine issue and prepare its diagnostic metadata. These actions do not submit it to ESA.
+*  An authorized user selects **Forward to ESA**. The durable outbox sends the snapshot with the human actor and forwarding time.
+*   A forwarded open issue checks applicable trusted cases from the same project. If no case applies, missing context is requested or read-only engineering analysis is queued. This decision does not depend on a category or Tracker.
+*    An engineer reviews the diagnosis, evidence, concrete code findings, repair recommendations and verification steps. ESA does not modify product source or automatically close the Redmine issue.
+*    Forward a resolved issue to collect a case draft. Engineer approval makes it available for applicable recommendations on already forwarded tickets. Forward subsequent source changes to refresh or withdraw its evidence.
 
 The optional classifier supplies label suggestions alongside this workflow. Human confirmation and feedback training do not control admission, engineering routing or case approval. See [manual forwarding](docs/MANUAL_FORWARDING.md) and [backend workflow](docs/ESA_BACKEND_WORKFLOW.md).
 
@@ -52,8 +55,10 @@ The optional classifier supplies label suggestions alongside this workflow. Huma
 | `plugins/redmine_esa` | Native Redmine UI, authorization, imports and forwarding outbox |
 | `cmd/esa-classifier`, `internal/classifier` | Optional local classifier and independent supervised training/testing |
 | `cmd/esa-codex`, `internal/codex` | Read-only engineering provider and historical evidence validation |
+| `internal/capabilities`, `profiles`, `internal/replaytools` | Approved plans, versioned Skills and isolated typed tools |
+| `internal/retrieval` | Eligible-corpus BM25/RRF |
 | `system_replay` | Independent Go module for external API replay and subsequent Git repair evaluation |
-| `replay_test` | Application-level temporal snapshot and case tests |
+| `internal/replay` | Historical ticket snapshots and source exports, with temporal snapshot tests |
 | `deploy`, `scripts`, `docs`, `examples` | Deployment definitions, command wrappers, documentation and synthetic fixtures |
 
 ## Run

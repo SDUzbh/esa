@@ -1,0 +1,13 @@
+{
+  "id": "compatibility",
+  "version": "2",
+  "environment": {
+    "runtime": "operator-registered target runtime/dependency variants only",
+    "scratch": "/workspace",
+    "source": "/input/source (read-only)",
+    "network": "offline",
+    "toolset": "toolset.txt",
+    "image": "esa-tools-compatibility:<verified-release>",
+    "tool_java_home": "/opt/esa/tool-jdk"
+  }
+}

@@ -83,6 +83,14 @@ func ticketAllowed(r *http.Request, id string) bool {
 
 // Withhold a report if its case evidence is outside the user's issue visibility.
 func visibleRun(r *http.Request, s State, run Run) Run {
+	if run.SourceTicketID != "" {
+		source, ok := s.Tickets[run.SourceTicketID]
+		if !ok || source.Private || !ticketAllowed(r, run.SourceTicketID) || !allowed(r, source.ProjectID) {
+			run.SourceTicketID = ""
+			run.Report = Report{Summary: "Shared investigation evidence is outside your issue visibility. Ask an authorized engineer to review it."}
+			run.Matches = nil
+		}
+	}
 	for _, m := range run.Matches {
 		c, ok := s.Cases[m.CaseID]
 		if !ok || !ticketAllowed(r, c.TicketID) || !allowed(r, c.ProjectID) {
@@ -97,7 +105,7 @@ func visibleRun(r *http.Request, s State, run Run) Run {
 func (api *API) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, 200, map[string]string{"status": "ok", "workflow_version": WorkflowVersion})
+		writeJSON(w, 200, map[string]string{"status": "ok", "workflow_version": api.Engine.workflowVersion()})
 	})
 	mux.HandleFunc("POST /v1/events", api.events)
 	mux.HandleFunc("GET /v1/tickets", api.tickets)
@@ -112,6 +120,13 @@ func (api *API) Handler() http.Handler {
 	mux.HandleFunc("GET /v1/cases", api.cases)
 	mux.HandleFunc("POST /v1/cases/{id}/review", api.reviewCase)
 	mux.HandleFunc("POST /v1/import/preview", api.preview)
+	mux.HandleFunc("GET /v1/engineering-issues", api.engineeringIssues)
+	mux.HandleFunc("POST /v1/tickets/{id}/membership/review", api.reviewMembership)
+	mux.HandleFunc("GET /v1/investigations/{id}", api.investigation)
+	mux.HandleFunc("GET /v1/investigations/{id}/solutions", api.solutionHistory)
+	mux.HandleFunc("POST /v1/investigations/{id}/review", api.reviewSolution)
+	mux.HandleFunc("GET /v1/snapshots/{id}", api.snapshot)
+	mux.HandleFunc("POST /v1/replay/clock", api.advanceClock)
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) { writeError(w, ErrNotFound) })
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
@@ -123,6 +138,10 @@ func (api *API) Handler() http.Handler {
 			}
 			if len(projectScope(r)) == 0 {
 				writeJSON(w, 403, map[string]string{"error": "An explicit authorized project scope is required."})
+				return
+			}
+			if err := api.Engine.Refresh(); err != nil {
+				writeJSON(w, 503, map[string]string{"error": "Authoritative ESA state is unavailable."})
 				return
 			}
 		}
@@ -149,15 +168,29 @@ func (api *API) events(w http.ResponseWriter, r *http.Request) {
 }
 
 type TicketRow struct {
-	Ticket    Ticket `json:"ticket"`
-	LatestRun *Run   `json:"latest_run,omitempty"`
-	Case      *Case  `json:"case,omitempty"`
+	SnapshotID       string            `json:"snapshot_id,omitempty"`
+	Investigation    *Investigation    `json:"investigation,omitempty"`
+	Solution         *SolutionRevision `json:"solution,omitempty"`
+	EngineeringIssue *EngineeringIssue `json:"engineering_issue,omitempty"`
+	Ticket           Ticket            `json:"ticket"`
+	LatestRun        *Run              `json:"latest_run,omitempty"`
+	Case             *Case             `json:"case,omitempty"`
 }
 
 func rowFor(s State, t Ticket) TicketRow {
-	row := TicketRow{Ticket: t}
+	row := TicketRow{Ticket: t, SnapshotID: s.LatestSnapshot[t.ID]}
 	if run, ok := s.Runs[s.Latest[t.ID]]; ok {
+		run = runForTicket(run, t)
 		row.LatestRun = &run
+		if task, ok := s.Investigations[run.InvestigationID]; ok {
+			row.Investigation = &task
+			if solution, ok := s.Solutions[task.SolutionID]; ok {
+				row.Solution = &solution
+			}
+			if issue, ok := s.Issues[task.IssueID]; ok {
+				row.EngineeringIssue = &issue
+			}
+		}
 	}
 	for _, c := range s.Cases {
 		if c.TicketID == t.ID {
@@ -184,6 +217,7 @@ func (api *API) tickets(w http.ResponseWriter, r *http.Request) {
 			v := visibleRun(r, s, *row.LatestRun)
 			row.LatestRun = &v
 		}
+		row = visibleRow(r, s, row, api.Engine.Now())
 		state, route := "", "case_collection"
 		updated := t.UpdatedAt
 		if row.LatestRun != nil && !t.Closed {
@@ -312,9 +346,19 @@ func (api *API) ticket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	history := []Run{}
+	seen := map[string]bool{}
 	for _, run := range s.Runs {
 		if run.TicketID == t.ID {
 			history = append(history, visibleRun(r, s, run))
+			seen[run.ID] = true
+		}
+	}
+	for _, link := range s.Memberships {
+		task := s.Investigations[link.InvestigationID]
+		run, ok := s.Runs[task.RunID]
+		if ok && link.TicketID == t.ID && !seen[run.ID] {
+			history = append(history, visibleRun(r, s, runForTicket(run, t)))
+			seen[run.ID] = true
 		}
 	}
 	sort.Slice(history, func(i, j int) bool { return history[i].CreatedAt.After(history[j].CreatedAt) })
@@ -323,6 +367,7 @@ func (api *API) ticket(w http.ResponseWriter, r *http.Request) {
 		v := visibleRun(r, s, *row.LatestRun)
 		row.LatestRun = &v
 	}
+	row = visibleRow(r, s, row, api.Engine.Now())
 	result := map[string]any{"ticket": row, "history": history}
 	if api.Engine.Config.Classifier.Enabled && !t.Private {
 		result["classifier"] = api.Engine.classifierView(s, t)

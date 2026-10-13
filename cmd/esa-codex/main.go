@@ -33,6 +33,10 @@ func run() error {
 	reviewFile := flag.String("review", "", "Retrospective review packet; runs a separate tool-free Agent")
 	listen := flag.String("listen", "127.0.0.1:8091", "Local provider listen address")
 	evidence := flag.String("evidence", "", "Registered immutable replay evidence packet")
+	registryPath := flag.String("registry", "", "Project/release registry for per-task historical source resolution")
+	profiles := flag.String("profiles", "profiles", "Operator-approved versioned Profile and Skill directory")
+	toolCatalog := flag.String("tool-catalog", "", "Private JSON catalog of approved pinned temporary tools")
+	concurrency := flag.Int("concurrency", 1, "Maximum registry investigations running simultaneously")
 	runs := flag.String("runs", ".esa/codex-runs", "Private invocation audit directory")
 	tokenFile := flag.String("token-env-file", "deploy/redmine/.env", "Private environment file containing ESA_API_TOKEN")
 	cli := flag.String("codex", "codex", "Installed Codex CLI")
@@ -56,19 +60,22 @@ func run() error {
 	}
 	var b []byte
 	var err error
-	if *reviewFile == "" {
+	if *reviewFile == "" && *registryPath == "" {
 		b, err = os.ReadFile(*evidence)
 	}
 	if err != nil {
 		return err
 	}
 	var packet codex.Packet
-	if *reviewFile == "" {
+	if *reviewFile == "" && *registryPath == "" {
 		if err = json.Unmarshal(b, &packet); err != nil {
 			return err
 		}
 	}
-	if *reviewFile == "" && ((len(packet.Documents) == 0 && *toolsConfig == "") || packet.Ticket.SourceKey == "" || packet.Cutoff.IsZero()) {
+	if *registryPath != "" && (*once || *toolsConfig != "" || *reviewFile != "") {
+		return fmt.Errorf("registry mode requires the HTTP provider with task-local tool registrations")
+	}
+	if *reviewFile == "" && *registryPath == "" && ((len(packet.Documents) == 0 && *toolsConfig == "") || packet.Ticket.SourceKey == "" || packet.Cutoff.IsZero()) {
 		return fmt.Errorf("invalid evidence packet")
 	}
 	token := ""
@@ -134,7 +141,41 @@ func run() error {
 			return err
 		}
 	}
-	provider := &codex.Provider{CLI: path, Model: *model, Effort: *effort, RunsDir: dir, Packet: packet, ToolsConfig: *toolsConfig, ToolCommand: toolCommand}
+	profileDir, err := filepath.Abs(*profiles)
+	if err != nil {
+		return err
+	}
+	provider := &codex.Provider{CLI: path, Model: *model, Effort: *effort, RunsDir: dir, Packet: packet, ToolsConfig: *toolsConfig, ToolCommand: toolCommand, ProfilesRoot: profileDir}
+	if *toolCatalog != "" {
+		data, err := os.ReadFile(*toolCatalog)
+		if err != nil {
+			return err
+		}
+		if err = json.Unmarshal(data, &provider.ToolCatalog); err != nil {
+			return err
+		}
+		if len(provider.ToolCatalog) > 64 {
+			return fmt.Errorf("tool catalog must contain at most 64 packages")
+		}
+	}
+	if *registryPath != "" {
+		if *concurrency < 1 || *concurrency > 8 {
+			return fmt.Errorf("registry concurrency must be 1..8")
+		}
+		provider.Slots = make(chan struct{}, *concurrency)
+		script := ""
+		if *managed {
+			script, err = filepath.Abs("scripts/replay_session.py")
+			if err != nil {
+				return err
+			}
+		}
+		registry, err := codex.LoadRegistry(*registryPath, filepath.Join(dir, "source-cache"), profileDir, script)
+		if err != nil {
+			return err
+		}
+		provider.Resolve = registry.Resolve
+	}
 	if *reviewFile != "" {
 		if *toolsConfig != "" {
 			return fmt.Errorf("review mode must not expose diagnostic tools")
@@ -164,7 +205,7 @@ func run() error {
 		}
 		return json.NewEncoder(os.Stdout).Encode(r)
 	}
-	if *managed && *toolsConfig == "" {
+	if *managed && *toolsConfig == "" && *registryPath == "" {
 		packetPath, err := filepath.Abs(*evidence)
 		if err != nil {
 			return err

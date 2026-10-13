@@ -1,0 +1,10 @@
+# Opt-in overlay. Import stopped JSON state before using an existing installation.
+services:
+  redmine:
+    environment:
+      ESA_STATE_API_ENABLED: '1'
+  esa:
+    environment:
+      ESA_STATE_URL: http://redmine:3000/esa/api/state
+    volumes:
+      - ../../config/rules.v2.json:/etc/esa/rules.json:ro

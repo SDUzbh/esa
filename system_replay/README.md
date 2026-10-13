@@ -1,5 +1,7 @@
 # External system replay tester
 
+The opt-in `examples/esa-api-v2.json` manifest exercises ESA's target observation clock, shared task identity, pending solutions and immutable engineer revision behavior. It starts an owned ESA process with a deterministic HTTP provider and makes no model calls. Assertion values can reference earlier public captures, so identity checks do not predict or construct the target's decisions. See [V2 operations](../docs/V2_OPERATIONS.md) for build/validation commands and current scope.
+
 This directory is a standalone Go module (`systemreplay`) with no application imports, SDKs or third-party Go modules. It can be copied out of the ESA repository and built independently. Python standard-library runtime infrastructure and a registered Kafka observation fixture are included. The application is an opaque executable or externally managed HTTP service, configured by a manifest.
 
 The tester delivers historical inputs through public interfaces and records what the system actually did. Classification, issue assignment, case retrieval, routing, queues, engineering providers and business state transitions belong to the system under test. The tester never invokes those application functions, builds substitute issues, imports Agent predictions or directly launches an engineering Agent.

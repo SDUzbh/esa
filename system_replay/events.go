@@ -13,6 +13,21 @@ func checked(value any, expected []Assertion, message string) ([]Check, error) {
 	return checks, err
 }
 
+// Captured identifiers are observations, not decisions supplied to the target.
+// Rendering assertion values lets a manifest check shared identities without
+// predicting IDs or implementing the target's aggregation algorithm.
+func checkedCaptured(value any, expected []Assertion, vars map[string]any, message string) ([]Check, error) {
+	resolved := append([]Assertion(nil), expected...)
+	for index := range resolved {
+		v, err := render(resolved[index].Value, vars)
+		if err != nil {
+			return nil, err
+		}
+		resolved[index].Value = v
+	}
+	return checked(value, resolved, message)
+}
+
 // Every event follows the same public submit/observe path. No business decisions
 // or assertion labels are included in the request template variables.
 func (c *Client) event(ctx context.Context, event Event, vars map[string]any) (record EventResult) {
@@ -51,7 +66,7 @@ func (c *Client) event(ctx context.Context, event Event, vars map[string]any) (r
 		return
 	}
 	vars["receipt"] = record.Receipt.Body
-	record.Checks, err = checked(map[string]any{"status": record.Receipt.Status, "body": record.Receipt.Body}, event.ReceiptExpect, "public submission response assertion failed")
+	record.Checks, err = checkedCaptured(map[string]any{"status": record.Receipt.Status, "body": record.Receipt.Body}, event.ReceiptExpect, vars, "public submission response assertion failed")
 	if err == nil && len(event.ReceiptExpect) == 0 && record.Receipt.Status >= 300 {
 		err = fmt.Errorf("submission returned HTTP %d", record.Receipt.Status)
 	}
@@ -67,7 +82,7 @@ func (c *Client) event(ctx context.Context, event Event, vars map[string]any) (r
 		return
 	}
 	var checks []Check
-	checks, err = checked(observationValue(record.Observation), event.Expect, "observed system result failed assertions")
+	checks, err = checkedCaptured(observationValue(record.Observation), event.Expect, vars, "observed system result failed assertions")
 	record.Checks = append(record.Checks, checks...)
 	for key, path := range c.target.Capture {
 		delete(vars, key)

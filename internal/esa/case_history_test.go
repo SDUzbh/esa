@@ -1,4 +1,4 @@
-package replay_test
+package esa_test
 
 import (
 	"encoding/json"
@@ -33,7 +33,7 @@ func TestFutureKnowledgeExcludedAndWithdrawalVersioned(t *testing.T) {
 	if len(esa.CasesAt(history, withdrawn)) != 0 {
 		t.Fatal("withdrawn case still active")
 	}
-	b, err := os.ReadFile("../config/rules.json")
+	b, err := os.ReadFile("../../config/rules.json")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -69,6 +69,7 @@ type Config struct {
 	Version    string           `json:"version"`
 	Budget     Budget           `json:"budget"`
 	Classifier ClassifierConfig `json:"classifier"`
+	V2         V2Config         `json:"v2"`
 }
 
 type ClassifierConfig struct {
@@ -116,6 +117,7 @@ type Classification struct {
 }
 
 type Case struct {
+	IssueID     string            `json:"engineering_issue_id,omitempty"`
 	ID          string            `json:"id"`
 	SourceHash  string            `json:"source_hash"`
 	TicketID    string            `json:"ticket_id"`
@@ -142,14 +144,15 @@ type Case struct {
 }
 
 type Match struct {
-	Categories  []string `json:"categories,omitempty"`
-	CaseID      string   `json:"case_id"`
-	CaseVersion int      `json:"case_version"`
-	Subject     string   `json:"subject"`
-	Score       int      `json:"score"`
-	Applicable  bool     `json:"applicable"`
-	Reasons     []string `json:"reasons"`
-	Solution    string   `json:"solution,omitempty"`
+	Retrieval   *RetrievalTrace `json:"retrieval,omitempty"`
+	Categories  []string        `json:"categories,omitempty"`
+	CaseID      string          `json:"case_id"`
+	CaseVersion int             `json:"case_version"`
+	Subject     string          `json:"subject"`
+	Score       int             `json:"score"`
+	Applicable  bool            `json:"applicable"`
+	Reasons     []string        `json:"reasons"`
+	Solution    string          `json:"solution,omitempty"`
 }
 
 type Usage struct {
@@ -181,6 +184,8 @@ type IssueAssignment struct {
 	Reason     string `json:"reason"`
 }
 type Report struct {
+	Envelope            *ReportEnvelope      `json:"envelope_v2,omitempty"`
+	Plan                *AnalysisPlan        `json:"plan,omitempty"`
 	AgentClassification *Classification      `json:"agent_classification,omitempty"`
 	Issue               *IssueAssignment     `json:"issue,omitempty"`
 	Findings            []Finding            `json:"findings,omitempty"`
@@ -208,6 +213,11 @@ type EnvironmentRequest struct {
 }
 
 type Run struct {
+	SourceTicketID     string          `json:"source_ticket_id,omitempty"`
+	InvestigationID    string          `json:"investigation_id,omitempty"`
+	SnapshotID         string          `json:"snapshot_id,omitempty"`
+	ObservationCutoff  time.Time       `json:"observation_cutoff,omitempty"`
+	IssueID            string          `json:"issue_id,omitempty"`
 	ID                 string          `json:"id"`
 	TicketID           string          `json:"ticket_id"`
 	ProjectID          string          `json:"project_id"`
@@ -236,6 +246,17 @@ type Receipt struct {
 }
 
 type State struct {
+	LatestSnapshot        map[string]string               `json:"latest_snapshot,omitempty"`
+	Snapshots             map[string]TicketSnapshot       `json:"snapshots,omitempty"`
+	Issues                map[string]EngineeringIssue     `json:"engineering_issues,omitempty"`
+	Memberships           map[string]IssueTicketLink      `json:"issue_ticket_links,omitempty"`
+	MembershipHistory     []IssueTicketLink               `json:"issue_ticket_link_history,omitempty"`
+	IssueOverrides        map[string]string               `json:"issue_overrides,omitempty"`
+	Investigations        map[string]Investigation        `json:"investigations,omitempty"`
+	Groups                map[string]InvestigationGroup   `json:"investigation_groups,omitempty"`
+	Solutions             map[string]SolutionRevision     `json:"solution_revisions,omitempty"`
+	ReplayClock           time.Time                       `json:"replay_clock,omitempty"`
+	LastClaimedProject    string                          `json:"last_claimed_project,omitempty"`
 	ClassifierPredictions map[string]ClassifierPrediction `json:"classifier_predictions,omitempty"`
 	ClassifierFeedback    map[string]ClassifierFeedback   `json:"classifier_feedback,omitempty"`
 	SchemaVersion         int                             `json:"schema_version"`

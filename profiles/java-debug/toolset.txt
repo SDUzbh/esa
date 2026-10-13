@@ -1,0 +1,12 @@
+[profile]
+id = java-debug
+version = 2
+[release]
+os = noble
+target_image = eclipse-temurin:8-jdk-noble
+tool_jdk_image = eclipse-temurin:21-jdk-noble
+async_profiler_repository = async-profiler/async-profiler
+[apt]
+packages = gdb strace lsof procps binutils
+[commands]
+primary = java javac jdb jcmd jstack jmap javap jdeps gdb strace lsof

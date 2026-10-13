@@ -1,0 +1,5 @@
+{
+  "releases": [
+    {"project_id": "1", "version": "0.9.0.0", "ref": "refs/tags/0.9.0.0", "repository": "/absolute/path/to/local/kafka", "scope": "clients", "available_at": "2015-11-23T00:00:00Z"}
+  ]
+}

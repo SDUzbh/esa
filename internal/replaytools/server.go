@@ -26,22 +26,29 @@ type Document struct {
 	Lines  []string `json:"lines"`
 }
 type Config struct {
-	DockerContext string            `json:"docker_context"`
-	Container     string            `json:"container"`
-	Session       string            `json:"session"`
-	SourceDir     string            `json:"source_dir"`
-	Commit        string            `json:"source_commit"`
-	Files         map[string]string `json:"files"`
-	AuditPath     string            `json:"audit_path"`
+	DockerContext         string                 `json:"docker_context"`
+	Container             string                 `json:"container"`
+	Session               string                 `json:"session"`
+	SourceDir             string                 `json:"source_dir"`
+	Commit                string                 `json:"source_commit"`
+	Files                 map[string]string      `json:"files"`
+	AuditPath             string                 `json:"audit_path"`
+	ProfilesRoot          string                 `json:"profiles_root,omitempty"`
+	AllowedProfiles       []string               `json:"allowed_profiles,omitempty"`
+	AvailableCapabilities []string               `json:"available_capabilities,omitempty"`
+	Tools                 map[string]ToolPackage `json:"tools,omitempty"`
+	ProfileHashes         map[string]string      `json:"profile_hashes,omitempty"`
+	Readiness             map[string]any         `json:"readiness,omitempty"`
 }
 type Record struct {
 	Tool      string                  `json:"tool"`
 	Arguments json.RawMessage         `json:"arguments"`
 	Document  *Document               `json:"document,omitempty"`
 	Request   *esa.EnvironmentRequest `json:"request,omitempty"`
+	Result    map[string]any          `json:"result,omitempty"`
 }
 
-var Names = []string{"read_code", "run", "install_environment", "request_environment_change"}
+var Names = []string{"read_code", "run", "install_environment", "request_environment_change", "source_search", "capability_request", "tool_install"}
 
 func Load(path string) (Config, error) {
 	var c Config
@@ -52,7 +59,7 @@ func Load(path string) (Config, error) {
 	if err = json.Unmarshal(b, &c); err != nil {
 		return c, err
 	}
-	if c.Container == "" || c.Session == "" || c.Commit == "" || len(c.Files) == 0 || !filepath.IsAbs(c.SourceDir) || !filepath.IsAbs(c.AuditPath) {
+	if c.Container == "" && !(c.ProfilesRoot != "" && len(c.AvailableCapabilities) == 1 && c.AvailableCapabilities[0] == "source") || c.Session == "" || c.Commit == "" || len(c.Files) == 0 || !filepath.IsAbs(c.SourceDir) || !filepath.IsAbs(c.AuditPath) {
 		return c, errors.New("invalid replay tool registration")
 	}
 	return c, nil
@@ -86,7 +93,10 @@ func ReadAudit(path string) ([]Document, []esa.EnvironmentRequest, error) {
 	return docs, requests, scanner.Err()
 }
 
-type Server struct{ Config Config }
+type Server struct {
+	Config  Config
+	granted []string
+}
 
 func (s *Server) docker(ctx context.Context, args ...string) ([]byte, error) {
 	base := []string{}
@@ -118,9 +128,43 @@ func (s *Server) owned(ctx context.Context) error {
 	if err != nil || strings.TrimSpace(string(b)) != s.Config.Session {
 		return errors.New("replay container ownership check failed")
 	}
+	if s.Config.ProfilesRoot != "" {
+		b, err = s.docker(ctx, "inspect", s.Config.Container)
+		var info []struct {
+			Config     struct{ User string }
+			HostConfig struct {
+				ReadonlyRootfs bool
+				NetworkMode    string
+				CapDrop        []string
+				Memory         int64
+				NanoCpus       int64
+				PidsLimit      int64
+				SecurityOpt    []string
+			}
+			Mounts []struct {
+				Source, Destination string
+				RW                  bool
+			}
+		}
+		if err != nil || json.Unmarshal(b, &info) != nil || len(info) != 1 {
+			return errors.New("sandbox readiness inspection failed")
+		}
+		c := info[0]
+		if !c.HostConfig.ReadonlyRootfs || c.HostConfig.NetworkMode != "none" || c.Config.User != "1000:1000" || !has(c.HostConfig.CapDrop, "ALL") || c.HostConfig.Memory <= 0 || c.HostConfig.NanoCpus <= 0 || c.HostConfig.PidsLimit <= 0 {
+			return errors.New("sandbox does not satisfy task isolation policy")
+		}
+		for _, mount := range c.Mounts {
+			if strings.Contains(mount.Source, "docker.sock") || strings.Contains(mount.Destination, "docker.sock") || mount.Destination == "/input" && mount.RW {
+				return errors.New("sandbox exposes forbidden writable product input or host socket")
+			}
+		}
+	}
 	return nil
 }
 func (s *Server) Call(ctx context.Context, name string, args json.RawMessage) (map[string]any, error) {
+	if name == "source_search" || name == "capability_request" || name == "tool_install" {
+		return s.extendedCall(ctx, name, args)
+	}
 	var a struct {
 		Path       string `json:"path"`
 		First      int    `json:"first_line"`
@@ -176,6 +220,9 @@ func (s *Server) Call(ctx context.Context, name string, args json.RawMessage) (m
 		}
 		record.Document = &Document{Source: "git", Prefix: s.Config.Commit + ":" + path + ":", First: a.First, Lines: lines}
 	case "run", "install_environment":
+		if s.Config.ProfilesRoot != "" && !has(s.granted, "runtime") {
+			return nil, errors.New("request the runtime capability for a named hypothesis first")
+		}
 		if len(a.Script) > 32768 {
 			return nil, errors.New("auxiliary command is too large")
 		}
@@ -231,18 +278,22 @@ func (s *Server) Call(ctx context.Context, name string, args json.RawMessage) (m
 	return map[string]any{"evidence": record.Document, "environment_request": record.Request}, nil
 }
 
-func tools() []map[string]any {
+func tools(extended bool) []map[string]any {
 	str := func() map[string]string { return map[string]string{"type": "string"} }
 	number := func() map[string]string { return map[string]string{"type": "integer"} }
 	schema := func(properties map[string]any, required ...string) map[string]any {
 		return map[string]any{"type": "object", "properties": properties, "required": required, "additionalProperties": false}
 	}
-	return []map[string]any{
+	result := []map[string]any{
 		{"name": "read_code", "description": "Read numbered lines from frozen historical source. Use returned reference_prefix and exact lines as report citations.", "inputSchema": schema(map[string]any{"path": str(), "first_line": number(), "line_count": number()}, "path", "first_line", "line_count")},
 		{"name": "run", "description": "Run installation, the system or debugger commands inside the isolated replay container. Product source and runtime inputs are read-only. Write auxiliary scripts and compiled tools only under /workspace. No host filesystem, credentials or Docker socket is exposed. Output is capped at 64 KiB.", "inputSchema": schema(map[string]any{"script": str(), "timeout_seconds": number()}, "script")},
 		{"name": "install_environment", "description": "Install the registered Java client dependencies into /workspace/lib. Java and JDK debugging tools are already provided. No product source is changed.", "inputSchema": schema(map[string]any{})},
 		{"name": "request_environment_change", "description": "Record an environment defect and a proposed change for engineer review. Does not apply the change or modify product source.", "inputSchema": schema(map[string]any{"reason": str(), "proposed_change": str(), "validation": str()}, "reason", "proposed_change", "validation")},
 	}
+	if extended {
+		result = append(result, extendedTools()...)
+	}
+	return result
 }
 
 // Serve uses MCP's newline-delimited stdio transport. Diagnostics never go to stdout.
@@ -274,7 +325,7 @@ func (s *Server) Serve(ctx context.Context, in io.Reader, out io.Writer) error {
 		case "ping":
 			result = map[string]any{}
 		case "tools/list":
-			result = map[string]any{"tools": tools()}
+			result = map[string]any{"tools": tools(s.Config.ProfilesRoot != "")}
 		case "tools/call":
 			var p struct {
 				Name      string          `json:"name"`

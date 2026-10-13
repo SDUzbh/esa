@@ -1,0 +1,13 @@
+{
+  "id": "general",
+  "version": "2",
+  "environment": {
+    "runtime": "operator-registered; source inspection is always available",
+    "scratch": "/workspace",
+    "source": "/input/source (read-only)",
+    "network": "offline",
+    "toolset": "toolset.txt",
+    "image": "esa-tools-general:<verified-release>",
+    "tool_java_home": "/opt/esa/tool-jdk"
+  }
+}

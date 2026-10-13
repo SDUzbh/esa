@@ -18,11 +18,13 @@ type IssueBrief struct {
 	TicketKeys []string `json:"ticket_keys"`
 }
 type AnalyzeRequest struct {
-	RunID    string `json:"run_id"`
-	Ticket   Ticket `json:"ticket"`
-	Cases    []Case `json:"cases"`
-	Budget   Budget `json:"budget"`
-	ReadOnly bool   `json:"read_only"`
+	Contract    *TaskContract `json:"task_contract,omitempty"`
+	KnownIssues []IssueBrief  `json:"known_issues,omitempty"`
+	RunID       string        `json:"run_id"`
+	Ticket      Ticket        `json:"ticket"`
+	Cases       []Case        `json:"cases"`
+	Budget      Budget        `json:"budget"`
+	ReadOnly    bool          `json:"read_only"`
 }
 
 type Analyzer interface {
@@ -70,6 +72,9 @@ func (a HTTPAnalyzer) Analyze(ctx context.Context, input AnalyzeRequest) (Report
 
 func (e *Engine) Recover() error {
 	return e.Store.Update(func(s *State) error {
+		if e.Config.V2.Enabled {
+			return e.recoverShared(s)
+		}
 		for id, r := range s.Runs {
 			if r.State == "running" {
 				r.State = "failed"
@@ -84,12 +89,17 @@ func (e *Engine) Recover() error {
 
 // ProcessOne claims one queued task. Network calls never hold the storage lock.
 func (e *Engine) ProcessOne(ctx context.Context, analyzer Analyzer) (bool, error) {
+	if e.Config.V2.Enabled {
+		return e.processSharedOne(ctx, analyzer)
+	}
 	if !e.Store.HasQueuedRun() {
 		return false, nil
 	}
 	var run Run
 	found := false
 	err := e.Store.Update(func(s *State) error {
+		found = false
+		run = Run{}
 		ids := []string{}
 		for id, r := range s.Runs {
 			if r.State == "queued" {
@@ -202,6 +212,9 @@ func (e *Engine) ReviewRun(id string, review Review) (Run, error) {
 		r, ok := s.Runs[id]
 		if !ok {
 			return ErrNotFound
+		}
+		if r.InvestigationID != "" {
+			return fmt.Errorf("%w: review the versioned investigation solution", ErrInvalid)
 		}
 		if r.State != "awaiting_review" || review.Reviewer == "" || !contains([]string{"approve", "reject"}, review.Action) {
 			return fmt.Errorf("%w: a reviewable run, reviewer, and approve/reject action are required", ErrInvalid)

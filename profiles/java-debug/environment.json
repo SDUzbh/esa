@@ -1,0 +1,13 @@
+{
+  "id": "java-debug",
+  "version": "2",
+  "environment": {
+    "runtime": "registered target JDK and locked product dependencies",
+    "source": "/input/source (read-only)",
+    "scratch": "/workspace",
+    "network": "offline",
+    "toolset": "toolset.txt",
+    "image": "esa-tools-java-debug:<verified-release>",
+    "tool_java_home": "/opt/esa/tool-jdk"
+  }
+}

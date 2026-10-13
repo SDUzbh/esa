@@ -1,0 +1,13 @@
+{
+  "id": "configuration",
+  "version": "2",
+  "environment": {
+    "runtime": "registered configuration/log snapshot and diagnostic container",
+    "scratch": "/workspace",
+    "source": "/input/source (read-only)",
+    "network": "offline",
+    "toolset": "toolset.txt",
+    "image": "esa-tools-configuration:<verified-release>",
+    "tool_java_home": "/opt/esa/tool-jdk"
+  }
+}

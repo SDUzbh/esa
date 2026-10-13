@@ -16,6 +16,8 @@ def main():
     parser.add_argument('--store', required=True)
     parser.add_argument('--rules', required=True)
     parser.add_argument('--listen', required=True)
+    parser.add_argument('--replay-at', default='')
+    parser.add_argument('--replay-projects', default='')
     args = parser.parse_args()
     token = os.environ['ESA_API_TOKEN']
     directory = Path(args.store).parent
@@ -55,7 +57,10 @@ def main():
     thread = threading.Thread(target=provider.serve_forever, daemon=True)
     thread.start()
     environment = dict(os.environ, ESA_REDMINE_URL='', ESA_ANALYZER_URL='http://127.0.0.1:%d/analyze' % provider.server_port, ESA_ANALYZER_TOKEN=token)
-    child = subprocess.Popen([args.esa_bin, '-listen', args.listen, '-store', args.store, '-rules', args.rules], env=environment)
+    command = [args.esa_bin, '-listen', args.listen, '-store', args.store, '-rules', args.rules]
+    if args.replay_at or args.replay_projects:
+        command += ['-replay-at', args.replay_at, '-replay-projects', args.replay_projects]
+    child = subprocess.Popen(command, env=environment)
     stop = threading.Event()
     signal.signal(signal.SIGTERM, lambda *_: stop.set())
     signal.signal(signal.SIGINT, lambda *_: stop.set())

@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -30,6 +31,8 @@ func run() error {
 	stateURL := flag.String("state-url", os.Getenv("ESA_STATE_URL"), "Authoritative Redmine state API; disables the local JSON writer")
 	importState := flag.String("import-state", "", "Import a stopped JSON store into an empty authoritative backend and exit")
 	rules := flag.String("rules", "config/rules.json", "Workflow configuration and analysis budget")
+	replayAt := flag.String("replay-at", "", "Test-only observation clock initial time (RFC3339)")
+	replayProjects := flag.String("replay-projects", "", "Comma-separated operator project scope for the test clock")
 	health := flag.Bool("healthcheck", false, "Check the local ESA HTTP server and exit")
 	flag.Parse()
 	if *health {
@@ -68,6 +71,19 @@ func run() error {
 	var config esa.Config
 	if err := json.Unmarshal(b, &config); err != nil {
 		return err
+	}
+	if *replayAt != "" || *replayProjects != "" {
+		at, err := time.Parse(time.RFC3339Nano, *replayAt)
+		if err != nil {
+			return fmt.Errorf("invalid -replay-at: %w", err)
+		}
+		projects := []string{}
+		for _, project := range strings.Split(*replayProjects, ",") {
+			if project = strings.TrimSpace(project); project != "" {
+				projects = append(projects, project)
+			}
+		}
+		config.Replay = esa.ReplayConfig{Enabled: true, InitialTime: at, Projects: projects}
 	}
 	var store *esa.Store
 	if *stateURL != "" {

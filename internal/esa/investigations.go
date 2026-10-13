@@ -7,14 +7,8 @@ import (
 	"time"
 )
 
-func (e *Engine) workflowVersion() string {
-	if e.Config.V2.Enabled {
-		return "5"
-	}
-	return WorkflowVersion
-}
-func (e *Engine) Version() string { return e.workflowVersion() }
-func prepareV2(s *State) {
+func (e *Engine) Version() string { return WorkflowVersion }
+func prepareInvestigations(s *State) {
 	if s.Snapshots == nil {
 		s.Snapshots = map[string]TicketSnapshot{}
 	}
@@ -41,7 +35,7 @@ func prepareV2(s *State) {
 	}
 }
 func captureSnapshot(s *State, event Event) {
-	prepareV2(s)
+	prepareInvestigations(s)
 	id := "snapshot_" + hash(event.ID)
 	t := event.Ticket
 	s.Snapshots[id] = TicketSnapshot{ID: id, Hash: hash(t), EventID: event.ID, Ticket: t, EffectiveAt: t.UpdatedAt, AvailableAt: event.ForwardedAt, RecordedAt: time.Now().UTC(), Cutoff: event.ForwardedAt}
@@ -83,15 +77,9 @@ func (e *Engine) detachChangedMemberships(s *State, t Ticket) {
 				s.Investigations[id] = task
 				if solution, ok := s.Solutions[task.SolutionID]; ok && solution.State != "withdrawn" {
 					next := solution
-					next.ID = randomID("solution_")
-					next.Revision++
-					next.Supersedes = solution.ID
 					next.State = "withdrawn"
-					next.AvailableAt = e.Now()
-					next.RecordedAt = time.Now().UTC()
-					s.Solutions[next.ID] = next
-					task.SolutionID = next.ID
-					s.Investigations[id] = task
+					next.Note = "The source ticket became private"
+					e.publishSolution(s, task, solution, next)
 				}
 			}
 		}
@@ -115,7 +103,7 @@ func availableTask(s State, task Investigation, cutoff time.Time) bool {
 	}
 	run := s.Runs[task.RunID]
 	source, ok := s.Tickets[run.TicketID]
-	if !ok || source.Private || run.WorkflowVersion != "5" {
+	if !ok || source.Private || run.WorkflowVersion != WorkflowVersion {
 		return false
 	}
 	switch task.State {
@@ -127,8 +115,38 @@ func availableTask(s State, task Investigation, cutoff time.Time) bool {
 	}
 	return false
 }
-func (e *Engine) enqueueShared(s *State, t Ticket, now time.Time, force bool) Receipt {
-	prepareV2(s)
+
+// Unstarted work loses its purpose when every member closes, changes or receives
+// a trusted recommendation. Running work retains its usage audit on completion.
+func supersedeInactiveTask(s *State, runID string, now time.Time) {
+	task, ok := s.Investigations[s.Runs[runID].InvestigationID]
+	if !ok || task.InvocationStarted || task.State != "queued" && task.State != "awaiting_configuration" || taskHasActiveMembers(*s, task) {
+		return
+	}
+	task.State, task.UpdatedAt = "superseded", now
+	s.Investigations[task.ID] = task
+}
+
+func (e *Engine) newRun(s *State, t Ticket, snap TicketSnapshot, cutoff, now time.Time) Run {
+	return Run{ID: randomID("run_"), TicketID: t.ID, ProjectID: t.ProjectID, WorkflowVersion: WorkflowVersion, RuleVersion: e.Config.Version, Input: t, InputHash: diagnosticHash(t), SnapshotID: snap.ID, ObservationCutoff: cutoff, CaseGeneration: s.Generation, CreatedAt: now, UpdatedAt: now}
+}
+
+func recordRun(s *State, run Run) Receipt {
+	if run.Route == "case_reuse" {
+		run.Report.Summary = "Applicable trusted cases found; verify the recommendation in this environment."
+		for _, match := range run.Matches {
+			if match.Applicable {
+				run.Report.Recommendations = append(run.Report.Recommendations, match.Solution)
+				run.Report.Evidence = append(run.Report.Evidence, Evidence{Source: "resolved_case", Reference: fmt.Sprintf("%s@%d", match.CaseID, match.CaseVersion), Quote: match.Solution})
+			}
+		}
+	}
+	s.Runs[run.ID], s.Latest[run.TicketID] = run, run.ID
+	return Receipt{TicketID: run.TicketID, RunID: run.ID, Action: "created"}
+}
+
+func (e *Engine) enqueue(s *State, t Ticket, now time.Time, force bool) Receipt {
+	prepareInvestigations(s)
 	snap, exists := s.Snapshots[s.LatestSnapshot[t.ID]]
 	cutoff := snap.Cutoff
 	if !exists {
@@ -136,29 +154,19 @@ func (e *Engine) enqueueShared(s *State, t Ticket, now time.Time, force bool) Re
 	}
 	matches, route, status, missing := e.Decide(t, eligibleCaseHistory(*s, t), cutoff)
 	if !exists {
-		route, status, missing = "manual_forward", "awaiting_forward", []string{"Forward a new immutable snapshot before V2 diagnosis."}
+		route, status, missing = "manual_forward", "awaiting_forward", []string{"Forward a new immutable snapshot before Shared investigation diagnosis."}
 	}
 	if !force {
-		if old, ok := s.Runs[s.Latest[t.ID]]; ok && old.WorkflowVersion == "5" && old.InputHash == diagnosticHash(t) && old.CaseGeneration == s.Generation && old.RuleVersion == e.Config.Version {
+		if old, ok := s.Runs[s.Latest[t.ID]]; ok && old.WorkflowVersion == WorkflowVersion && old.InputHash == diagnosticHash(t) && old.CaseGeneration == s.Generation && old.RuleVersion == e.Config.Version {
 			if old.InvestigationID == "" || availableTask(*s, s.Investigations[old.InvestigationID], cutoff) {
 				return Receipt{TicketID: t.ID, RunID: old.ID, Action: "cached"}
 			}
 		}
 	}
 	if route != "engineering_analysis" {
-		r := Run{ID: randomID("run_"), TicketID: t.ID, ProjectID: t.ProjectID, WorkflowVersion: "5", RuleVersion: e.Config.Version, Input: t, InputHash: diagnosticHash(t), SnapshotID: snap.ID, ObservationCutoff: cutoff, CaseGeneration: s.Generation, Route: route, State: status, Matches: matches, MissingInformation: missing, CreatedAt: now, UpdatedAt: now}
-		if route == "case_reuse" {
-			r.Report.Summary = "Applicable trusted cases found; verify the recommendation in this environment."
-			for _, m := range matches {
-				if m.Applicable {
-					r.Report.Recommendations = append(r.Report.Recommendations, m.Solution)
-					r.Report.Evidence = append(r.Report.Evidence, Evidence{Source: "resolved_case", Reference: fmt.Sprintf("%s@%d", m.CaseID, m.CaseVersion), Quote: m.Solution})
-				}
-			}
-		}
-		s.Runs[r.ID] = r
-		s.Latest[t.ID] = r.ID
-		return Receipt{TicketID: t.ID, RunID: r.ID, Action: "created"}
+		run := e.newRun(s, t, snap, cutoff, now)
+		run.Route, run.State, run.Matches, run.MissingInformation = route, status, matches, missing
+		return recordRun(s, run)
 	}
 	signature := investigationSignature(t)
 	groupID := "group_" + signature
@@ -167,7 +175,7 @@ func (e *Engine) enqueueShared(s *State, t Ticket, now time.Time, force bool) Re
 	}
 	group, ok := s.Groups[groupID]
 	if !ok {
-		issue := EngineeringIssue{ID: randomID("issue_"), ProjectID: t.ProjectID, Title: t.Subject, State: "tentative", CreatedAt: now}
+		issue := EngineeringIssue{ID: randomID("issue_"), ProjectID: t.ProjectID, Title: t.Subject, CreatedAt: cutoff}
 		if override, ok := s.Issues[s.IssueOverrides[t.ID]]; ok && override.ProjectID == t.ProjectID {
 			issue = override
 		}
@@ -177,7 +185,6 @@ func (e *Engine) enqueueShared(s *State, t Ticket, now time.Time, force bool) Re
 	if !force && availableTask(*s, s.Investigations[group.CurrentTaskID], cutoff) {
 		task := s.Investigations[group.CurrentTaskID]
 		link := IssueTicketLink{ID: randomID("link_"), IssueID: group.IssueID, TicketID: t.ID, SnapshotID: snap.ID, InvestigationID: task.ID, State: "tentative", Basis: "exact diagnostic and context signature; common causality unconfirmed", AvailableAt: cutoff}
-		s.Memberships[link.ID] = link
 		link.Version = 1
 		s.Memberships[link.ID] = link
 		s.MembershipHistory = append(s.MembershipHistory, link)
@@ -185,17 +192,17 @@ func (e *Engine) enqueueShared(s *State, t Ticket, now time.Time, force bool) Re
 		return Receipt{TicketID: t.ID, RunID: task.RunID, Action: "linked_investigation"}
 	}
 	id := randomID("investigation_")
-	runID := randomID("run_")
+	run := e.newRun(s, t, snap, cutoff, now)
+	runID := run.ID
 	contract := TaskContract{Objective: "Locate the reported defect and provide source-pinned evidence, a repair recommendation and verification steps.", SnapshotID: snap.ID, InputHash: snap.Hash, ObservationCutoff: cutoff, IssueID: group.IssueID, ReadOnly: true, CompletionCriteria: []string{"Address the reported behavior using supplied historical evidence", "Separate supported findings from uncertainty", "Do not modify product source or close customer tickets"}}
 	task := Investigation{ID: id, GroupID: groupID, IssueID: group.IssueID, ProjectID: t.ProjectID, RunID: runID, State: "queued", Contract: contract, CreatedAt: cutoff, UpdatedAt: now}
-	run := Run{ID: runID, InvestigationID: id, IssueID: group.IssueID, SnapshotID: snap.ID, ObservationCutoff: cutoff, TicketID: t.ID, ProjectID: t.ProjectID, WorkflowVersion: "5", RuleVersion: e.Config.Version, Input: t, InputHash: diagnosticHash(t), CaseGeneration: s.Generation, Route: "engineering_analysis", State: "queued", Matches: matches, CreatedAt: now, UpdatedAt: now}
+	run.InvestigationID, run.IssueID, run.Route, run.Matches = id, group.IssueID, "engineering_analysis", matches
 	group.CurrentTaskID = id
 	s.Groups[groupID] = group
 	s.Investigations[id] = task
 	s.Runs[runID] = run
 	s.Latest[t.ID] = runID
 	link := IssueTicketLink{ID: randomID("link_"), IssueID: group.IssueID, TicketID: t.ID, SnapshotID: snap.ID, InvestigationID: id, State: "tentative", Basis: "new exact-signature investigation", AvailableAt: cutoff}
-	s.Memberships[link.ID] = link
 	link.Version = 1
 	s.Memberships[link.ID] = link
 	s.MembershipHistory = append(s.MembershipHistory, link)
@@ -223,18 +230,14 @@ func (e *Engine) ReviewSolution(id string, review SolutionReview) (SolutionRevis
 			return fmt.Errorf("%w: cause, solution and verification are required", ErrInvalid)
 		}
 		source := s.Tickets[s.Runs[task.RunID].TicketID]
-		if source.Private {
+		group := s.Groups[task.GroupID]
+		if source.Private || group.CurrentTaskID != task.ID || investigationScope(source) != group.ScopeHash {
 			return ErrConflict
 		}
 		result = old
-		result.ID = randomID("solution_")
-		result.Revision++
-		result.Supersedes = old.ID
 		result.Origin = "engineer"
 		result.Reviewer = review.Reviewer
 		result.Note = review.Note
-		result.AvailableAt = e.Now()
-		result.RecordedAt = time.Now().UTC()
 		switch review.Action {
 		case "approve":
 			result.State = "trusted"
@@ -244,25 +247,7 @@ func (e *Engine) ReviewSolution(id string, review SolutionReview) (SolutionRevis
 		case "withdraw":
 			result.State = "withdrawn"
 		}
-		s.Solutions[result.ID] = result
-		task.SolutionID = result.ID
-		task.State = result.State
-		task.UpdatedAt = e.Now()
-		s.Investigations[id] = task
-		issue := s.Issues[task.IssueID]
-		issue.State = result.State
-		s.Issues[issue.ID] = issue
-		run := s.Runs[task.RunID]
-		switch result.State {
-		case "trusted":
-			run.State = "completed"
-		case "rejected":
-			run.State = "rejected"
-		case "withdrawn":
-			run.State = "invalidated"
-		}
-		run.UpdatedAt = e.Now()
-		s.Runs[run.ID] = run
+		result = e.publishSolution(s, task, old, result)
 		return nil
 	})
 	return result, err

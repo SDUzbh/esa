@@ -22,7 +22,7 @@ The session uses `codex exec`, an ephemeral read-only sandbox, disabled native h
 
 Private audit artifacts under `.esa/codex-runs/<run-id>` preserve input, exact prompt, schema, CLI events, usage, errors and the final report. Repeating the same completed run returns its cached report. Interrupted or failed attempts cannot automatically restart with the same run ID; a new forced run is explicit. Missing usage from an interrupted CLI run is unknown, not zero.
 
-The original trial used rule version 3. Current workflow version 4 / configuration version 5 remove classification and require explicit manual forwarding, one provider invocation and a separate 900-second execution deadline. Input 16,000, output 6,000 and total 22,000 tokens trigger warnings without terminating analysis. The CLI can report usage only at completion; no hard generation-token ceiling is applied. See [pipeline operations](REPLAY_PIPELINE.md) for automatic setup, delta reuse, cleanup and permissions. Historical trial reports retain their original usage and conditions.
+The original trial used rule version 3. The current workflow excludes admission classification and requires explicit manual forwarding, one provider invocation and a separate 900-second execution deadline. Input 16,000, output 6,000 and total 22,000 tokens trigger warnings without terminating analysis. The CLI can report usage only at completion; no hard generation-token ceiling is applied. See [pipeline operations](REPLAY_PIPELINE.md) for automatic setup, delta reuse, cleanup and permissions. Historical trial reports retain their original usage and conditions.
 
 ## Reproduce
 

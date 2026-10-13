@@ -20,10 +20,37 @@ type Store struct {
 }
 
 // StateBackend provides authoritative, transactional persistence. JSON remains
-// the single-process compatibility adapter; remote commits use optimistic CAS.
+// a local single-process adapter; remote commits use optimistic CAS.
 type StateBackend interface {
 	Load() (State, uint64, error)
 	Commit(State, uint64) (uint64, error)
+}
+
+func (s *Store) refreshLocked() error {
+	var state State
+	var revision uint64
+	var err error
+	if backend, ok := s.backend.(interface {
+		LoadIfChanged(uint64) (State, uint64, bool, error)
+	}); ok {
+		var changed bool
+		state, revision, changed, err = backend.LoadIfChanged(s.revision)
+		if err != nil || !changed {
+			return err
+		}
+	} else {
+		state, revision, err = s.backend.Load()
+	}
+	if err != nil {
+		return err
+	}
+	if err = validateState(state); err != nil {
+		return err
+	}
+	if revision >= s.revision {
+		s.state, s.revision = state, revision
+	}
+	return nil
 }
 
 func OpenBackendStore(backend StateBackend) (*Store, error) {
@@ -48,18 +75,7 @@ func (s *Store) Refresh() error {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	state, revision, err := s.backend.Load()
-	if err != nil {
-		return err
-	}
-	if err = validateState(state); err != nil {
-		return err
-	}
-	if revision >= s.revision {
-		s.state = state
-		s.revision = revision
-	}
-	return nil
+	return s.refreshLocked()
 }
 
 func OpenStore(path string) (*Store, error) {
@@ -89,15 +105,9 @@ func (s *Store) Update(fn func(*State) error) error {
 	defer s.mu.Unlock()
 	for attempt := 0; attempt < 64; attempt++ {
 		if s.backend != nil {
-			state, revision, err := s.backend.Load()
-			if err != nil {
+			if err := s.refreshLocked(); err != nil {
 				return err
 			}
-			if err = validateState(state); err != nil {
-				return err
-			}
-			s.state = state
-			s.revision = revision
 		}
 		err := s.updateLocked(fn)
 		if s.backend != nil && errors.Is(err, errStateCAS) {
@@ -117,11 +127,12 @@ func (s *Store) updateLocked(fn func(*State) error) error {
 		return err
 	}
 	if next.Snapshots != nil || next.Investigations != nil {
-		prepareV2(&next)
+		prepareInvestigations(&next)
 	}
 	if err = fn(&next); err != nil {
 		return err
 	}
+	projectInvestigationStates(&next)
 	updated, err := json.Marshal(next)
 	if err != nil {
 		return err
@@ -189,19 +200,8 @@ func (s *Store) Snapshot() State {
 	return snapshot
 }
 
-// Polling an idle worker must not copy and JSON-decode the entire archive.
-func (s *Store) HasQueuedRun() bool {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	for _, run := range s.state.Runs {
-		if run.State == "queued" {
-			return true
-		}
-	}
-	return false
-}
-
-func (s *Store) needsSharedWork(now time.Time, provider bool) bool {
+// An idle worker does not copy the archive just to inspect its queue.
+func (s *Store) needsWork(now time.Time, provider bool) bool {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	for _, task := range s.state.Investigations {
@@ -210,7 +210,7 @@ func (s *Store) needsSharedWork(now time.Time, provider bool) bool {
 		}
 	}
 	for _, run := range s.state.Runs {
-		if run.State == "queued" && run.WorkflowVersion != "5" {
+		if run.State == "queued" && (run.WorkflowVersion != WorkflowVersion || run.Input.ForwardedBy == "" || run.Input.ForwardedAt.IsZero()) {
 			return true
 		}
 	}

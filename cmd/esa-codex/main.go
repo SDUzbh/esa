@@ -265,7 +265,9 @@ func run() error {
 		report, err := provider.Analyze(r.Context(), in)
 		if err != nil {
 			slog.Warn("Codex diagnosis failed", "run_id", in.RunID, "error", err)
-			http.Error(w, err.Error(), 422)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(422)
+			_ = json.NewEncoder(w).Encode(map[string]any{"error": err.Error(), "report": report})
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")

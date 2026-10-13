@@ -53,31 +53,29 @@ func NewEngine(store *Store, config Config) (*Engine, error) {
 			e.classifiers[project] = m
 		}
 	}
-	if config.V2.Enabled {
-		if config.V2.MaxActivePerProject == 0 {
-			e.Config.V2.MaxActivePerProject = 1
+	if config.Worker.MaxActivePerProject == 0 {
+		e.Config.Worker.MaxActivePerProject = 1
+	}
+	if e.Config.Worker.MaxActivePerProject < 1 || e.Config.Worker.MaxActivePerProject > 8 {
+		return nil, fmt.Errorf("%w: max_active_per_project must be 1..8", ErrInvalid)
+	}
+	if config.Worker.LeaseSeconds == 0 {
+		e.Config.Worker.LeaseSeconds = 60
+	}
+	if e.Config.Worker.LeaseSeconds < 3 || e.Config.Worker.LeaseSeconds > 3600 {
+		return nil, fmt.Errorf("%w: lease must be 3..3600 seconds", ErrInvalid)
+	}
+	e.workerID = randomID("worker_")
+	if config.Replay.Enabled {
+		if config.Replay.InitialTime.IsZero() || len(config.Replay.Projects) == 0 {
+			return nil, fmt.Errorf("%w: replay clock requires initial_time and clock_projects", ErrInvalid)
 		}
-		if e.Config.V2.MaxActivePerProject < 1 || e.Config.V2.MaxActivePerProject > 8 {
-			return nil, fmt.Errorf("%w: max_active_per_project must be 1..8", ErrInvalid)
+		at := store.Snapshot().ReplayClock
+		if at.IsZero() {
+			at = config.Replay.InitialTime
 		}
-		if config.V2.LeaseSeconds == 0 {
-			e.Config.V2.LeaseSeconds = 60
-		}
-		if e.Config.V2.LeaseSeconds < 3 || e.Config.V2.LeaseSeconds > 3600 {
-			return nil, fmt.Errorf("%w: lease must be 3..3600 seconds", ErrInvalid)
-		}
-		e.workerID = randomID("worker_")
-		if config.V2.ReplayClock {
-			if config.V2.InitialTime.IsZero() || len(config.V2.ClockProjects) == 0 {
-				return nil, fmt.Errorf("%w: replay clock requires initial_time and clock_projects", ErrInvalid)
-			}
-			at := store.Snapshot().ReplayClock
-			if at.IsZero() {
-				at = config.V2.InitialTime
-			}
-			e.clock.Store(at.UnixNano())
-			e.Now = func() time.Time { return time.Unix(0, e.clock.Load()).UTC() }
-		}
+		e.clock.Store(at.UnixNano())
+		e.Now = func() time.Time { return time.Unix(0, e.clock.Load()).UTC() }
 	}
 	return e, nil
 }
@@ -94,7 +92,7 @@ func (e *Engine) Refresh() error {
 	if err := e.Store.Refresh(); err != nil {
 		return err
 	}
-	if e.Config.V2.ReplayClock {
+	if e.Config.Replay.Enabled {
 		e.Store.mu.RLock()
 		at := e.Store.state.ReplayClock
 		e.Store.mu.RUnlock()
@@ -198,9 +196,6 @@ func CasesAt(history []Case, at time.Time) []Case {
 	return out
 }
 
-func MatchCases(t Ticket, cases []Case) []Match {
-	return matchCases(t, cases, 5)
-}
 func matchCases(t Ticket, cases []Case, limit int) []Match {
 	out := []Match{}
 	kw := keywords(ticketText(t))
@@ -269,9 +264,6 @@ func (e *Engine) Decide(t Ticket, history []Case, at time.Time) ([]Match, string
 		return nil, "manual_forward", "awaiting_forward", nil
 	}
 	matches := MatchCases(t, CasesAt(history, at))
-	if e.Config.V2.Enabled {
-		matches = MatchCasesV2(t, CasesAt(history, at))
-	}
 	for _, match := range matches {
 		if match.Applicable {
 			return matches, "case_reuse", "completed", nil
@@ -307,30 +299,6 @@ func diagnosticHash(t Ticket) string {
 	}{t.Subject, t.Description, t.Tracker, unique(t.Components), unique(t.Versions), unique(t.ErrorCodes), comments, t.Environment})
 }
 
-func (e *Engine) enqueue(s *State, t Ticket, now time.Time, force bool) Receipt {
-	if e.Config.V2.Enabled {
-		return e.enqueueShared(s, t, now, force)
-	}
-	h := diagnosticHash(t)
-	if previous, ok := s.Runs[s.Latest[t.ID]]; ok && !force && previous.InputHash == h && previous.RuleVersion == e.Config.Version && previous.CaseGeneration == s.Generation && previous.WorkflowVersion == WorkflowVersion {
-		return Receipt{TicketID: t.ID, RunID: previous.ID, Action: "cached"}
-	}
-	matches, route, status, missing := e.Decide(t, s.CaseHistory, now)
-	r := Run{ID: randomID("run_"), TicketID: t.ID, ProjectID: t.ProjectID, InputHash: h, WorkflowVersion: WorkflowVersion, RuleVersion: e.Config.Version, CaseGeneration: s.Generation, Input: t, Route: route, State: status, Matches: matches, MissingInformation: missing, CreatedAt: now, UpdatedAt: now}
-	if route == "case_reuse" {
-		r.Report.Summary = "Applicable resolved cases were found. Review their evidence and verify the proposed solution."
-		for _, m := range matches {
-			if m.Applicable {
-				r.Report.Recommendations = append(r.Report.Recommendations, m.Solution)
-				r.Report.Evidence = append(r.Report.Evidence, Evidence{Source: "resolved_case", Reference: fmt.Sprintf("%s@%d", m.CaseID, m.CaseVersion), Quote: m.Solution})
-			}
-		}
-	}
-	s.Runs[r.ID] = r
-	s.Latest[t.ID] = r.ID
-	return Receipt{TicketID: t.ID, RunID: r.ID, Action: "created"}
-}
-
 func (e *Engine) Receive(event Event) (Receipt, error) {
 	t := event.Ticket
 	if strings.TrimSpace(event.ID) == "" || strings.TrimSpace(t.ID) == "" || strings.TrimSpace(t.ProjectID) == "" || strings.TrimSpace(t.Subject) == "" {
@@ -357,20 +325,19 @@ func (e *Engine) Receive(event Event) (Receipt, error) {
 	if t.CreatedAt.IsZero() {
 		t.CreatedAt = t.UpdatedAt
 	}
-	if e.Config.V2.Enabled {
-		if t.UpdatedAt.After(event.ForwardedAt) || t.CreatedAt.After(event.ForwardedAt) {
-			return Receipt{}, fmt.Errorf("%w: snapshot source time exceeds forwarding cutoff", ErrInvalid)
-		}
-		for _, comment := range t.Comments {
-			if comment.CreatedAt.After(event.ForwardedAt) || comment.UpdatedAt.After(event.ForwardedAt) || e.Config.V2.ReplayClock && comment.CreatedAt.IsZero() {
-				return Receipt{}, fmt.Errorf("%w: comment provenance is outside the observation cutoff", ErrInvalid)
-			}
+	if t.UpdatedAt.After(event.ForwardedAt) || t.CreatedAt.After(event.ForwardedAt) {
+		return Receipt{}, fmt.Errorf("%w: snapshot source time exceeds forwarding cutoff", ErrInvalid)
+	}
+	for _, comment := range t.Comments {
+		if comment.CreatedAt.After(event.ForwardedAt) || comment.UpdatedAt.After(event.ForwardedAt) || e.Config.Replay.Enabled && comment.CreatedAt.IsZero() {
+			return Receipt{}, fmt.Errorf("%w: comment provenance is outside the observation cutoff", ErrInvalid)
 		}
 	}
 	event.Ticket = t
 	var receipt Receipt
 	err := e.Store.Update(func(s *State) error {
 		generation := s.Generation
+		previousRunID := s.Latest[t.ID]
 		if old, ok := s.Events[event.ID]; ok {
 			if hash(old.Ticket) != hash(t) || old.Origin != event.Origin || old.Force != event.Force {
 				return fmt.Errorf("%w: event ID was reused with different content", ErrConflict)
@@ -388,14 +355,12 @@ func (e *Engine) Receive(event Event) (Receipt, error) {
 		} else if old, ok := s.Tickets[t.ID]; ok && t.UpdatedAt.Before(old.UpdatedAt) {
 			receipt.Action = "ignored_stale_event"
 		} else {
-			if previous, ok := s.Tickets[t.ID]; e.Config.V2.Enabled && ok && ((previous.Closed && !t.Closed) || investigationScope(previous) != investigationScope(t)) {
+			if previous, ok := s.Tickets[t.ID]; ok && ((previous.Closed && !t.Closed) || investigationScope(previous) != investigationScope(t)) {
 				e.withdrawSourceSolutions(s, t.ID, "Source was reopened or its applicability scope changed")
 			}
 			s.Tickets[t.ID] = t
-			if e.Config.V2.Enabled {
-				captureSnapshot(s, event)
-				e.detachChangedMemberships(s, t)
-			}
+			captureSnapshot(s, event)
+			e.detachChangedMemberships(s, t)
 			if t.Private {
 				if c, ok := s.Cases["case_"+hash(t.ID)[:24]]; ok && c.State != "invalidated" {
 					if c.State == "trusted" {
@@ -408,7 +373,7 @@ func (e *Engine) Receive(event Event) (Receipt, error) {
 					s.Cases[c.ID] = c
 					s.CaseHistory = append(s.CaseHistory, c)
 				}
-				if r, ok := s.Runs[s.Latest[t.ID]]; ok {
+				if r, ok := s.Runs[s.Latest[t.ID]]; ok && r.InvestigationID == "" {
 					r.State = "restricted"
 					s.Runs[r.ID] = r
 				}
@@ -417,14 +382,6 @@ func (e *Engine) Receive(event Event) (Receipt, error) {
 				c := e.collectCase(s, t, now)
 				receipt.Action = "case_collected"
 				receipt.CaseID = c.ID
-				if id := s.Latest[t.ID]; id != "" {
-					r := s.Runs[id]
-					if r.State == "queued" || r.State == "running" {
-						r.State = "superseded"
-						r.UpdatedAt = now
-						s.Runs[id] = r
-					}
-				}
 			} else {
 				if c, ok := s.Cases["case_"+hash(t.ID)[:24]]; ok && c.State != "invalidated" {
 					wasTrusted := c.State == "trusted"
@@ -441,6 +398,7 @@ func (e *Engine) Receive(event Event) (Receipt, error) {
 				receipt = e.enqueue(s, t, now, event.Force)
 				receipt.EventID = event.ID
 			}
+			supersedeInactiveTask(s, previousRunID, now)
 		}
 		s.Events[event.ID] = event
 		s.Receipts[event.ID] = receipt
@@ -454,9 +412,7 @@ func (e *Engine) Receive(event Event) (Receipt, error) {
 
 func (e *Engine) collectCase(s *State, t Ticket, now time.Time) Case {
 	c := Case{ID: "case_" + hash(t.ID)[:24], TicketID: t.ID, ProjectID: t.ProjectID, SourceKey: t.SourceKey, Subject: t.Subject, Summary: t.Description, Components: unique(t.Components), Versions: unique(t.Versions), Environment: t.Environment, Signals: signals(t), Keywords: keywords(ticketText(t)), Resolution: t.Resolution, State: "draft", CreatedAt: now, UpdatedAt: now, Version: 1}
-	if e.Config.V2.Enabled {
-		c.IssueID = s.Runs[s.Latest[t.ID]].IssueID
-	}
+	c.IssueID = s.Runs[s.Latest[t.ID]].IssueID
 	c.SourceHash = hash(struct {
 		Input      string
 		Resolution Resolution
@@ -511,7 +467,7 @@ func (e *Engine) ReviewCase(id string, review Review) (Case, error) {
 				return fmt.Errorf("%w: source ticket is not eligible for a trusted case", ErrInvalid)
 			}
 			if c.Resolution.Cause == "" || c.Resolution.Solution == "" || c.Resolution.Validation == "" || len(c.Components) == 0 || len(c.Versions) == 0 {
-				return fmt.Errorf("%w: confirmed cause, solution, validation, category, component, and affected version are required", ErrInvalid)
+				return fmt.Errorf("%w: confirmed cause, solution, validation, component, and affected version are required", ErrInvalid)
 			}
 			c.State = "trusted"
 			c.TrustedAt = e.Now()
@@ -527,9 +483,7 @@ func (e *Engine) ReviewCase(id string, review Review) (Case, error) {
 		s.CaseHistory = append(s.CaseHistory, c)
 		if wasTrusted || c.State == "trusted" {
 			s.Generation++
-			if e.Config.V2.Enabled {
-				e.publishReviewedCase(s, c)
-			}
+			e.publishReviewedCase(s, c)
 			e.refreshRecommendations(s, e.Now())
 		}
 		result = c
@@ -544,15 +498,18 @@ func (e *Engine) refreshRecommendations(s *State, now time.Time) {
 		if t.Closed || t.ForwardedBy == "" || t.ForwardedAt.IsZero() {
 			continue
 		}
-		_, route, _, _ := e.Decide(t, s.CaseHistory, now)
+		matches, route, status, missing := e.Decide(t, eligibleCaseHistory(*s, t), now)
 		old := s.Runs[s.Latest[t.ID]]
 		if route == "case_reuse" {
-			if old.State == "queued" || old.State == "running" {
-				old.State = "superseded"
-				old.UpdatedAt = now
-				s.Runs[old.ID] = old
+			if old.Route == route && old.State == status && old.CaseGeneration == s.Generation && old.RuleVersion == e.Config.Version && old.InputHash == diagnosticHash(t) {
+				continue
 			}
-			e.enqueue(s, t, now, false)
+			// This is a later recommendation observation. Preserve the forwarded
+			// snapshot and initial diagnosis cutoff; never enqueue analysis here.
+			run := e.newRun(s, t, s.Snapshots[s.LatestSnapshot[t.ID]], now, now)
+			run.Route, run.State, run.Matches, run.MissingInformation = route, status, matches, missing
+			recordRun(s, run)
+			supersedeInactiveTask(s, old.ID, now)
 		} else if old.Route == "case_reuse" && old.State != "invalidated" {
 			old.State = "invalidated"
 			old.Error = "A recommended case changed or was withdrawn. Reassess this ticket before applying its earlier recommendation."

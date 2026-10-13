@@ -7,7 +7,7 @@
     "scratch": "/workspace",
     "network": "offline",
     "toolset": "toolset.txt",
-    "image": "esa-tools-java-debug:<verified-release>",
+    "image": "esa-toolkit:<verified-release>",
     "tool_java_home": "/opt/esa/tool-jdk"
   }
 }

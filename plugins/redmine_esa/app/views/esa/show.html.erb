@@ -43,11 +43,7 @@
 </tbody></table>
 <% if feedback %><p><strong>Human labels:</strong> <%= Array(feedback.dig('example', 'labels')).join(', ').presence || 'None' %> · Reviewed by <%= feedback.dig('example', 'reviewer') %></p><% end %>
 <% if User.current.allowed_to?(:review_esa, @issue.project) %>
-<% if task && !@issue.closed? %><h3>Review issue membership</h3><%= form_tag esa_review_membership_path(@issue) do %>
-<%= hidden_field_tag :snapshot_id, @row['snapshot_id'] %>
-<p><%= label_tag :engineering_issue_id, 'Engineering issue ID' %> <%= text_field_tag :engineering_issue_id, '', size: 50 %> Leave blank to split into a new issue.</p>
-<p><%= label_tag :membership_reason, 'Reason and contradictory evidence' %> <%= text_field_tag :membership_reason, '', size: 65, required: true %></p>
-<%= submit_tag 'Revise membership' %><% end %><% end %>
+
 <%= form_tag esa_classifier_feedback_path(@issue) do %>
 <%= hidden_field_tag :prediction_id, prediction['id'] %><%= hidden_field_tag :feedback_id, SecureRandom.uuid %>
 <% selected = feedback ? Array(feedback.dig('example', 'labels')) : [] %>
@@ -66,12 +62,17 @@
 <% { 'resolution_reason' => 'reason', 'cause' => 'cause', 'solution' => 'solution', 'validation' => 'validation' }.each do |name, field| %><p><%= label_tag name, esa_label(name) %><%= text_area_tag name, @metadata.dig('resolution', field), rows: 3, cols: 75 %></p><% end %>
 </div><%= submit_tag 'Save metadata locally' %><% end %><% end %>
 <% if User.current.allowed_to?(:review_esa, @issue.project) %>
+<% if task && !@issue.closed? %><h3>Review issue membership</h3><%= form_tag esa_review_membership_path(@issue) do %>
+<%= hidden_field_tag :snapshot_id, @row['snapshot_id'] %>
+<p><%= label_tag :engineering_issue_id, 'Engineering issue ID' %> <%= text_field_tag :engineering_issue_id, '', size: 50 %> Leave blank to split into a new issue.</p>
+<p><%= label_tag :membership_reason, 'Reason and contradictory evidence' %> <%= text_field_tag :membership_reason, '', size: 65, required: true %></p>
+<%= submit_tag 'Revise membership' %><% end %><% end %>
 <% if record && @issue.closed? %><h3>Case review</h3><%= form_tag esa_review_case_path(@issue) do %><%= text_field_tag :note, '', placeholder: 'Review evidence and applicability', size: 65 %><%= button_tag 'Approve trusted case', name: :review_action, value: 'approve' %><%= button_tag 'Reject case', name: :review_action, value: 'reject' %><% end %><% end %>
 <% if task && solution %><h3>Shared solution review</h3><%= form_tag esa_review_investigation_path(@issue) do %>
 <%= hidden_field_tag :solution_id, solution['id'] %><div class="box tabular">
 <% %w[cause solution validation].each do |field| %><p><%= label_tag field, esa_label(field) %><%= text_area_tag field, solution.dig('resolution', field), rows: 3, cols: 75 %></p><% end %>
 <p><%= label_tag :note, 'Review note' %><%= text_field_tag :note, '', size: 65 %></p></div>
 <%= button_tag 'Publish reviewed solution', name: :review_action, value: 'approve' %> <%= button_tag 'Reject proposal', name: :review_action, value: 'reject' %> <%= button_tag 'Withdraw solution', name: :review_action, value: 'withdraw' %>
-<% end %><% elsif run && run['state'] == 'awaiting_review' %><h3>Engineering review</h3><%= form_tag esa_review_run_path(@issue) do %><%= text_field_tag :note, '', placeholder: 'Review note', size: 65 %><%= button_tag 'Approve report', name: :review_action, value: 'approve' %><%= button_tag 'Reject report', name: :review_action, value: 'reject' %><% end %><% end %>
+<% end %><% end %>
 <% end %>
 <h3>Run history</h3><table class="list"><thead><tr><th>Created</th><th>State</th><th>Route</th><th>Config version</th><th>Provider calls</th></tr></thead><tbody><% @result['history'].each do |item| %><tr><td><%= item['created_at'] %></td><td><%= esa_label(item['state']) %></td><td><%= esa_label(item['route']) %></td><td><%= item['rule_version'] %></td><td><%= item.dig('report', 'usage', 'calls') || 0 %></td></tr><% end %></tbody></table>

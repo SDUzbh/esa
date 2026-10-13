@@ -105,7 +105,7 @@ func visibleRun(r *http.Request, s State, run Run) Run {
 func (api *API) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, 200, map[string]string{"status": "ok", "workflow_version": api.Engine.workflowVersion()})
+		writeJSON(w, 200, map[string]string{"status": "ok", "workflow_version": api.Engine.Version()})
 	})
 	mux.HandleFunc("POST /v1/events", api.events)
 	mux.HandleFunc("GET /v1/tickets", api.tickets)
@@ -116,7 +116,6 @@ func (api *API) Handler() http.Handler {
 	mux.HandleFunc("POST /v1/tickets/{id}/classifier/feedback", api.classifierFeedback)
 	mux.HandleFunc("GET /v1/classifier/feedback", api.classifierExport)
 	mux.HandleFunc("GET /v1/runs/{id}", api.run)
-	mux.HandleFunc("POST /v1/runs/{id}/review", api.reviewRun)
 	mux.HandleFunc("GET /v1/cases", api.cases)
 	mux.HandleFunc("POST /v1/cases/{id}/review", api.reviewCase)
 	mux.HandleFunc("POST /v1/import/preview", api.preview)
@@ -427,24 +426,6 @@ func (api *API) reviewCase(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	result, err := api.Engine.ReviewCase(c.ID, review)
-	if err != nil {
-		writeError(w, err)
-		return
-	}
-	writeJSON(w, 200, result)
-}
-func (api *API) reviewRun(w http.ResponseWriter, r *http.Request) {
-	run, ok := api.Engine.Store.Snapshot().Runs[r.PathValue("id")]
-	if !ok || !ticketAllowed(r, run.TicketID) || !allowed(r, run.ProjectID) {
-		writeError(w, ErrNotFound)
-		return
-	}
-	var review Review
-	if err := decodeJSON(w, r, &review); err != nil {
-		writeError(w, err)
-		return
-	}
-	result, err := api.Engine.ReviewRun(run.ID, review)
 	if err != nil {
 		writeError(w, err)
 		return

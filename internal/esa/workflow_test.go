@@ -40,6 +40,11 @@ func fixture(e *Engine, id string) Ticket {
 }
 func receive(t *testing.T, e *Engine, id string, ticket Ticket) Receipt {
 	t.Helper()
+	// Forward only after the fixture's source edit becomes observable.
+	if ticket.UpdatedAt.After(e.Now()) {
+		at := ticket.UpdatedAt
+		e.Now = func() time.Time { return at }
+	}
 	r, err := e.Receive(Event{ID: id, Origin: "test", ForwardedBy: "fixture-human", ForwardedAt: e.Now(), Ticket: ticket})
 	if err != nil {
 		t.Fatal(err)
@@ -198,7 +203,8 @@ func TestAnalyzerGatesBudgetRecoveryAndStaleResults(t *testing.T) {
 		if run.State != "awaiting_review" || run.Report.Usage.Calls != 1 || len(run.Report.Limitations) == 0 {
 			t.Fatal(run)
 		}
-		if _, err := e.ReviewRun(r.RunID, Review{Reviewer: "engineer", Action: "approve"}); err != nil {
+		task := e.Store.Snapshot().Investigations[run.InvestigationID]
+		if _, err := e.ReviewSolution(task.ID, SolutionReview{ExpectedSolutionID: task.SolutionID, Reviewer: "engineer", Action: "approve", Resolution: Resolution{Cause: "Reviewed candidate", Solution: "Apply the observed check", Validation: "Verify the reported scenario"}}); err != nil {
 			t.Fatal(err)
 		}
 	})
@@ -219,10 +225,26 @@ func TestAnalyzerGatesBudgetRecoveryAndStaleResults(t *testing.T) {
 	t.Run("interrupted cannot be approved", func(t *testing.T) {
 		e := testEngine(t)
 		r := receive(t, e, "a", fixture(e, "a"))
-		e.Store.Update(func(s *State) error { run := s.Runs[r.RunID]; run.State = "running"; s.Runs[run.ID] = run; return nil })
-		e.Recover()
-		if _, err := e.ReviewRun(r.RunID, Review{Reviewer: "engineer", Action: "approve"}); !errors.Is(err, ErrInvalid) {
+		e.Store.Update(func(s *State) error {
+			run := s.Runs[r.RunID]
+			run.State = "running"
+			s.Runs[run.ID] = run
+			task := s.Investigations[run.InvestigationID]
+			task.State = "running"
+			task.InvocationStarted = true
+			task.LeaseUntil = e.Now().Add(-time.Second)
+			s.Investigations[task.ID] = task
+			return nil
+		})
+		if err := e.Recover(); err != nil {
 			t.Fatal(err)
+		}
+		run := e.Store.Snapshot().Runs[r.RunID]
+		if run.State != "failed" {
+			t.Fatal("interrupted run remained active", run)
+		}
+		if _, err := e.ReviewSolution(run.InvestigationID, SolutionReview{Reviewer: "engineer", Action: "approve"}); err == nil {
+			t.Fatal("interrupted investigation was approved")
 		}
 	})
 }

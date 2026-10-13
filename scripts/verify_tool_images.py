@@ -11,12 +11,15 @@ from tool_images import selection
 
 def main():
     docker = Docker('colima-redmine')
+    shared_image = None
     for profile in PROFILES:
         image, _ = selection(profile, docker.context)
-        inventory = inspect_image(docker, image['image_id'])
-        assert inventory['commands']['asprof'] and inventory['commands']['jdb']
-        assert 'version "1.8.' in inventory['target_java']
-        assert 'version "21.' in inventory['tool_java']
+        shared_image = shared_image or image['image_id']
+        assert image['image_id'] == shared_image, 'Profiles must share one verified toolkit'
+    inventory = inspect_image(docker, shared_image)
+    assert inventory['commands']['asprof'] and inventory['commands']['jdb']
+    assert 'version "1.8.' in inventory['target_java']
+    assert 'version "21.' in inventory['tool_java']
     with tempfile.TemporaryDirectory(prefix='esa-preset-test-') as temporary:
         source = Path(temporary) / 'source'
         source.mkdir()
@@ -39,7 +42,7 @@ def main():
             args = ['volume', 'inspect', resource] if kind == 'volume' else ['inspect', resource]
             checked = subprocess.run(docker.command + args, capture_output=True, timeout=15)
             assert checked.returncode != 0, 'Owned resource survived cleanup: ' + resource
-    print(json.dumps({'status': 'passed', 'profile_images': 5, 'checks': ['installed_versions', 'separate_target_tool_jvms', 'offline_sandbox', 'readonly_product_source', 'frozen_baseline_and_delta', 'owned_resource_cleanup']}))
+    print(json.dumps({'status': 'passed', 'toolkit_images': 1, 'profiles': 5, 'checks': ['installed_versions', 'separate_target_tool_jvms', 'offline_sandbox', 'readonly_product_source', 'frozen_baseline_and_delta', 'owned_resource_cleanup']}))
 
 if __name__ == '__main__':
     main()

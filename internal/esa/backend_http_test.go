@@ -58,7 +58,7 @@ func TestTransactionalBackendAcrossWorkers(t *testing.T) {
 	}
 	base := testEngine(t)
 	cfg := base.Config
-	cfg.V2 = V2Config{Enabled: true, LeaseSeconds: 30}
+	cfg.Worker.LeaseSeconds = 30
 	a, err := NewEngine(first, cfg)
 	if err != nil {
 		t.Fatal(err)

@@ -96,7 +96,7 @@ func ValidateEvidence(r esa.Report, p Packet) error {
 // of the diagnostic session. Login remains in the user's existing CLI auth store.
 func CLIArgs(model, effort, dir string) []string {
 	args := []string{"--no-daemon", "-a", "never", "exec", "--ignore-user-config", "--ignore-rules", "--ephemeral", "--skip-git-repo-check", "--sandbox", "read-only", "--color", "never", "--json", "-C", dir, "--output-schema", filepath.Join(dir, "schema.json"), "-o", filepath.Join(dir, "answer.json"), "-c", "web_search=\"disabled\"", "-c", "project_doc_max_bytes=0", "-c", "model_instructions_file=" + strconv.Quote(filepath.Join(dir, "instructions.txt"))}
-	for _, feature := range []string{"shell_tool", "unified_exec", "apps", "plugins", "hooks", "browser_use", "browser_use_external", "computer_use", "multi_agent", "multi_agent_v2", "code_mode", "code_mode_host", "view_image", "workspace_dependencies", "skill_search", "goals", "sleep_tool"} {
+	for _, feature := range []string{"shell_tool", "unified_exec", "apps", "plugins", "hooks", "browser_use", "browser_use_external", "computer_use", "multi_agent", "code_mode", "code_mode_host", "view_image", "workspace_dependencies", "skill_search", "goals", "sleep_tool"} {
 		args = append(args, "-c", "features."+feature+"=false")
 	}
 	args = append(args, "-c", "features.skip_host_skill_discovery=true")
@@ -283,7 +283,7 @@ func (p *Provider) Analyze(ctx context.Context, in esa.AnalyzeRequest) (result e
 				catalog[i].Toolset = ""
 			}
 			b, _ := json.Marshal(tools)
-			p.ToolsConfig = filepath.Join(dir, "tools-config-v2.json")
+			p.ToolsConfig = filepath.Join(dir, "tools-config-planned.json")
 			if err = os.WriteFile(p.ToolsConfig, b, 0600); err != nil {
 				return esa.Report{}, err
 			}
@@ -345,6 +345,11 @@ func (p *Provider) Analyze(ctx context.Context, in esa.AnalyzeRequest) (result e
 		}
 	}
 	b, usage, alerts, err := p.invoke(ctx, dir, prompt, in.Ticket.SourceKey, in.Budget)
+	// Preserve spend even when output decoding, evidence checks or cleanup fail.
+	defer func() {
+		result.Usage = usage
+		esa.AddAlerts(&result, alerts...)
+	}()
 	if err != nil {
 		return esa.Report{}, err
 	}
@@ -373,7 +378,7 @@ func (p *Provider) Analyze(ctx context.Context, in esa.AnalyzeRequest) (result e
 			return report, err
 		}
 		if report.Plan == nil {
-			return report, errors.New("V2 diagnosis did not obtain an approved investigation plan")
+			return report, errors.New("Shared investigation diagnosis did not obtain an approved investigation plan")
 		}
 	}
 	report.Usage = usage

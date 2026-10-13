@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-func (e *Engine) recoverShared(s *State) error {
+func (e *Engine) recoverInvestigations(s *State) error {
 	for id, task := range s.Investigations {
 		if task.State == "running" && !task.LeaseUntil.After(e.Now()) {
 			task.State = "failed"
@@ -15,23 +15,26 @@ func (e *Engine) recoverShared(s *State) error {
 			task.UpdatedAt = e.Now()
 			s.Investigations[id] = task
 			r := s.Runs[task.RunID]
-			r.State = "failed"
 			r.Error = "Investigation lease expired. Inspect the invocation audit before an explicit retry; spend is uncertain."
 			r.UpdatedAt = e.Now()
 			s.Runs[r.ID] = r
 		}
 	}
 	for id, r := range s.Runs {
-		if r.State == "queued" && r.WorkflowVersion != "5" {
+		if r.State == "queued" && (r.WorkflowVersion != WorkflowVersion || r.Input.ForwardedBy == "" || r.Input.ForwardedAt.IsZero()) {
 			r.State = "awaiting_forward"
 			r.Route = "manual_forward"
 			s.Runs[id] = r
+			if task, ok := s.Investigations[r.InvestigationID]; ok {
+				task.State = "awaiting_forward"
+				s.Investigations[task.ID] = task
+			}
 		}
 	}
 	return nil
 }
 
-func validateSharedReport(report Report, input AnalyzeRequest) error {
+func validateReport(report Report, input AnalyzeRequest) error {
 	if len(report.Findings) > 50 || len(report.Evidence) > 100 || len(report.Summary) > 16384 {
 		return fmt.Errorf("provider report exceeds bounded finding/evidence policy")
 	}
@@ -65,8 +68,8 @@ func validateSharedReport(report Report, input AnalyzeRequest) error {
 	return nil
 }
 
-func (e *Engine) processSharedOne(ctx context.Context, analyzer Analyzer) (bool, error) {
-	if !e.Store.needsSharedWork(e.Now(), analyzer != nil && e.Config.Budget.MaxCalls > 0) {
+func (e *Engine) ProcessOne(ctx context.Context, analyzer Analyzer) (bool, error) {
+	if !e.Store.needsWork(e.Now(), analyzer != nil && e.Config.Budget.MaxCalls > 0) {
 		return false, nil
 	}
 	var task Investigation
@@ -76,7 +79,7 @@ func (e *Engine) processSharedOne(ctx context.Context, analyzer Analyzer) (bool,
 		found = false
 		task = Investigation{}
 		run = Run{}
-		if err := e.recoverShared(s); err != nil {
+		if err := e.recoverInvestigations(s); err != nil {
 			return err
 		}
 		active := map[string]int{}
@@ -89,16 +92,14 @@ func (e *Engine) processSharedOne(ctx context.Context, analyzer Analyzer) (bool,
 			if candidate.State != "queued" && !(candidate.State == "awaiting_configuration" && !candidate.InvocationStarted && analyzer != nil && e.Config.Budget.MaxCalls > 0) {
 				continue
 			}
-			if active[candidate.ProjectID] >= e.Config.V2.MaxActivePerProject {
+			if active[candidate.ProjectID] >= e.Config.Worker.MaxActivePerProject {
 				continue
 			}
 			group := s.Groups[candidate.GroupID]
 			if group.CurrentTaskID != candidate.ID || !taskHasActiveMembers(*s, candidate) {
 				candidate.State = "superseded"
+				candidate.UpdatedAt = e.Now()
 				s.Investigations[candidate.ID] = candidate
-				r := s.Runs[candidate.RunID]
-				r.State = "superseded"
-				s.Runs[r.ID] = r
 				continue
 			}
 			task = candidate
@@ -106,7 +107,6 @@ func (e *Engine) processSharedOne(ctx context.Context, analyzer Analyzer) (bool,
 			found = true
 			if analyzer == nil || e.Config.Budget.MaxCalls == 0 {
 				task.State = "awaiting_configuration"
-				run.State = "awaiting_configuration"
 				run.Error = "Engineering provider is not configured; no model invocation occurred."
 			} else {
 				task.State = "running"
@@ -114,8 +114,7 @@ func (e *Engine) processSharedOne(ctx context.Context, analyzer Analyzer) (bool,
 				task.Epoch++
 				task.InvocationStarted = true
 				task.HeartbeatAt = e.Now()
-				task.LeaseUntil = e.Now().Add(time.Duration(e.Config.V2.LeaseSeconds) * time.Second)
-				run.State = "running"
+				task.LeaseUntil = e.Now().Add(time.Duration(e.Config.Worker.LeaseSeconds) * time.Second)
 				run.Report.Usage.Calls = 1
 				s.LastClaimedProject = candidate.ProjectID
 			}
@@ -137,7 +136,7 @@ func (e *Engine) processSharedOne(ctx context.Context, analyzer Analyzer) (bool,
 	heartbeatDone := make(chan struct{})
 	go func() {
 		defer close(heartbeatDone)
-		ticker := time.NewTicker(time.Duration(e.Config.V2.LeaseSeconds) * time.Second / 3)
+		ticker := time.NewTicker(time.Duration(e.Config.Worker.LeaseSeconds) * time.Second / 3)
 		defer ticker.Stop()
 		for {
 			select {
@@ -152,7 +151,7 @@ func (e *Engine) processSharedOne(ctx context.Context, analyzer Analyzer) (bool,
 						return ErrConflict
 					}
 					current.HeartbeatAt = e.Now()
-					current.LeaseUntil = e.Now().Add(time.Duration(e.Config.V2.LeaseSeconds) * time.Second)
+					current.LeaseUntil = e.Now().Add(time.Duration(e.Config.Worker.LeaseSeconds) * time.Second)
 					s.Investigations[task.ID] = current
 					return nil
 				}); err != nil {
@@ -162,8 +161,9 @@ func (e *Engine) processSharedOne(ctx context.Context, analyzer Analyzer) (bool,
 			}
 		}
 	}()
-	input := AnalyzeRequest{RunID: run.ID, Ticket: run.Input, Budget: e.Config.Budget, ReadOnly: true, Contract: &task.Contract, KnownIssues: []IssueBrief{{ID: task.IssueID, Title: run.Input.Subject}}}
+	input := AnalyzeRequest{RunID: run.ID, Ticket: run.Input, Budget: e.Config.Budget, ReadOnly: true, Contract: &task.Contract}
 	s := e.Store.Snapshot()
+	input.KnownIssues = issueCandidates(s, task, run.Input)
 	for _, match := range run.Matches {
 		for _, c := range CasesAt(eligibleCaseHistory(s, run.Input), task.Contract.ObservationCutoff) {
 			if c.ID == match.CaseID && c.Version == match.CaseVersion {
@@ -178,12 +178,11 @@ func (e *Engine) processSharedOne(ctx context.Context, analyzer Analyzer) (bool,
 	close(done)
 	<-heartbeatDone
 	if callErr == nil {
-		callErr = validateSharedReport(report, input)
+		callErr = validateReport(report, input)
 	}
 	report.AgentClassification = nil
 	report.Envelope = reportEnvelope(task, e.Now(), time.Since(started).Milliseconds())
-	report.Envelope.Plan = report.Plan
-	assessReport(&report, input)
+	report.Envelope.ProviderInputHash = hash(input)
 	report.Usage.Calls = 1
 	AddAlerts(&report, TokenAlerts(report.Usage, e.Config.Budget)...)
 	if !report.Usage.TokensReported {
@@ -195,25 +194,25 @@ func (e *Engine) processSharedOne(ctx context.Context, analyzer Analyzer) (bool,
 			return fmt.Errorf("%w: stale investigation result rejected", ErrConflict)
 		}
 		r := s.Runs[run.ID]
+		// Failed or superseded work still has a cost and a diagnostic audit.
+		r.Report = report
 		if !taskHasActiveMembers(*s, current) || s.Groups[current.GroupID].CurrentTaskID != current.ID {
 			current.State = "superseded"
-			r.State = "superseded"
 		} else if callErr != nil {
 			current.State = "failed"
-			r.State = "failed"
 			r.Error = callErr.Error()
 		} else {
+			applyIssueAssignment(s, &current, report, input.KnownIssues)
+			r.IssueID = current.IssueID
+			r.Report.Envelope.IssueID = current.IssueID
 			current.State = "agent_proposed"
-			r.State = "awaiting_review"
-			r.Report = report
 			r.Error = ""
 			if len(report.Findings) == 0 && len(report.Evidence) == 0 {
 				current.State = "awaiting_information"
-				r.State = "awaiting_information"
 			}
 			if current.State == "agent_proposed" {
 				group := s.Groups[current.GroupID]
-				solution := SolutionRevision{ID: randomID("solution_"), IssueID: current.IssueID, InvestigationID: current.ID, ProjectID: current.ProjectID, ScopeHash: group.ScopeHash, SourceTicketID: run.TicketID, Origin: "agent", State: "proposed", Revision: 1, Report: report, AvailableAt: e.Now(), RecordedAt: time.Now().UTC()}
+				solution := SolutionRevision{ID: randomID("solution_"), IssueID: current.IssueID, InvestigationID: current.ID, ProjectID: current.ProjectID, ScopeHash: group.ScopeHash, SourceTicketID: run.TicketID, Origin: "agent", State: "proposed", Revision: 1, RunID: run.ID, AvailableAt: e.Now(), RecordedAt: time.Now().UTC()}
 				s.Solutions[solution.ID] = solution
 				current.SolutionID = solution.ID
 			}

@@ -28,28 +28,19 @@ func visibleRow(r *http.Request, s State, row TicketRow, at time.Time) TicketRow
 			row.Solution = nil
 		} else if sol.State == "rejected" || sol.State == "withdrawn" {
 			copy := *sol
-			copy.Report = Report{Summary: "The shared proposal was rejected or withdrawn. Earlier evidence remains in the audit history."}
+			report := Report{Summary: "The shared proposal was rejected or withdrawn. Earlier evidence remains in the audit history."}
+			copy.Report = nil
 			row.Solution = &copy
 			if row.LatestRun != nil {
 				copyRun := *row.LatestRun
-				copyRun.Report = copy.Report
+				copyRun.Report = report
 				row.LatestRun = &copyRun
 			}
 		}
 	}
 	return row
 }
-func (api *API) v2Required(w http.ResponseWriter) bool {
-	if !api.Engine.Config.V2.Enabled {
-		writeError(w, ErrNotFound)
-		return false
-	}
-	return true
-}
 func (api *API) reviewMembership(w http.ResponseWriter, r *http.Request) {
-	if !api.v2Required(w) {
-		return
-	}
 	t, ok := api.Engine.Store.Snapshot().Tickets[r.PathValue("id")]
 	if !ok || t.Private || !allowed(r, t.ProjectID) || !ticketAllowed(r, t.ID) {
 		writeError(w, ErrNotFound)
@@ -83,9 +74,6 @@ func taskVisible(r *http.Request, s State, task Investigation) bool {
 	return false
 }
 func (api *API) solutionHistory(w http.ResponseWriter, r *http.Request) {
-	if !api.v2Required(w) {
-		return
-	}
 	s := api.Engine.Store.Snapshot()
 	task, ok := s.Investigations[r.PathValue("id")]
 	source := s.Tickets[s.Runs[task.RunID].TicketID]
@@ -103,9 +91,6 @@ func (api *API) solutionHistory(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{"solutions": rows})
 }
 func (api *API) engineeringIssues(w http.ResponseWriter, r *http.Request) {
-	if !api.v2Required(w) {
-		return
-	}
 	s := api.Engine.Store.Snapshot()
 	rows := []map[string]any{}
 	for _, issue := range s.Issues {
@@ -133,6 +118,7 @@ func (api *API) engineeringIssues(w http.ResponseWriter, r *http.Request) {
 		sort.Strings(members)
 		copy := issue
 		copy.Title = s.Tickets[title].Subject
+		copy.State = issueState(s, issue.ID, ids)
 		rows = append(rows, map[string]any{"issue": copy, "ticket_ids": members, "visible_ticket_count": len(members)})
 	}
 	sort.Slice(rows, func(i, j int) bool {
@@ -141,9 +127,6 @@ func (api *API) engineeringIssues(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{"issues": rows, "total_count": len(rows)})
 }
 func (api *API) investigation(w http.ResponseWriter, r *http.Request) {
-	if !api.v2Required(w) {
-		return
-	}
 	s := api.Engine.Store.Snapshot()
 	task, ok := s.Investigations[r.PathValue("id")]
 	if !ok || !taskVisible(r, s, task) {
@@ -161,9 +144,6 @@ func (api *API) investigation(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, result)
 }
 func (api *API) reviewSolution(w http.ResponseWriter, r *http.Request) {
-	if !api.v2Required(w) {
-		return
-	}
 	s := api.Engine.Store.Snapshot()
 	task, ok := s.Investigations[r.PathValue("id")]
 	if !ok || !allowed(r, task.ProjectID) || !ticketAllowed(r, s.Runs[task.RunID].TicketID) {
@@ -183,9 +163,6 @@ func (api *API) reviewSolution(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, result)
 }
 func (api *API) snapshot(w http.ResponseWriter, r *http.Request) {
-	if !api.v2Required(w) {
-		return
-	}
 	s := api.Engine.Store.Snapshot()
 	snap, ok := s.Snapshots[r.PathValue("id")]
 	current := s.Tickets[snap.Ticket.ID]
@@ -196,15 +173,12 @@ func (api *API) snapshot(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, snap)
 }
 func (api *API) advanceClock(w http.ResponseWriter, r *http.Request) {
-	if !api.v2Required(w) {
-		return
-	}
-	cfg := api.Engine.Config.V2
-	if !cfg.ReplayClock {
+	cfg := api.Engine.Config.Replay
+	if !cfg.Enabled {
 		writeError(w, ErrNotFound)
 		return
 	}
-	for _, project := range cfg.ClockProjects {
+	for _, project := range cfg.Projects {
 		if !allowed(r, project) {
 			writeJSON(w, 403, map[string]string{"error": "Replay clock operator scope required."})
 			return

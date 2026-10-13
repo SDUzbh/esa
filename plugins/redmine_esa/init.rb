@@ -12,7 +12,7 @@ Redmine::Plugin.register :redmine_esa do
   project_module :esa do
     permission :view_esa, { esa: [:index, :show, :engineering_issues] }, read: true
     permission :submit_esa, { esa: [:upload, :preview, :import, :forward, :metadata, :classifier_predict] }
-    permission :review_esa, { esa: [:review_case, :review_run, :review_investigation, :review_membership, :classifier_feedback] }
+    permission :review_esa, { esa: [:review_case, :review_investigation, :review_membership, :classifier_feedback] }
   end
   menu :top_menu, :esa, { controller: 'esa', action: 'index' }, caption: 'ESA', if: Proc.new { User.current.logged? }
 end

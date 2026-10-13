@@ -35,6 +35,7 @@ services:
       REDMINE_PLUGINS_MIGRATE: '1'
       ESA_URL: http://esa:8090
       ESA_API_TOKEN: ${ESA_API_TOKEN:?Set ESA_API_TOKEN in .env}
+      ESA_STATE_API_ENABLED: '1'
       TZ: Asia/Shanghai
     depends_on:
       db:
@@ -57,6 +58,7 @@ services:
     environment:
       ESA_API_TOKEN: ${ESA_API_TOKEN:?Set ESA_API_TOKEN in .env}
       ESA_REDMINE_URL: http://redmine:3000
+      ESA_STATE_URL: ${ESA_STATE_URL:-}
       ESA_ANALYZER_URL: ${ESA_ANALYZER_URL:-}
       ESA_ANALYZER_TOKEN: ${ESA_API_TOKEN:?Set ESA_API_TOKEN in .env}
     volumes:

@@ -9,8 +9,8 @@ class EsaBackendState < ApplicationRecord
     end
   end
 
-  # The state row is the transaction lock and CAS fence. V2 entities are stored
-  # separately; the compatibility frame never contains a second writable copy.
+  # The state row is the transaction lock and CAS fence. Shared investigation entities are stored
+  # separately; the core state frame never contains a second writable copy.
   def packet
     state = JSON.parse(payload)
     EsaStateRecord.order(:kind, :record_key).each do |record|

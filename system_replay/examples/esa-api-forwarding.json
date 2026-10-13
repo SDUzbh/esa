@@ -10,7 +10,11 @@
         "-store",
         "{{run_dir}}/target/state.json",
         "-rules",
-        "{{manifest_dir}}/../../config/rules.json"
+        "{{manifest_dir}}/../../config/rules.json",
+        "-replay-at",
+        "2020-01-01T00:00:00Z",
+        "-replay-projects",
+        "1"
       ],
       "env": {
         "ESA_API_TOKEN": "{{token}}",
@@ -76,7 +80,14 @@
       "archived"
     ],
     "timeout_seconds": 30,
-    "poll_milliseconds": 100
+    "poll_milliseconds": 100,
+    "advance_clock": {
+      "method": "POST",
+      "path": "/v1/replay/clock",
+      "body": {
+        "time": "{{event_time}}"
+      }
+    }
   },
   "warn_input_tokens": 16000,
   "warn_output_tokens": 6000,

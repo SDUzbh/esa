@@ -1,6 +1,6 @@
 # Manual forwarding to ESA
 
-ESA workflow version 4 accepts only explicitly, manually forwarded ticket snapshots. Classification does not control intake or routing: there are no category rules, human label gates, preset catalogs or Agent classification outputs. The [optional classifier](CLASSIFIER.md) is disabled by default and offers human-confirmed suggestions and independent supervised training only.
+ESA accepts only explicitly, manually forwarded ticket snapshots. Classification does not control intake or routing: there are no category rules, human label gates, preset catalogs or Agent classification outputs. The [optional classifier](CLASSIFIER.md) is disabled by default and offers human-confirmed suggestions and independent supervised training only.
 
 ## Intake
 
@@ -36,6 +36,6 @@ Trusted case approvals refresh recommendations only for already forwarded ticket
 
 The new nullable outbox forwarding columns leave old events intact. The delivery endpoint excludes legacy automatic events without forwarding provenance. Existing stored ticket/events/reports are retained, including historical classification fields for audit, but unforwarded legacy tickets are excluded from the active list. Old queued runs stop at `awaiting_forward` and cannot invoke a provider until a new manual forwarding creates a current run. No historical state is automatically erased or reclassified.
 
-`config/rules.json` is retained as a compatible path and `-rules` remains a CLI option, but the file contains workflow configuration version 5, the analysis budget and an explicitly disabled optional classifier configuration. There is no rules engine. `/v1/labels`, `/v1/labels/review` and `/v1/labels/examples` have been removed. Legacy classification input fields are discarded from newly accepted snapshots; historical stored fields are archive-only.
+`config/rules.json` is retained as a compatible path and `-rules` remains a CLI option, but the file contains the analysis budget, worker settings and an explicitly disabled optional classifier configuration. There is no rules engine. `/v1/labels`, `/v1/labels/review` and `/v1/labels/examples` have been removed. Legacy classification input fields are discarded from newly accepted snapshots; historical stored fields are archive-only.
 
 Deployment requires rebuilding the ESA binary/image and plugin image and running the plugin migration adding forwarding columns. The code change does not restart an existing deployment automatically. Validate with application tests and the external `esa-api-forwarding.json`, lifecycle and Kafka fixtures before deployment.

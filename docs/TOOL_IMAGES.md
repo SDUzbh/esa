@@ -1,8 +1,8 @@
 # Preset tool images
 
-Each Profile has a declarative `profiles/<profile>/toolset.txt` and an inspected `toolset.release.txt` containing installed versions, image IDs, upstream hashes and executable paths. Profile version 2 includes these declarations in its approved manifest hash. Do not execute TXT files as shell scripts.
+Each Profile has a declarative `profiles/<profile>/toolset.txt`. One inspected `deploy/tools/toolset.release.txt` records the shared installed versions, image ID, upstream hashes and executable paths. Profile version 2 includes these declarations in its approved manifest hash. Do not execute TXT files as shell scripts.
 
-Five images (`esa-tools-general`, `esa-tools-java-debug`, `esa-tools-performance`, `esa-tools-compatibility`, `esa-tools-configuration`) share one immutable toolkit layer. Each image contains the union of the declared tools, with its own Profile label and bundled configuration. Profile TXT files describe the recommended subset; capability policy remains separate from package presence. Sharing the installed layer allows the same Agent session to request another approved capability without recreating its environment.
+One immutable `esa-toolkit` image contains the union of approved tools. Profiles select Skills, capability policy and recommended tool subsets; they do not duplicate operating systems or package inventories. Distinct customer runtimes still require registered scenario/environment inputs.
 
 | Profile | Prepared tools |
 | --- | --- |
@@ -25,8 +25,8 @@ The default command checks official releases and builds only when release/config
 1. Pulls the official Eclipse Temurin GA JDK 8 and 21 images for Ubuntu Noble; fixes their repository digests. Major JVM versions and the OS family remain pinned.
 2. Resolves declared packages, dependency installation plans and base security updates from the image's signed stable Ubuntu repositories in an automatically removed resolver container.
 3. Selects the highest numeric non-draft, non-prerelease async-profiler release from its official GitHub repository. Nightly/RC tags are excluded. Requires the publisher's asset SHA256 and verifies downloads.
-4. Builds a shared toolkit and five thin Profile images; checks commands and JVM/profiler versions offline as a nonroot user.
-5. Publishes `.esa/tool-images/current.json` only after every image passes, and writes each Profile's inspected `toolset.release.txt`. Running tasks retain their immutable image IDs. Host packages and live Redmine containers are unchanged.
+4. Builds one shared toolkit image; checks commands and JVM/profiler versions offline as a nonroot user.
+5. Publishes `.esa/tool-images/current.json` only after inspection passes, and writes the shared `deploy/tools/toolset.release.txt`. Running tasks retain their immutable image IDs. Host packages and live Redmine containers are unchanged.
 
 For a check without building or activating a new registry:
 
@@ -46,7 +46,7 @@ Official provenance: [Temurin container images](https://adoptium.net/installatio
 
 ## Use and lifecycle
 
-Managed engineering environments now select the prepared `java-debug` image for the registered Java fixture. `scripts/replay_session.py --profile <name>` or `Environment(profile=<name>)` selects another verified image. Image IDs, release/config hashes and actual tools enter readiness/audit. The Agent gets a compact readiness list; complete package inventory stays in the private environment report and TXT release inspection.
+The Agent selects an approved Profile before the registered runtime is created; source-only analysis needs no container. All prepared Profiles currently use the shared toolkit. `scripts/replay_session.py --profile <name>` or `Environment(profile=<name>)` selects another verified image. Image IDs, release/config hashes and actual tools enter readiness/audit. The Agent gets a compact readiness list; complete package inventory stays in the private environment report and TXT release inspection.
 
 Runtime containers use `--rm`, an offline network, read-only root/product mounts, UID 1000, dropped capabilities and CPU/memory/process limits. Writable tools/scripts remain in scratch `tmpfs`. Containers remove automatically on exit; owned named data volumes and crash recovery still have explicit cleanup. Nothing uninstalls individual tools or modifies a running image.
 
@@ -59,4 +59,4 @@ python3 -B scripts/test_tool_images.py
 python3 scripts/verify_tool_images.py
 ```
 
-The first command checks release filtering, checksum requirements, archive bounds and Docker-context isolation without network/Docker. The second verifies all five real images, runs tools in an owned offline environment, checks product source immutability and confirms removal of the runtime/writer/data volume. It uses no engineering model calls.
+The first command checks release filtering, checksum requirements, archive bounds and Docker-context isolation without network/Docker. The second verifies the shared real image for all Profiles, runs tools in an owned offline environment, checks product source immutability and confirms removal of the runtime/writer/data volume. It uses no engineering model calls.

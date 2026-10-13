@@ -7,7 +7,6 @@ get 'esa/tickets/:id', to: 'esa#show', as: :esa_ticket
 post 'esa/tickets/:id/forward', to: 'esa#forward', as: :esa_forward
 post 'esa/tickets/:id/metadata', to: 'esa#metadata', as: :esa_metadata
 post 'esa/tickets/:id/review_case', to: 'esa#review_case', as: :esa_review_case
-post 'esa/tickets/:id/review_run', to: 'esa#review_run', as: :esa_review_run
 get 'esa/api/events', to: 'esa_events#index'
 get 'esa/api/state', to: 'esa_state#show'
 put 'esa/api/state', to: 'esa_state#update'

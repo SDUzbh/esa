@@ -10,7 +10,7 @@ import (
 func (e *Engine) ReviewMembership(ticketID string, review MembershipReview) (Receipt, error) {
 	var receipt Receipt
 	err := e.Store.Update(func(s *State) error {
-		prepareV2(s)
+		prepareInvestigations(s)
 		t, ok := s.Tickets[ticketID]
 		if !ok || t.Private || t.Closed {
 			return ErrNotFound
@@ -26,7 +26,7 @@ func (e *Engine) ReviewMembership(ticketID string, review MembershipReview) (Rec
 			return fmt.Errorf("%w: engineering issue outside eligible project registry", ErrInvalid)
 		}
 		if !ok {
-			issue = EngineeringIssue{ID: randomID("issue_"), ProjectID: t.ProjectID, Title: t.Subject, State: "tentative", CreatedAt: e.Now()}
+			issue = EngineeringIssue{ID: randomID("issue_"), ProjectID: t.ProjectID, Title: t.Subject, CreatedAt: e.Now()}
 			s.Issues[issue.ID] = issue
 		}
 		for id, link := range s.Memberships {
@@ -48,8 +48,10 @@ func (e *Engine) ReviewMembership(ticketID string, review MembershipReview) (Rec
 		event := Event{ID: randomID("membership_"), Origin: "reviewed_assignment", ForwardedBy: review.Reviewer, ForwardedAt: e.Now(), OccurredAt: e.Now(), ReceivedAt: e.Now(), Ticket: t}
 		captureSnapshot(s, event)
 		s.Events[event.ID] = event
+		previousRunID := s.Latest[ticketID]
 		delete(s.Latest, ticketID)
-		receipt = e.enqueueShared(s, t, e.Now(), false)
+		receipt = e.enqueue(s, t, e.Now(), false)
+		supersedeInactiveTask(s, previousRunID, e.Now())
 		if receipt.Action == "created" {
 			run := s.Runs[receipt.RunID]
 			task := s.Investigations[run.InvestigationID]

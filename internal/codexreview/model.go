@@ -12,12 +12,6 @@ type Issue struct {
 	Findings   []esa.Finding `json:"findings"`
 	CreatedAt  string        `json:"created_at"`
 }
-type Version struct {
-	Name           string `json:"name"`
-	Commit         string `json:"commit"`
-	MainlineCommit string `json:"mainline_commit"`
-	CommittedAt    string `json:"committed_at"`
-}
 type Change struct {
 	OldFile  string `json:"old_file"`
 	NewFile  string `json:"new_file"`
@@ -36,16 +30,6 @@ type Candidate struct {
 	PRs     []string `json:"prs"`
 	Changes []Change `json:"changes"`
 	Patch   string   `json:"patch"`
-}
-type Trace struct {
-	Issue        Issue       `json:"issue"`
-	Baseline     string      `json:"baseline"`
-	Mainline     string      `json:"mainline"`
-	MainlineHead string      `json:"mainline_head"`
-	Versions     []Version   `json:"versions"`
-	Candidates   []Candidate `json:"candidates"`
-	State        string      `json:"state"`
-	Limitations  []string    `json:"limitations"`
 }
 type ReviewRequest struct {
 	SourceKey  string         `json:"source_key"`

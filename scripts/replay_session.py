@@ -4,7 +4,7 @@ import argparse
 import json
 from pathlib import Path
 import sys
-from replay_environment import Environment, ROOT, dependencies, write_json
+from replay_environment import Environment, ROOT, dependencies, write_json, remove_owned
 
 def baseline_status(exit_code, output):
     compiled = 'CLIENT_MODULE_COMPILATION=PASS' in output
@@ -22,15 +22,28 @@ def baseline_status(exit_code, output):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--evidence', required=True)
+    parser.add_argument('--evidence')
+    parser.add_argument('--cleanup-owned', action='store_true')
     parser.add_argument('--run-dir', required=True)
     parser.add_argument('--profile', default='java-debug', help='Prebuilt environment for the registered Java scenario')
     args = parser.parse_args()
+    directory = Path(args.run_dir).resolve()
+    if args.cleanup_owned:
+        marker = directory / 'runtime-owned.json'
+        if marker.exists():
+            saved = json.loads(marker.read_text())
+            docker = ['docker'] + (['--context', saved['context']] if saved['context'] else [])
+            for kind, key in [('container','container'),('container','writer'),('volume','volume')]:
+                remove_owned(docker, kind, saved[key], saved['session'])
+        return
+    if not args.evidence:
+        raise ValueError('A registered evidence packet is required')
     packet_path = Path(args.evidence).resolve(); bundle = packet_path.parent
     packet = json.loads(packet_path.read_text()); manifest = json.loads((bundle / 'manifest.json').read_text())
     if packet['source_commit'] != manifest['source_commit']: raise RuntimeError('Packet/source registration mismatch')
     directory = Path(args.run_dir).resolve()
     with Environment(profile=args.profile) as env:
+        write_json(directory / 'runtime-owned.json', {'container': env.name, 'writer': env.writer, 'volume': env.volume, 'session': env.session, 'context': env.context})
         deps = dependencies(bundle / 'source/build.gradle', env.cache)
         inputs = {'deps/' + name: item['path'] for name, item in deps.items()}
         inputs.update({'compile.sh': ROOT / 'examples/replay/compile.sh',
@@ -48,7 +61,7 @@ def main():
         config_path = directory / 'tools-config.json'
         tool_config = env.tool_config(packet['source_commit'], directory / 'tools.jsonl')
         tool_config['available_capabilities'] = ['source', 'runtime', 'debugger', 'temporary_tools']
-        tool_config['readiness'] = {'runtime_image': env.jdk_digest, **readiness}
+        tool_config['readiness'] = {'runtime_image': env.jdk_digest, 'runtime_available': True, 'prepared_profile': args.profile, **readiness}
         preset = {key: value for key, value in env.preset.items() if key != 'inventory'}
         preset['tools'] = {key: value for key, value in env.preset['inventory'].items() if key != 'packages'}
         tool_config['readiness']['preset'] = preset

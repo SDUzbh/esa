@@ -1,7 +1,7 @@
 class EsaController < ApplicationController
   before_action :require_login
   before_action :load_scope
-  before_action :load_issue, only: [:show, :forward, :metadata, :review_case, :review_run, :review_investigation, :review_membership, :classifier_predict, :classifier_feedback]
+  before_action :load_issue, only: [:show, :forward, :metadata, :review_case, :review_investigation, :review_membership, :classifier_predict, :classifier_feedback]
   rescue_from Esa::Error, with: :service_error
 
   def index
@@ -127,15 +127,6 @@ class EsaController < ApplicationController
     record = row.fetch('case') { raise Esa::Error, 'No collected case is available.' }
     @client.request(:post, "/v1/cases/#{record.fetch('id')}/review", { action: params[:review_action], reviewer: User.current.login, note: params[:note].to_s })
     flash[:notice] = 'Case review recorded. Applicable recommendations were refreshed without model calls.'
-    redirect_to esa_ticket_path(@issue)
-  end
-
-  def review_run
-    return unless require_permission(:review_esa)
-    row = @client.request(:get, "/v1/tickets/redmine:#{@issue.id}").fetch('ticket')
-    run = row.fetch('latest_run') { raise Esa::Error, 'No analysis run is available.' }
-    @client.request(:post, "/v1/runs/#{run.fetch('id')}/review", { action: params[:review_action], reviewer: User.current.login, note: params[:note].to_s })
-    flash[:notice] = 'Analysis review recorded.'
     redirect_to esa_ticket_path(@issue)
   end
 

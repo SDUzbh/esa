@@ -1,92 +1,65 @@
 package codex
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"syscall"
-	"time"
+
+	"esa/internal/replaytools"
 )
 
-// ManagedEnvironment starts an operator-owned environment helper, not a model
-// command. Closing stdin requests normal cleanup before a process is terminated.
+// Register frozen source immediately; provision a runtime only after an approved
+// Profile request. The provider retains an owned-resource cleanup fallback.
 func ManagedEnvironment(script, evidence string) func(context.Context, string) (string, func() error, error) {
 	return func(ctx context.Context, dir string) (string, func() error, error) {
-		cmd := exec.Command("python3", script, "--evidence", evidence, "--run-dir", dir)
-		for _, value := range os.Environ() {
-			if len(value) < 4 || value[:4] != "ESA_" {
-				cmd.Env = append(cmd.Env, value)
-			}
-		}
-		stderr, err := os.OpenFile(filepath.Join(dir, "environment-helper.log"), os.O_CREATE|os.O_WRONLY|os.O_EXCL, 0600)
+		scriptPath, err := filepath.Abs(script)
 		if err != nil {
 			return "", nil, err
 		}
-		cmd.Stderr = stderr
-		input, err := cmd.StdinPipe()
+		evidencePath, err := filepath.Abs(evidence)
 		if err != nil {
-			stderr.Close()
 			return "", nil, err
 		}
-		output, err := cmd.StdoutPipe()
+		data, err := os.ReadFile(evidencePath)
 		if err != nil {
-			stderr.Close()
 			return "", nil, err
 		}
-		if err = cmd.Start(); err != nil {
-			stderr.Close()
+		var packet Packet
+		if err = json.Unmarshal(data, &packet); err != nil {
 			return "", nil, err
 		}
-		finished := make(chan error, 1)
-		done := make(chan struct{})
-		monitorExited := make(chan struct{})
-		go func() {
-			defer close(monitorExited)
-			select {
-			case <-ctx.Done():
-				_ = cmd.Process.Signal(syscall.SIGTERM)
-			case <-done:
-			}
-		}()
-		// Wait only after the ready line has been consumed; stdout remains open until cleanup.
+		bundle := filepath.Dir(evidencePath)
+		data, err = os.ReadFile(filepath.Join(bundle, "manifest.json"))
+		if err != nil {
+			return "", nil, err
+		}
+		var manifest struct {
+			Commit string            `json:"source_commit"`
+			Files  map[string]string `json:"files"`
+		}
+		if err = json.Unmarshal(data, &manifest); err != nil || manifest.Commit != packet.Commit {
+			return "", nil, fmt.Errorf("registered packet/source mismatch")
+		}
+		runtimeDir := filepath.Join(dir, "runtime")
+		config := replaytools.Config{Session: filepath.Base(dir), SourceDir: filepath.Join(bundle, "source"), Commit: packet.Commit, Files: manifest.Files, AuditPath: filepath.Join(dir, "tools.jsonl"), AvailableCapabilities: []string{"source", "runtime", "debugger", "temporary_tools"}, Runtime: &replaytools.RuntimeSetup{Script: scriptPath, Evidence: evidencePath, Directory: runtimeDir}, Readiness: map[string]any{"status": "source_ready", "runtime_available": false}}
+		path := filepath.Join(dir, "tools-config.json")
+		data, err = json.Marshal(config)
+		if err == nil {
+			err = os.WriteFile(path, data, 0600)
+		}
+		if err != nil {
+			return "", nil, err
+		}
 		cleanup := func() error {
-			_ = input.Close()
-			go func() { finished <- cmd.Wait() }()
-			defer stderr.Close()
-			select {
-			case err := <-finished:
-				return err
-			case <-time.After(30 * time.Second):
+			cmd := exec.Command("python3", scriptPath, "--cleanup-owned", "--run-dir", runtimeDir)
+			if output, err := cmd.CombinedOutput(); err != nil {
+				return fmt.Errorf("owned environment cleanup: %w: %s", err, output)
 			}
-			_ = cmd.Process.Signal(syscall.SIGTERM)
-			select {
-			case err := <-finished:
-				return err
-			case <-time.After(10 * time.Second):
-			}
-			_ = cmd.Process.Kill()
-			<-finished
-			return fmt.Errorf("environment helper did not finish cleanup; use replay_pipeline.py --cleanup")
+			return nil
 		}
-		reader := bufio.NewReader(output)
-		line, err := reader.ReadBytes('\n')
-		close(done)
-		<-monitorExited
-		if err != nil {
-			_ = cleanup()
-			return "", nil, fmt.Errorf("environment setup failed; inspect private helper log")
-		}
-		var ready struct {
-			Config string `json:"tools_config"`
-		}
-		if err = json.Unmarshal(line, &ready); err != nil || ready.Config == "" {
-			_ = cleanup()
-			return "", nil, fmt.Errorf("invalid environment readiness response")
-		}
-		return ready.Config, cleanup, nil
+		return path, cleanup, nil
 	}
 }

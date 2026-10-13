@@ -7,7 +7,7 @@
     "source": "/input/source (read-only)",
     "network": "offline",
     "toolset": "toolset.txt",
-    "image": "esa-tools-configuration:<verified-release>",
+    "image": "esa-toolkit:<verified-release>",
     "tool_java_home": "/opt/esa/tool-jdk"
   }
 }

@@ -2,15 +2,17 @@ package esa
 
 import "time"
 
-// V2 is explicit opt-in so existing deployments and archived reports keep their
-// original admission/routing contract during the migration.
-type V2Config struct {
-	Enabled             bool      `json:"enabled"`
-	LeaseSeconds        int       `json:"lease_seconds"`
-	MaxActivePerProject int       `json:"max_active_per_project"`
-	ReplayClock         bool      `json:"replay_clock"`
-	InitialTime         time.Time `json:"initial_time,omitempty"`
-	ClockProjects       []string  `json:"clock_projects,omitempty"`
+// Worker settings control task ownership and project concurrency.
+type WorkerConfig struct {
+	LeaseSeconds        int `json:"lease_seconds"`
+	MaxActivePerProject int `json:"max_active_per_project"`
+}
+
+// Replay is supplied explicitly by the test launcher, never by business rules.
+type ReplayConfig struct {
+	Enabled     bool
+	InitialTime time.Time
+	Projects    []string
 }
 
 type TicketSnapshot struct {
@@ -27,7 +29,7 @@ type EngineeringIssue struct {
 	ID        string    `json:"id"`
 	ProjectID string    `json:"project_id"`
 	Title     string    `json:"title"`
-	State     string    `json:"state"`
+	State     string    `json:"state,omitempty"`
 	CreatedAt time.Time `json:"created_at"`
 }
 type IssueTicketLink struct {
@@ -96,7 +98,8 @@ type SolutionRevision struct {
 	State           string     `json:"state"`
 	Revision        int        `json:"revision"`
 	Supersedes      string     `json:"supersedes,omitempty"`
-	Report          Report     `json:"report"`
+	RunID           string     `json:"run_id,omitempty"`
+	Report          *Report    `json:"report,omitempty"` // Historical inline reports; new revisions reference RunID.
 	Resolution      Resolution `json:"resolution"`
 	Reviewer        string     `json:"reviewer,omitempty"`
 	Note            string     `json:"note,omitempty"`

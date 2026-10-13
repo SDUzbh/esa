@@ -148,7 +148,7 @@ class Environment(AbstractContextManager):
             if self.preset:
                 image = json.loads(self.command(['image', 'inspect', self.image]))[0]
                 labels = image['Config'].get('Labels', {})
-                if image['Id'] != self.preset['image_id'] or labels.get('esa.release.hash') != self.preset['release_hash'] or labels.get('esa.profile') != self.preset['profile']:
+                if image['Id'] != self.preset['image_id'] or labels.get('esa.release.hash') != self.preset['release_hash'] or labels.get('esa.toolkit') != 'release':
                     raise RuntimeError('Preset image identity or release labels differ')
                 self.jdk_digest = image['Id']
             else:

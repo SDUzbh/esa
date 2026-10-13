@@ -7,7 +7,7 @@ import (
 	"esa/internal/classifier"
 )
 
-const WorkflowVersion = "4"
+const WorkflowVersion = "5"
 
 type Comment struct {
 	ID        string    `json:"id"`
@@ -69,7 +69,8 @@ type Config struct {
 	Version    string           `json:"version"`
 	Budget     Budget           `json:"budget"`
 	Classifier ClassifierConfig `json:"classifier"`
-	V2         V2Config         `json:"v2"`
+	Worker     WorkerConfig     `json:"worker"`
+	Replay     ReplayConfig     `json:"-"`
 }
 
 type ClassifierConfig struct {
@@ -184,7 +185,7 @@ type IssueAssignment struct {
 	Reason     string `json:"reason"`
 }
 type Report struct {
-	Envelope            *ReportEnvelope      `json:"envelope_v2,omitempty"`
+	Envelope            *ReportEnvelope      `json:"assessment,omitempty"`
 	Plan                *AnalysisPlan        `json:"plan,omitempty"`
 	AgentClassification *Classification      `json:"agent_classification,omitempty"`
 	Issue               *IssueAssignment     `json:"issue,omitempty"`

@@ -5,7 +5,16 @@ class EsaStateController < ActionController::Base
   def show
     state = EsaBackendState.authority
     # Serialize reads with commits so the frame and entity rows have one revision.
-    state.with_lock { render json: state.packet }
+    state.with_lock do
+      tag = %Q("#{state.revision}")
+      response.headers['ETag'] = tag
+      response.headers['Cache-Control'] = 'private, no-cache'
+      if request.headers['If-None-Match'] == tag
+        head :not_modified
+      else
+        render json: state.packet
+      end
+    end
   end
 
   def update

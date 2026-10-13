@@ -13,24 +13,18 @@ import (
 	"time"
 )
 
-func v2Engine(t *testing.T) *Engine {
+func sharedInvestigationEngine(t *testing.T) *Engine {
 	t.Helper()
-	base := testEngine(t)
-	cfg := base.Config
-	cfg.V2 = V2Config{Enabled: true, LeaseSeconds: 3}
-	e, err := NewEngine(base.Store, cfg)
-	if err != nil {
-		t.Fatal(err)
-	}
-	e.Now = base.Now
+	e := testEngine(t)
+	e.Config.Worker.LeaseSeconds = 3
 	return e
 }
 func diagnosticReport() Report {
 	ev := Evidence{Source: "git", Reference: "registered:Example.java:1", Quote: "assignment.size()"}
 	return Report{Summary: "Empty assignment may be dereferenced", Evidence: []Evidence{ev}, Findings: []Finding{{Commit: "registered", File: "Example.java", StartLine: 1, EndLine: 1, Problem: "Empty assignment may be dereferenced", Solution: "Check assignment presence", Evidence: []Evidence{ev}}}, Recommendations: []string{"Check assignment presence"}, Usage: Usage{Calls: 1, InputTokens: 20, OutputTokens: 10, TokensReported: true}}
 }
-func TestV2ConcurrentReleaseIncidentSharesOneDiagnosis(t *testing.T) {
-	e := v2Engine(t)
+func TestSharedInvestigationsConcurrentReleaseIncidentSharesOneDiagnosis(t *testing.T) {
+	e := sharedInvestigationEngine(t)
 	var wg sync.WaitGroup
 	errs := make(chan error, 100)
 	ids := make(chan string, 100)
@@ -116,8 +110,8 @@ func TestV2ConcurrentReleaseIncidentSharesOneDiagnosis(t *testing.T) {
 	}
 }
 
-func TestV2NoveltyAndContextAreNotMerged(t *testing.T) {
-	e := v2Engine(t)
+func TestSharedInvestigationsNoveltyAndContextAreNotMerged(t *testing.T) {
+	e := sharedInvestigationEngine(t)
 	initial := receive(t, e, "one", fixture(e, "one"))
 	for i, change := range []func(*Ticket){func(t *Ticket) { t.ProjectID = "2" }, func(t *Ticket) { t.Versions = []string{"4.0"} }, func(t *Ticket) { t.Environment = map[string]string{"details": "JDK 8"} }, func(t *Ticket) { t.Description = "Different NullPointerException while validating a configuration" }} {
 		ticket := fixture(e, fmt.Sprintf("changed-%d", i))
@@ -131,8 +125,8 @@ func TestV2NoveltyAndContextAreNotMerged(t *testing.T) {
 		t.Fatal("missing independent investigations")
 	}
 }
-func TestV2VisibilityAndFrozenSnapshots(t *testing.T) {
-	e := v2Engine(t)
+func TestSharedInvestigationsVisibilityAndFrozenSnapshots(t *testing.T) {
+	e := sharedInvestigationEngine(t)
 	receive(t, e, "owner-event", fixture(e, "owner"))
 	r := receive(t, e, "member-event", fixture(e, "member"))
 	e.ProcessOne(context.Background(), analyzerFunc(func(context.Context, AnalyzeRequest) (Report, error) { return diagnosticReport(), nil }))
@@ -162,8 +156,8 @@ func TestV2VisibilityAndFrozenSnapshots(t *testing.T) {
 		t.Fatal("private-source solution leaked", w.Code, w.Body)
 	}
 }
-func TestV2LeaseFencesStaleResults(t *testing.T) {
-	e := v2Engine(t)
+func TestSharedInvestigationsLeaseFencesStaleResults(t *testing.T) {
+	e := sharedInvestigationEngine(t)
 	var clock atomic.Int64
 	clock.Store(e.Now().UnixNano())
 	e.Now = func() time.Time { return time.Unix(0, clock.Load()).UTC() }
@@ -198,11 +192,11 @@ func TestV2LeaseFencesStaleResults(t *testing.T) {
 		t.Fatal("uncertain spend retried automatically")
 	}
 }
-func TestV2ReplayClockAndFutureCaseIsolation(t *testing.T) {
-	e := v2Engine(t)
+func TestSharedInvestigationsReplayClockAndFutureCaseIsolation(t *testing.T) {
+	e := sharedInvestigationEngine(t)
 	base := e.Now()
-	e.Config.V2.ReplayClock = true
-	e.Config.V2.ClockProjects = []string{"1"}
+	e.Config.Replay.Enabled = true
+	e.Config.Replay.Projects = []string{"1"}
 	e.clock.Store(base.UnixNano())
 	e.Now = func() time.Time { return time.Unix(0, e.clock.Load()).UTC() }
 	source, r := resolved(t, e)

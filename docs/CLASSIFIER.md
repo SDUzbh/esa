@@ -92,9 +92,9 @@ bin/esa-classifier retrain \
   -data runtime/classifier/human-training.jsonl \
   -feedback runtime/classifier/feedback.jsonl \
   -cutoff 2026-10-12T00:00:00Z \
-  -output runtime/classifier/candidate-v2.json
+  -output runtime/classifier/candidate-updated.json
 bin/esa-classifier test \
-  -model runtime/classifier/candidate-v2.json \
+  -model runtime/classifier/candidate-updated.json \
   -data runtime/classifier/heldout-after-cutoff.jsonl
 ```
 

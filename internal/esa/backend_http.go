@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -23,7 +24,7 @@ type statePacket struct {
 	Revision uint64 `json:"revision"`
 }
 
-func (b HTTPStateBackend) request(method string, input any) (statePacket, error) {
+func (b HTTPStateBackend) request(method string, input any, known ...uint64) (statePacket, error) {
 	var result statePacket
 	var body io.Reader
 	if input != nil {
@@ -39,6 +40,9 @@ func (b HTTPStateBackend) request(method string, input any) (statePacket, error)
 	}
 	r.Header.Set("Authorization", "Bearer "+b.Token)
 	r.Header.Set("Content-Type", "application/json")
+	if len(known) > 0 {
+		r.Header.Set("If-None-Match", strconv.Quote(strconv.FormatUint(known[0], 10)))
+	}
 	client := b.Client
 	if client == nil {
 		client = &http.Client{Timeout: 15 * time.Second}
@@ -51,6 +55,9 @@ func (b HTTPStateBackend) request(method string, input any) (statePacket, error)
 		return result, fmt.Errorf("authoritative state transport unavailable")
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotModified && len(known) > 0 {
+		return statePacket{Revision: known[0]}, nil
+	}
 	if resp.StatusCode == 409 {
 		return result, errStateCAS
 	}
@@ -70,6 +77,13 @@ func (b HTTPStateBackend) request(method string, input any) (statePacket, error)
 func (b HTTPStateBackend) Load() (State, uint64, error) {
 	packet, err := b.request(http.MethodGet, nil)
 	return packet.State, packet.Revision, err
+}
+func (b HTTPStateBackend) LoadIfChanged(known uint64) (State, uint64, bool, error) {
+	packet, err := b.request(http.MethodGet, nil, known)
+	if err == nil && packet.State.SchemaVersion != 0 {
+		err = validateState(packet.State)
+	}
+	return packet.State, packet.Revision, packet.Revision != known, err
 }
 func (b HTTPStateBackend) Commit(state State, revision uint64) (uint64, error) {
 	packet, err := b.request(http.MethodPut, map[string]any{"expected_revision": revision, "state": state})

@@ -20,10 +20,10 @@ def main():
         probe.bind(('127.0.0.1', 0))
         port = probe.getsockname()[1]
     url = 'http://127.0.0.1:%d' % port
-    with tempfile.TemporaryDirectory(prefix='esa-v2-http-') as temporary:
+    with tempfile.TemporaryDirectory(prefix='esa-shared-http-') as temporary:
         directory = Path(temporary)
         log = (directory / 'target.log').open('w')
-        process = subprocess.Popen(['python3', str(ROOT / 'scripts/esa_v2_fixture_target.py'), '--esa-bin', str(ROOT / 'bin/esa-host'), '--store', str(directory / 'state.json'), '--rules', str(ROOT / 'config/rules.v2-replay.json'), '--listen', '127.0.0.1:%d' % port], env=dict(os.environ, ESA_API_TOKEN=token), stdout=log, stderr=log, start_new_session=True)
+        process = subprocess.Popen(['python3', str(ROOT / 'scripts/esa_fixture_target.py'), '--esa-bin', str(ROOT / 'bin/esa-host'), '--store', str(directory / 'state.json'), '--rules', str(ROOT / 'config/rules.json'), '--listen', '127.0.0.1:%d' % port, '--replay-at', '2020-01-01T00:00:00Z', '--replay-projects', '1'], env=dict(os.environ, ESA_API_TOKEN=token), stdout=log, stderr=log, start_new_session=True)
 
         def request(path, value=None, tickets=None):
             headers = {'Authorization': 'Bearer ' + token, 'X-ESA-Project-IDs': '1', 'Content-Type': 'application/json'}
@@ -72,7 +72,7 @@ def main():
             history = request('/v1/investigations/' + task_id + '/solutions')['solutions']
             assert [revision['state'] for revision in history] == ['proposed', 'trusted']
             assert history[0]['id'] == solution_id
-            assert updated['latest_run']['report']['envelope_v2']['causal_verification'] == 'unverified'
+            assert updated['latest_run']['report']['assessment']['causal_verification'] == 'unverified'
             split = request('/v1/tickets/' + member + '/membership/review', {'expected_snapshot_id': updated['snapshot_id'], 'issue_id': '', 'reviewer': 'fixture-engineer', 'reason': 'Independent customer symptom needs separate scope review'})
             assert split['run_id'] != receipts[0]['run_id'], 'split retained the original task'
             print(json.dumps({'status': 'passed', 'concurrent_tickets': 100, 'initial_provider_calls': 1, 'checks': ['deduplication', 'pending_not_trusted', 'visibility', 'immutable_solution_revisions', 'reviewed_split', 'causal_status']}))

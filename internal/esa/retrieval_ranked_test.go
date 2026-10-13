@@ -6,8 +6,8 @@ import (
 	"time"
 )
 
-func TestV2RetrievalStatisticsExcludeFutureCorpus(t *testing.T) {
-	e := v2Engine(t)
+func TestSharedInvestigationsRetrievalStatisticsExcludeFutureCorpus(t *testing.T) {
+	e := sharedInvestigationEngine(t)
 	_, receipt := resolved(t, e)
 	c, err := e.ReviewCase(receipt.CaseID, Review{Action: "approve", Reviewer: "engineer"})
 	if err != nil {
@@ -15,7 +15,7 @@ func TestV2RetrievalStatisticsExcludeFutureCorpus(t *testing.T) {
 	}
 	q := fixture(e, "query")
 	cutoff := e.Now()
-	before := MatchCasesV2(q, CasesAt([]Case{c}, cutoff))
+	before := MatchCases(q, CasesAt([]Case{c}, cutoff))
 	if len(before) != 1 || before[0].Retrieval == nil {
 		t.Fatal("missing eligible retrieval trace")
 	}
@@ -25,7 +25,7 @@ func TestV2RetrievalStatisticsExcludeFutureCorpus(t *testing.T) {
 	future.UpdatedAt = future.CreatedAt
 	future.TrustedAt = future.CreatedAt
 	future.Summary = q.Description
-	after := MatchCasesV2(q, CasesAt([]Case{c, future}, cutoff))
+	after := MatchCases(q, CasesAt([]Case{c, future}, cutoff))
 	if hash(before) != hash(after) {
 		t.Fatal("future documents changed earlier ranking or corpus statistics")
 	}
@@ -33,18 +33,18 @@ func TestV2RetrievalStatisticsExcludeFutureCorpus(t *testing.T) {
 	other.ID = "other-project"
 	other.ProjectID = "2"
 	other.Summary = q.Description
-	if hash(MatchCasesV2(q, []Case{c, other})) != hash(before) {
+	if hash(MatchCases(q, []Case{c, other})) != hash(before) {
 		t.Fatal("other-project corpus changed scores")
 	}
 	unknown := c
 	unknown.ID = "unknown"
 	unknown.CreatedAt = time.Time{}
-	if hash(MatchCasesV2(q, []Case{c, unknown})) != hash(before) {
+	if hash(MatchCases(q, []Case{c, unknown})) != hash(before) {
 		t.Fatal("unknown provenance entered strict corpus")
 	}
 }
-func TestV2ReviewedCaseSupersedesPendingAndSplitPreservesInputs(t *testing.T) {
-	e := v2Engine(t)
+func TestSharedInvestigationsReviewedCaseSupersedesPendingAndSplitPreservesInputs(t *testing.T) {
+	e := sharedInvestigationEngine(t)
 	q := fixture(e, "lead")
 	receive(t, e, "lead", q)
 	receive(t, e, "member", fixture(e, "member"))

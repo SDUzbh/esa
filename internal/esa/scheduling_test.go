@@ -5,8 +5,8 @@ import (
 	"testing"
 )
 
-func TestV2ResumesNeverInvokedTaskWhenProviderAppears(t *testing.T) {
-	e := v2Engine(t)
+func TestSharedInvestigationsResumesNeverInvokedTaskWhenProviderAppears(t *testing.T) {
+	e := sharedInvestigationEngine(t)
 	receive(t, e, "ticket", fixture(e, "ticket"))
 	if _, err := e.ProcessOne(context.Background(), nil); err != nil {
 		t.Fatal(err)
@@ -23,8 +23,8 @@ func TestV2ResumesNeverInvokedTaskWhenProviderAppears(t *testing.T) {
 		t.Fatal("provider change duplicated or suppressed the queued task")
 	}
 }
-func TestV2ProjectRotationRetainsTaskOrder(t *testing.T) {
-	e := v2Engine(t)
+func TestSharedInvestigationsProjectRotationRetainsTaskOrder(t *testing.T) {
+	e := sharedInvestigationEngine(t)
 	a := fixture(e, "a")
 	a.ProjectID = "1"
 	b := fixture(e, "b")

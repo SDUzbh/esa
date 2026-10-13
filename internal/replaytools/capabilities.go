@@ -78,6 +78,11 @@ func (s *Server) extendedCall(ctx context.Context, name string, args json.RawMes
 		if decision.Status == "granted" && s.Config.ProfileHashes[request.Profile] != "" && decision.Profile.ManifestHash != s.Config.ProfileHashes[request.Profile] {
 			decision = capabilities.Decision{Status: "denied", Reason: "Profile manifest changed after the task catalog was frozen", Granted: []string{}}
 		}
+		if decision.Status == "granted" && s.Config.Container == "" && (has(decision.Granted, "runtime") || has(decision.Granted, "debugger") || has(decision.Granted, "temporary_tools")) {
+			if err := s.prepareRuntime(ctx, request.Profile); err != nil {
+				decision = capabilities.Decision{Status: "denied", Reason: "Registered environment failed: " + err.Error(), Granted: []string{}}
+			}
+		}
 		result["decision"] = decision
 		catalog := []map[string]string{}
 		ids := []string{}

@@ -12,14 +12,14 @@ This repository contains ESA code and deployment definitions. Redmine is referen
 - Read-only engineering diagnosis through a Go Codex adapter, with code evidence and advisory token warnings.
 - Optional TF-IDF + Logistic Regression label suggestions, human feedback and independent training/testing; disabled by default.
 - Independent API-based system replay with historical Git repair checks, reusable isolated runtimes and cleanup.
-- Opt-in V2 shared investigations, immutable snapshots/solution revisions, automatic capability planning, versioned Profiles and sandbox-local tools. See [V2 operations](docs/V2_OPERATIONS.md).
-- Preinstalled Profile tool images with stable-release checks and per-Profile TXT configuration. See [tool images](docs/TOOL_IMAGES.md).
+- Shared investigations, immutable snapshots/solution revisions, automatic capability planning, versioned Profiles and sandbox-local tools. See [ESA operations](docs/ESA_OPERATIONS.md).
+- A shared preinstalled tool image with stable-release checks and per-Profile TXT configuration. See [tool environment](docs/TOOL_IMAGES.md).
 
 ## Architecture
 
 Redmine owns source issues and user permissions. The Ruby ESA plugin provides the UI, imports and a durable forwarding outbox stored in PostgreSQL. The Go service polls the outbox and acknowledges events after committing them; the plugin calls its scoped HTTP APIs to display results and submit human reviews.
 
-The Go service handles diagnostic context, trusted case retrieval and asynchronous engineering analysis. V1 uses atomic JSON. Opt-in V2 adds shared issues/tasks and can use a transactional Redmine PostgreSQL adapter as its single authority. The Codex adapter resolves registered historical source per task, validates automatic Profile/capability requests and returns read-only findings for review.
+The Go service handles diagnostic context, trusted case retrieval and asynchronous engineering analysis. It uses atomic JSON by default. Matching tickets share investigations and reviewed solutions. A transactional Redmine PostgreSQL adapter can replace JSON as the single state authority. The Codex adapter resolves registered historical source per task, validates automatic Profile/capability requests and returns read-only findings for review.
 
 The optional classifier runs locally in Go and supplies label suggestions only. Human corrections are exported to the independent `esa-classifier` CLI for training and testing; an operator promotes a tested model and restarts the service. Classification does not control manual forwarding or engineering routing.
 
@@ -28,7 +28,7 @@ flowchart TD
     P["Redmine + ESA plugin"] <-->|Scoped APIs / outbox poll and ack| E["ESA Go service"]
     P --> D[("PostgreSQL: issues, outbox, optional ESA state")]
     E --> S[("Selected adapter: JSON or Redmine API")]
-    S -->|V2 state transactions| P
+    S -->|State transactions| P
     E <-->|HTTP diagnosis| A["Engineering provider / Codex adapter"]
     E -.->|Optional label suggestions| C["TF-IDF + Logistic Regression"]
     T["Independent system_replay tester"] <-->|Public API events and results| E
@@ -41,7 +41,7 @@ flowchart TD
 
 * Create or import an ordinary Redmine issue and prepare its diagnostic metadata. These actions do not submit it to ESA.
 *  An authorized user selects **Forward to ESA**. The durable outbox sends the snapshot with the human actor and forwarding time.
-*   A forwarded open issue checks applicable trusted cases from the same project. If no case applies, missing context is requested or read-only engineering analysis is queued. This decision does not depend on a category or Tracker.
+*   A forwarded open issue checks applicable trusted cases from the same project. If no case applies, missing context is requested or the ticket joins a matching investigation; otherwise one read-only engineering task is queued. This decision does not depend on a category or Tracker.
 *    An engineer reviews the diagnosis, evidence, concrete code findings, repair recommendations and verification steps. ESA does not modify product source or automatically close the Redmine issue.
 *    Forward a resolved issue to collect a case draft. Engineer approval makes it available for applicable recommendations on already forwarded tickets. Forward subsequent source changes to refresh or withdraw its evidence.
 
@@ -114,7 +114,7 @@ bin/esa-classifier retrain \
   -data runtime/classifier/human-training.jsonl \
   -feedback runtime/classifier/feedback.jsonl \
   -cutoff 2026-10-13T00:00:00Z \
-  -output runtime/classifier/candidate-v2.json
+  -output runtime/classifier/candidate-updated.json
 ```
 
 Retraining uses the newest human correction per ticket at the cutoff and fully refits TF-IDF and Logistic Regression. Keep the test population out of both base training data and feedback. Test the candidate independently, then manually configure `classifier.enabled: true` and `classifier.models` with project-specific model paths and restart ESA. Container deployments also need read-only model/config mounts and appropriate file access for the service user. A historical snapshot cannot use a model trained from reviews after its forwarding time. There is no automatic model promotion.

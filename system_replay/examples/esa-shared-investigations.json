@@ -5,15 +5,19 @@
     "start": {
       "args": [
         "python3",
-        "{{manifest_dir}}/../../scripts/esa_v2_fixture_target.py",
+        "{{manifest_dir}}/../../scripts/esa_fixture_target.py",
         "--esa-bin",
         "{{manifest_dir}}/../../bin/esa-host",
         "--store",
         "{{run_dir}}/target/state.json",
         "--rules",
-        "{{manifest_dir}}/../../config/rules.v2-replay.json",
+        "{{manifest_dir}}/../../config/rules.json",
         "--listen",
-        "127.0.0.1:18090"
+        "127.0.0.1:18090",
+        "--replay-at",
+        "2020-01-01T00:00:00Z",
+        "--replay-projects",
+        "1"
       ],
       "env": {
         "ESA_API_TOKEN": "{{token}}"
@@ -85,8 +89,8 @@
       "version": "1.0",
       "at": "2020-01-01T00:00:00Z",
       "ticket": {
-        "id": "V2-A",
-        "source_key": "V2-A",
+        "id": "SHARED-A",
+        "source_key": "SHARED-A",
         "project_id": "1",
         "subject": "Consumer empty assignment crash",
         "description": "Consumer crashes with NullPointerException during empty assignment.",
@@ -120,8 +124,8 @@
         {
           "at": "2020-01-01T00:00:01Z",
           "ticket": {
-            "id": "V2-B",
-            "source_key": "V2-B",
+            "id": "SHARED-B",
+            "source_key": "SHARED-B",
             "project_id": "1",
             "subject": "Consumer empty assignment crash",
             "description": "Consumer crashes with NullPointerException during empty assignment.",
@@ -160,8 +164,8 @@
         {
           "at": "2020-01-01T00:00:02Z",
           "ticket": {
-            "id": "V2-C",
-            "source_key": "V2-C",
+            "id": "SHARED-C",
+            "source_key": "SHARED-C",
             "project_id": "1",
             "subject": "Consumer empty assignment crash",
             "description": "Consumer crashes with NullPointerException during empty assignment.",
@@ -200,8 +204,8 @@
         {
           "at": "2020-01-01T00:00:03Z",
           "ticket": {
-            "id": "V2-D",
-            "source_key": "V2-D",
+            "id": "SHARED-D",
+            "source_key": "SHARED-D",
             "project_id": "1",
             "subject": "Consumer empty assignment crash",
             "description": "Consumer crashes with NullPointerException during empty assignment.",
@@ -266,7 +270,7 @@
               "value": 2
             },
             {
-              "path": "/raw/ticket/latest_run/report/envelope_v2/causal_verification",
+              "path": "/raw/ticket/latest_run/report/assessment/causal_verification",
               "op": "eq",
               "value": "unverified"
             }

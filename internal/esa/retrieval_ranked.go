@@ -15,7 +15,7 @@ type RetrievalTrace struct {
 	RRFScore   float64 `json:"rrf_score"`
 }
 
-func MatchCasesV2(t Ticket, cases []Case) []Match {
+func MatchCases(t Ticket, cases []Case) []Match {
 	eligible := []Case{}
 	docs := []retrieval.Document{}
 	for _, c := range cases {
@@ -44,21 +44,9 @@ func MatchCasesV2(t Ticket, cases []Case) []Match {
 		}
 	}
 	scores := retrieval.RRF(lexIDs, signalIDs)
-	byID := map[string]Case{}
-	for _, c := range eligible {
-		byID[c.ID] = c
-	}
 	for index := range matches {
 		m := &matches[index]
-		c := byID[m.CaseID]
-		m.Retrieval = &RetrievalTrace{Version: "bm25-rrf-1", CorpusHash: corpus, BM25Rank: lexRanks[c.ID], SignalRank: signalRanks[c.ID], RRFScore: scores[c.ID]}
-		// Relevance never relaxes the repair gate. A generic exception is not
-		// enough; require contextual terms and complete affected-version coverage.
-		if len(intersects(keywords(ticketText(t)), c.Keywords)) < 4 || len(c.Environment) == 0 || len(intersects(t.Versions, c.Versions)) != len(unique(t.Versions)) || len(intersects(t.Components, c.Components)) != len(unique(t.Components)) {
-			m.Applicable = false
-			m.Solution = ""
-			m.Reasons = append(m.Reasons, "V2 repair gate requires contextual evidence and complete scope coverage")
-		}
+		m.Retrieval = &RetrievalTrace{Version: "bm25-rrf-1", CorpusHash: corpus, BM25Rank: lexRanks[m.CaseID], SignalRank: signalRanks[m.CaseID], RRFScore: scores[m.CaseID]}
 	}
 	sort.Slice(matches, func(i, j int) bool {
 		if matches[i].Applicable != matches[j].Applicable {

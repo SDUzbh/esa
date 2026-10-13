@@ -36,14 +36,14 @@ func TestRegistrySelectsHistoricalSourceWithoutRuntimeSubstitution(t *testing.T)
 	}
 	git(old, "add", ".")
 	git(old, "commit", "-qm", "old")
-	git(old, "tag", "v1")
+	git(old, "tag", "release-old")
 	commit := git(old, "rev-parse", "HEAD")
 	git("2021-01-01T00:00:00Z", "commit", "--allow-empty", "-qm", "future")
-	git(old, "tag", "v2")
+	git(old, "tag", "release-new")
 	cutoff, _ := time.Parse(time.RFC3339, "2020-01-01T00:00:00Z")
 	available, _ := time.Parse(time.RFC3339, old)
 	root, _ := filepath.Abs("../../profiles")
-	r := Registry{Releases: []ReleaseRegistration{{ProjectID: "1", Version: "1", Ref: "refs/tags/v1", Repository: repo, Scope: "full", AvailableAt: available}, {ProjectID: "1", Version: "2", Ref: "refs/tags/v2", Repository: repo, Scope: "full", AvailableAt: available}}, Artifacts: filepath.Join(dir, "cache"), ProfilesRoot: root}
+	r := Registry{Releases: []ReleaseRegistration{{ProjectID: "1", Version: "1", Ref: "refs/tags/release-old", Repository: repo, Scope: "full", AvailableAt: available}, {ProjectID: "1", Version: "2", Ref: "refs/tags/release-new", Repository: repo, Scope: "full", AvailableAt: available}}, Artifacts: filepath.Join(dir, "cache"), ProfilesRoot: root}
 	in := esa.AnalyzeRequest{RunID: "run_registry", ReadOnly: true, Ticket: esa.Ticket{ID: "a", ProjectID: "1", SourceKey: "a", Versions: []string{"1"}, ForwardedAt: cutoff}, Contract: &esa.TaskContract{ReadOnly: true, ObservationCutoff: cutoff}}
 	registration, err := r.Resolve(context.Background(), in)
 	if err != nil || registration.Packet.Commit != commit {

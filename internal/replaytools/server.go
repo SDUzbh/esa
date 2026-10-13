@@ -26,6 +26,7 @@ type Document struct {
 	Lines  []string `json:"lines"`
 }
 type Config struct {
+	Runtime               *RuntimeSetup          `json:"runtime_setup,omitempty"`
 	DockerContext         string                 `json:"docker_context"`
 	Container             string                 `json:"container"`
 	Session               string                 `json:"session"`
@@ -59,8 +60,11 @@ func Load(path string) (Config, error) {
 	if err = json.Unmarshal(b, &c); err != nil {
 		return c, err
 	}
-	if c.Container == "" && !(c.ProfilesRoot != "" && len(c.AvailableCapabilities) == 1 && c.AvailableCapabilities[0] == "source") || c.Session == "" || c.Commit == "" || len(c.Files) == 0 || !filepath.IsAbs(c.SourceDir) || !filepath.IsAbs(c.AuditPath) {
+	if c.Container == "" && c.Runtime == nil && !(c.ProfilesRoot != "" && len(c.AvailableCapabilities) == 1 && c.AvailableCapabilities[0] == "source") || c.Session == "" || c.Commit == "" || len(c.Files) == 0 || !filepath.IsAbs(c.SourceDir) || !filepath.IsAbs(c.AuditPath) {
 		return c, errors.New("invalid replay tool registration")
+	}
+	if c.Runtime != nil && (!filepath.IsAbs(c.Runtime.Script) || !filepath.IsAbs(c.Runtime.Evidence) || !filepath.IsAbs(c.Runtime.Directory)) {
+		return c, errors.New("runtime setup must use operator-owned absolute paths")
 	}
 	return c, nil
 }
@@ -96,6 +100,13 @@ func ReadAudit(path string) ([]Document, []esa.EnvironmentRequest, error) {
 type Server struct {
 	Config  Config
 	granted []string
+	cleanup func() error
+}
+
+type RuntimeSetup struct {
+	Script    string `json:"script"`
+	Evidence  string `json:"evidence"`
+	Directory string `json:"directory"`
 }
 
 func (s *Server) docker(ctx context.Context, args ...string) ([]byte, error) {
@@ -297,7 +308,12 @@ func tools(extended bool) []map[string]any {
 }
 
 // Serve uses MCP's newline-delimited stdio transport. Diagnostics never go to stdout.
-func (s *Server) Serve(ctx context.Context, in io.Reader, out io.Writer) error {
+func (s *Server) Serve(ctx context.Context, in io.Reader, out io.Writer) (resultErr error) {
+	defer func() {
+		if s.cleanup != nil {
+			resultErr = errors.Join(resultErr, s.cleanup())
+		}
+	}()
 	scanner := bufio.NewScanner(in)
 	scanner.Buffer(make([]byte, 4096), 1<<20)
 	encoder := json.NewEncoder(out)

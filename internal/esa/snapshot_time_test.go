@@ -5,8 +5,8 @@ import (
 	"time"
 )
 
-func TestV2OutboxRecordingAfterForwardingDoesNotLookLikeFutureSource(t *testing.T) {
-	e := v2Engine(t)
+func TestSharedInvestigationsOutboxRecordingAfterForwardingDoesNotLookLikeFutureSource(t *testing.T) {
+	e := sharedInvestigationEngine(t)
 	ticket := fixture(e, "outbox")
 	_, err := e.Receive(Event{ID: "outbox", Origin: "manual_forward", ForwardedBy: "human", ForwardedAt: e.Now(), OccurredAt: e.Now().Add(time.Millisecond), Ticket: ticket})
 	if err != nil {

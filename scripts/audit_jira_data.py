@@ -9,6 +9,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlencode
 
+from jira_dataset import issue_files
+
 ROOT = Path(__file__).resolve().parents[1]
 BASE = "https://issues.apache.org/jira"
 
@@ -50,7 +52,7 @@ def request_config(out, requests, name):
 def snapshot(out):
     out.mkdir(parents=True, exist_ok=False)
     entries = []
-    for path in sorted((ROOT / "data/jira/raw").glob("KAFKA-*.json"), key=lambda p: numeric(p.stem)):
+    for path in sorted(issue_files(ROOT / "data/jira/raw"), key=lambda p: numeric(p.stem)):
         content = path.read_bytes()
         try:
             value, error = json.loads(content), None
@@ -212,7 +214,7 @@ def compare(out):
     expected = set(frozen["index"]["keys"])
     actual = {e["key"] for e in frozen["entries"]}
     source_set = set(source_keys)
-    summary = {"captured_at_utc": frozen["captured_at_utc"], "comparison_finished_at_utc": datetime.now(timezone.utc).isoformat(), "local_files": len(actual), "local_index_count": len(frozen["index"]["keys"]), "duplicate_local_index_keys": len(frozen["index"]["keys"]) - len(expected), "source_reported_totals": sorted({p["total"] for p in index_pages}), "source_keys_fetched": len(source_keys), "source_unique_keys": len(source_set), "duplicate_source_keys": len(source_keys) - len(source_set), "source_index_complete": len(source_keys) == len(source_set) == index_pages[0]["total"] and len({p["total"] for p in index_pages}) == 1, "index_missing_from_local": sorted(source_set - expected, key=numeric), "index_local_not_in_source": sorted(expected - source_set, key=numeric), "undownloaded_keys_count": len(expected - actual), "undownloaded_keys": sorted(expected - actual, key=numeric), "local_files_not_in_index": sorted(actual - expected, key=numeric), "checks": dict(checks), "local_problems": local_problems, "difference_count": len(differences), "difference_types": dict(collections.Counter(d["type"] for d in differences)), "difference_fields": dict(collections.Counter(d.get("field") for d in differences if d.get("field"))), "remote_incomplete_keys": remote_incomplete, "download_report": frozen["download_report"], "current_raw_file_count": len(list((ROOT / "data/jira/raw").glob("KAFKA-*.json")))}
+    summary = {"captured_at_utc": frozen["captured_at_utc"], "comparison_finished_at_utc": datetime.now(timezone.utc).isoformat(), "local_files": len(actual), "local_index_count": len(frozen["index"]["keys"]), "duplicate_local_index_keys": len(frozen["index"]["keys"]) - len(expected), "source_reported_totals": sorted({p["total"] for p in index_pages}), "source_keys_fetched": len(source_keys), "source_unique_keys": len(source_set), "duplicate_source_keys": len(source_keys) - len(source_set), "source_index_complete": len(source_keys) == len(source_set) == index_pages[0]["total"] and len({p["total"] for p in index_pages}) == 1, "index_missing_from_local": sorted(source_set - expected, key=numeric), "index_local_not_in_source": sorted(expected - source_set, key=numeric), "undownloaded_keys_count": len(expected - actual), "undownloaded_keys": sorted(expected - actual, key=numeric), "local_files_not_in_index": sorted(actual - expected, key=numeric), "checks": dict(checks), "local_problems": local_problems, "difference_count": len(differences), "difference_types": dict(collections.Counter(d["type"] for d in differences)), "difference_fields": dict(collections.Counter(d.get("field") for d in differences if d.get("field"))), "remote_incomplete_keys": remote_incomplete, "download_report": frozen["download_report"], "current_raw_file_count": len(list(issue_files(ROOT / "data/jira/raw")))}
     summary["difference_classifications"] = dict(collections.Counter(d.get("classification", "content_difference") for d in differences))
     write(out / "audit_results.json", summary)
     write(out / "differences.json", differences)

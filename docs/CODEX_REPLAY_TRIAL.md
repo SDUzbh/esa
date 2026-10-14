@@ -36,7 +36,7 @@ GOCACHE="$PWD/.tools/go-cache" GOTOOLCHAIN=local .tools/go/bin/go build -o bin/e
 Prepare a **new**, nonexisting bundle directory. This historical fixture uses `.esa/replays/KAFKA-2880/trial-1`.
 
 ```sh
-bin/esa-replay -raw data/jira/raw/KAFKA-2880.json -repo kafka -ref 0.9.0.0 \
+bin/esa-replay -raw data/jira/raw/2015/11/24/KAFKA-2880.json -repo kafka -ref 0.9.0.0 \
   -at 2015-11-24T00:13:27.387Z -out .esa/replays/KAFKA-2880/trial-1 \
   -environment '{"reported_scenario":"Kafka Connect distributed startup with no broker running, as stated in the issue description"}'
 docker --context colima-redmine pull eclipse-temurin:8-jdk

@@ -99,6 +99,39 @@ python3 scripts/analyze_ticket.py examples/agent-ticket.json \
 
 Start the registered provider first. The script defaults to an isolated real ESA service and stops it on exit; `--esa-url` targets an existing service configured for that provider. Routing determines whether engineering is needed. Event logs and results stay in the new output directory. See [ticket runner and weighted token alerts](docs/ESA_OPERATIONS.md#ticket-runner-and-runtime-logs). Cached input counts at 0.1 for advisory alerts; uncached input/output count at 1.
 
+## Jira dataset layout
+
+Preserved Jira exports live under `data/jira/raw/YYYY/MM/DD/KEY.json`, grouped by the original `issue.fields.created` timestamp converted to UTC. For example: `data/jira/raw/2015/11/24/KAFKA-2880.json`. Dates describe ticket creation, not download time or historical snapshot completeness.
+
+Preview or apply the layout (Python 3.9+, macOS/Linux):
+
+```sh
+python3 scripts/organize_jira_data.py
+python3 scripts/organize_jira_data.py --apply
+```
+
+An optional positional argument selects another dataset root containing `raw/`. The script validates the full batch, preserves JSON bytes and modification times, records original/new paths and SHA-256 in `index/created-layout-*.json`, then verifies every relocated file. Invalid dates, duplicate keys and existing destinations fail without overwriting exports. Interrupted moves retain their manifest; rerunning continues from the files' current locations. Repeated runs on an organized dataset move nothing. The downloader uses the same dated layout for new files and skips existing keys recursively; auditing supports both flat and dated layouts. A shared writer lock prevents these updated tools from downloading and relocating simultaneously. Stop older downloader processes before migration.
+
+Organization preserves the original `index/issue_keys.json` and `index/download_report.json`. Local data and migration manifests remain ignored by Git.
+
+The downloader lives in `scripts/`. Normal mode resumes missing downloads; incremental mode also refreshes changed exports:
+
+```sh
+python3 scripts/kafka_jira_downloader.py --jql 'project = KAFKA ORDER BY created ASC' --limit 0
+python3 scripts/kafka_jira_downloader.py --incremental
+python3 scripts/kafka_jira_downloader.py --incremental --keys KAFKA-2880 KAFKA-3252
+```
+
+An incremental search scans lightweight issue keys and `fields.updated` using Jira's [field-filtered search API](https://developer.atlassian.com/server/jira/platform/rest/v10003/api-group-search/), downloading full issue details, comments and changelog only for missing, newer or locally incomplete exports. Explicit keys use a lightweight issue-header request instead of a project search. Timestamps are compared as UTC instants. It uses no high-water mark, so a failed download remains eligible on the next pass. Missing remote timestamps trigger a conservative full fetch. Changes that Jira does not reflect in `updated` cannot be detected by timestamp comparison.
+
+By default, the saved dataset JQL is reused (this archive uses all Kafka issue types); a new dataset defaults to Kafka bugs. `--jql` overrides the current run's query without replacing an existing corpus scope. `--incremental` inspects all matches unless limited with `--limit`; normal mode defaults to 20. `--output` selects another dataset root. A limited run or explicit-key retry preserves the full known-key index. The default page size is 100, with server-returned page lengths respected. Requests remain sequential with delay/retry/backoff.
+
+Before replacing an existing export, its exact bytes are saved under `history/KEY/SHA256.json`; `raw/` remains the latest copy in the creation-date layout. Complete histories are not replaced by incomplete responses, and older responses or changed creation dates are rejected. Writes are atomic. Remote deletions are not mirrored. `index/download_report.json` records the latest run's downloaded/updated/skipped counts, failures and archive paths. The script does not forward tickets to ESA. Tests use local fixtures and make no Jira calls:
+
+```sh
+python3 -B -m unittest discover -s scripts -p 'test_jira*.py' -v
+```
+
 ## Optional classifier
 
 `config/rules.json` ships with `classifier.enabled: false`. When enabled for a project, a user with **Submit ESA** can request **Suggest labels** on a forwarded ticket; a user with **Review ESA** confirms or corrects the complete label set. Opening the page and forwarding a ticket do not automatically run the classifier.
@@ -180,4 +213,4 @@ This is a working development foundation with one focused historical replay tria
 
 State is stored as an atomic JSON snapshot with a single-writer process lock. It preserves immutable events, run inputs, case revisions, classifier predictions and human feedback; it is intended for this local prototype. The plugin limits access to 2,000 visible ESA issues per request. Move state to a transactional database and implement scalable authorization before importing the full Jira archive. Source edits, reopening and resolution do not automatically reach ESA; manually forward updated visible snapshots. The plugin excludes current private issues from forwarding. Privacy changes affecting previously forwarded snapshots, cross-project moves, deletions and retroactive ingestion need a dedicated reconciliation mechanism. Backend snapshots marked private are excluded from shared analysis, case recommendations and classifier operations.
 
-Original `data/` and `kafka/` remain untouched. Old audit reports retain their original language.
+Original Jira export revisions are retained: organization preserves bytes, and incremental updates archive the previous revision. The `kafka/` checkout remains untouched. Old audit reports retain their original language and paths.

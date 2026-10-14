@@ -14,7 +14,7 @@ python3 scripts/replay_pipeline.py --pipeline --manifest system_replay/examples/
 python3 scripts/replay_pipeline.py --pipeline --manifest system_replay/examples/esa-api-forwarding.json --output reports/new-forwarding-run
 ```
 
-Use a new output directory for every invocation. The lifecycle example needs the host target artifact. The Kafka example also needs the ignored external `kafka/` checkout, `data/jira/raw/KAFKA-2880.json`, Docker and verified client dependencies. Manifests resolve paths relative to their own directory. The bundled Docker context defaults to `colima-redmine`; configure the runtime command for another context or verified cache.
+Use a new output directory for every invocation. The lifecycle example needs the host target artifact. The Kafka example also needs the ignored external `kafka/` checkout, `data/jira/raw/2015/11/24/KAFKA-2880.json`, Docker and verified client dependencies. Manifests resolve paths relative to their own directory. The bundled Docker context defaults to `colima-redmine`; configure the runtime command for another context or verified cache.
 
 The Python compatibility wrapper builds only the tester if its binary is absent or `--build-tools` is given, then replaces itself with the executable. It does not build the target or call an engineering provider. After tester source changes, use `--build-tools` or rebuild explicitly to avoid running an older binary.
 

@@ -9,6 +9,8 @@ from pathlib import Path
 import re
 import subprocess
 
+from jira_dataset import issue_files
+
 ROOT = Path(__file__).resolve().parents[1]
 VERSION = re.compile(r'(?<![\w.])\d+\.\d+(?:\.\d+){0,2}(?:-(?:SNAPSHOT|beta\d*|rc\d*|cp))?(?![\w.])', re.I)
 VERSION_FIELDS = {'version', 'versions', 'affected version', 'affects version/s', 'affected versions'}
@@ -96,7 +98,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--out', default='reports/ticket-version-audit.json')
     args = parser.parse_args()
-    files = sorted((ROOT / 'data/jira/raw').glob('*.json'))
+    files = sorted(issue_files(ROOT / 'data/jira/raw'))
     git_tags = tags(ROOT / 'kafka')
     rows = []; problems = []
     for path in files:

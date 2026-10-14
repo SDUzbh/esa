@@ -95,7 +95,7 @@
   "jobs": [
     {
       "id": "KAFKA-2880",
-      "raw": "../../data/jira/raw/KAFKA-2880.json",
+      "raw": "../../data/jira/raw/2015/11/24/KAFKA-2880.json",
       "environment": {
         "details": "Explicit replay profile: Java 8 client, simulated disconnected response"
       },

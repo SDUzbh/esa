@@ -20,6 +20,7 @@
 <% routing = run.dig('report', 'routing') %>
 <% if routing %><p><strong>Routing decision:</strong> <%= esa_label(routing['action']) %> · <%= routing['reason'] %></p>
 <% if routing['action'] == 'reuse' %><p>Existing solution reused. The engineering Agent was not invoked.</p><% end %>
+<% if routing['action'] == 'return_to_support' %><p>This request belongs in the normal customer support process. The engineering Agent was not invoked.</p><% end %>
 <% assignment = run.dig('report', 'assignment_routing') %>
 <p><strong>Initial routing calls:</strong> <%= routing.dig('usage', 'calls') || 0 %> · <strong>Assignment routing calls:</strong> <%= assignment&.dig('usage', 'calls') || 0 %> · <strong>Engineering calls:</strong> <%= [run.dig('report', 'usage', 'calls').to_i - routing.dig('usage', 'calls').to_i - assignment&.dig('usage', 'calls').to_i, 0].max %></p><% end %>
 <% if run.dig('report', 'issue_request') %><p><strong>Engineering grouping request:</strong> <%= run.dig('report', 'issue_request', 'title') %> · <%= run.dig('report', 'issue_request', 'reason') %></p><% end %>

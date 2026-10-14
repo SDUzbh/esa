@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"crypto/subtle"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -248,37 +247,7 @@ func run() error {
 		}
 		return json.NewEncoder(os.Stdout).Encode(report)
 	}
-	mux := http.NewServeMux()
-	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok", "provider": "codex_cli", "registered_source": packet.Ticket.SourceKey, "model": *model})
-	})
-	mux.HandleFunc("POST /analyze", func(w http.ResponseWriter, r *http.Request) {
-		provided := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
-		if subtle.ConstantTimeCompare([]byte(provided), []byte(token)) != 1 {
-			http.Error(w, "Authentication required", 401)
-			return
-		}
-		r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
-		d := json.NewDecoder(r.Body)
-		d.DisallowUnknownFields()
-		var in esa.AnalyzeRequest
-		if err := d.Decode(&in); err != nil {
-			http.Error(w, "Invalid provider input", 400)
-			return
-		}
-		report, err := provider.Analyze(r.Context(), in)
-		if err != nil {
-			slog.Warn("Codex diagnosis failed", "run_id", in.RunID, "error", err)
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(422)
-			_ = json.NewEncoder(w).Encode(map[string]any{"error": err.Error(), "report": report})
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(report)
-	})
-	server := &http.Server{Addr: *listen, Handler: mux, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 16 * time.Minute, BaseContext: func(_ net.Listener) context.Context { return ctx }}
+	server := &http.Server{Addr: *listen, Handler: provider.Handler(token), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 16 * time.Minute, BaseContext: func(_ net.Listener) context.Context { return ctx }}
 	shutdownDone := make(chan struct{})
 	go func() {
 		defer close(shutdownDone)

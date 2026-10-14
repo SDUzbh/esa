@@ -13,6 +13,21 @@ import (
 	"esa/internal/esa"
 )
 
+func TestNativePipelineReturnsNonEngineeringRequestWithoutSourceOrEngineer(t *testing.T) {
+	p, in, sourceCalls := routingFixture(t, "return_to_support")
+	in.Stage = "route"
+	report, err := p.Analyze(context.Background(), in)
+	if err != nil || report.Routing == nil || report.Routing.Action != "return_to_support" || report.Usage.Calls != 1 || *sourceCalls != 0 || report.Issue != nil || len(report.Findings) != 0 || len(report.Recommendations) != 1 {
+		t.Fatal("non-engineering request entered engineering or lost advice", report, err, *sourceCalls)
+	}
+	if _, err := os.Stat(filepath.Join(p.RunsDir, in.RunID, "engineering")); !os.IsNotExist(err) {
+		t.Fatal("customer support prepared an engineering environment", err)
+	}
+	if _, err := os.Stat(filepath.Join(p.RunsDir, in.RunID, "routing", "tools.jsonl")); !os.IsNotExist(err) {
+		t.Fatal("ordinary customer support required unnecessary Issue retrieval", err)
+	}
+}
+
 func TestNativePipelineRoutesAndProcessesGroupingRequest(t *testing.T) {
 	for _, decision := range []string{"new", "assign_existing", "assignment_info", "assignment_unread", "assignment_no_request"} {
 		t.Run(decision, func(t *testing.T) {

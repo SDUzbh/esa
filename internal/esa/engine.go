@@ -30,7 +30,7 @@ type Engine struct {
 }
 
 func NewEngine(store *Store, config Config) (*Engine, error) {
-	if config.Version == "" || config.Budget.MaxCalls < 0 || config.Budget.MaxCalls > 1 || config.Budget.TimeoutSeconds < 1 || config.Budget.MaxInputTokens < 1 || config.Budget.MaxOutputTokens < 1 {
+	if config.Version == "" || config.Budget.MaxCalls < 0 || config.Budget.MaxCalls > 1 || config.Budget.TimeoutSeconds < 1 || config.Budget.MaxInputTokens < 1 || config.Budget.MaxOutputTokens < 1 || !config.Budget.validWeights() {
 		return nil, fmt.Errorf("%w: invalid workflow configuration or budget", ErrInvalid)
 	}
 	e := &Engine{Store: store, Config: config, Now: func() time.Time { return time.Now().UTC() }, classifiers: map[string]*classifier.Model{}}

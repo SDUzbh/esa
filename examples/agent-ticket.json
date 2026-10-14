@@ -1,0 +1,17 @@
+{
+  "id": "cli-example-1",
+  "source_key": "CLI-EXAMPLE-1",
+  "project_id": "1",
+  "subject": "Request an invoice copy",
+  "description": "Please explain how to obtain a copy of my invoice. No software malfunction is reported.",
+  "tracker": "Support",
+  "status": "New",
+  "source": "operator_cli",
+  "components": [],
+  "versions": [],
+  "environment": {},
+  "error_codes": [],
+  "comments": [],
+  "closed": false,
+  "private": false
+}

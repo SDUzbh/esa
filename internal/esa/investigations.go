@@ -113,7 +113,7 @@ func availableTask(s State, task Investigation, cutoff time.Time) bool {
 		return false
 	}
 	switch task.State {
-	case "queued", "running", "investigating", "awaiting_configuration", "failed", "awaiting_information", "rejected":
+	case "queued", "running", "investigating", "awaiting_configuration", "failed", "awaiting_information", "returned_to_support", "rejected":
 		return true
 	case "agent_proposed", "trusted", "reuse_proposed", "applied":
 		solution, ok := taskSolution(s, task)

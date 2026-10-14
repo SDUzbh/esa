@@ -520,3 +520,34 @@ func TestPipelineAssignmentCannotRewriteEngineeringFindings(t *testing.T) {
 		t.Fatal("assignment rewrote the diagnosis or lost spend")
 	}
 }
+
+func TestPipelineReturnToSupportCreatesNoIssueAndIsIdempotent(t *testing.T) {
+	e := testEngine(t)
+	ticket := fixture(e, "invoice")
+	ticket.Tracker, ticket.Subject = "Support", "Invoice copy request"
+	receipt := receive(t, e, "invoice", ticket)
+	calls := 0
+	provider := pipelineFunc(func(ctx context.Context, in AnalyzeRequest, stage string) (Report, error) {
+		calls++
+		if stage != "route" {
+			t.Fatal("customer support reached engineering", stage)
+		}
+		r := intakeReport("return_to_support")
+		r.Recommendations = []string{"Contact Billing for the invoice download process"}
+		return r, nil
+	})
+	if _, err := e.ProcessOne(context.Background(), provider); err != nil {
+		t.Fatal(err)
+	}
+	s := e.Store.Snapshot()
+	run := s.Runs[receipt.RunID]
+	if run.State != "returned_to_support" || run.Route != "customer_support" || len(s.Issues) != 0 || len(s.Solutions) != 0 || calls != 1 || len(run.Report.Recommendations) != 1 {
+		t.Fatal("incorrect customer support outcome", run)
+	}
+	if again := receive(t, e, "invoice-again", ticket); again.RunID != receipt.RunID {
+		t.Fatal("identical forwarding restarted returned support work", again)
+	}
+	if worked, err := e.ProcessOne(context.Background(), provider); worked || err != nil || calls != 1 {
+		t.Fatal("customer support consumed another call", worked, err, calls)
+	}
+}

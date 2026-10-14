@@ -51,6 +51,7 @@ services:
 
   esa:
     image: esa-local:0.1.0
+    user: "${ESA_UID:-1000}:${ESA_GID:-1000}"
     build:
       context: ../..
       dockerfile: deploy/esa/Dockerfile

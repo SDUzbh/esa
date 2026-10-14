@@ -95,11 +95,30 @@ type ClassifierFeedback struct {
 }
 
 type Budget struct {
-	MaxCalls        int `json:"max_calls"`
-	MaxInputTokens  int `json:"max_input_tokens"`
-	MaxOutputTokens int `json:"max_output_tokens"`
-	TimeoutSeconds  int `json:"timeout_seconds"`
-	WarnTotalTokens int `json:"warn_total_tokens,omitempty"`
+	MaxCalls        int           `json:"max_calls"`
+	MaxInputTokens  int           `json:"max_input_tokens"`
+	MaxOutputTokens int           `json:"max_output_tokens"`
+	TimeoutSeconds  int           `json:"timeout_seconds"`
+	WarnTotalTokens int           `json:"warn_total_tokens,omitempty"`
+	TokenWeights    *TokenWeights `json:"token_weights,omitempty"`
+}
+
+// Weights express advisory credit-equivalent units, not a provider price quote.
+// Cached input is a subset of input; reasoning is already included in output.
+type TokenWeights struct {
+	Input       float64 `json:"input"`
+	CachedInput float64 `json:"cached_input"`
+	Output      float64 `json:"output"`
+}
+
+func (w *TokenWeights) UnmarshalJSON(data []byte) error {
+	type weights TokenWeights
+	value := weights{Input: 1, CachedInput: 0.1, Output: 1}
+	if err := json.Unmarshal(data, &value); err != nil {
+		return err
+	}
+	*w = TokenWeights(value)
+	return nil
 }
 
 type Case struct {
@@ -127,10 +146,11 @@ type Case struct {
 }
 
 type Usage struct {
-	Calls          int  `json:"calls"`
-	InputTokens    int  `json:"input_tokens"`
-	OutputTokens   int  `json:"output_tokens"`
-	TokensReported bool `json:"tokens_reported"`
+	Calls             int  `json:"calls"`
+	InputTokens       int  `json:"input_tokens"`
+	CachedInputTokens int  `json:"cached_input_tokens,omitempty"`
+	OutputTokens      int  `json:"output_tokens"`
+	TokensReported    bool `json:"tokens_reported"`
 }
 
 type Evidence struct {

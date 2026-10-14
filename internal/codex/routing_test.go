@@ -50,9 +50,12 @@ func TestRoutingCLIHelper(t *testing.T) {
 			kind = "investigating"
 		}
 		args, _ := json.Marshal(map[string]any{"query": "", "kind": kind, "limit": 20})
-		result, err := server.Call(context.Background(), "issue_search", args)
-		if err != nil {
-			panic(err)
+		var result map[string]any
+		if decision != "return_to_support" {
+			result, err = server.Call(context.Background(), "issue_search", args)
+			if err != nil {
+				panic(err)
+			}
 		}
 		packet, _ := json.Marshal(result)
 		var found struct {
@@ -75,6 +78,9 @@ func TestRoutingCLIHelper(t *testing.T) {
 			if decision == "invent" {
 				routing["record_path"] = "engineer_resolved/invented/issue.json"
 			}
+		} else if decision == "return_to_support" {
+			routing["action"] = "return_to_support"
+			routing["reason"] = "No software defect is reported. Ask Billing for the invoice download process."
 		} else if decision == "request_information" {
 			routing["action"] = "request_information"
 			routing["reason"] = "Provide the affected release"
@@ -142,7 +148,7 @@ func TestRoutingCLIHelper(t *testing.T) {
 			panic(err)
 		}
 	}
-	fmt.Println(`{"type":"turn.completed","usage":{"input_tokens":12,"output_tokens":8}}`)
+	fmt.Println(`{"type":"turn.completed","usage":{"input_tokens":12,"cached_input_tokens":8,"output_tokens":8}}`)
 	os.Exit(0)
 }
 

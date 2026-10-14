@@ -6,8 +6,10 @@ ESA keeps its database/JSON store as the authority. The local Issue directory is
 
 ```mermaid
 flowchart LR
-    A["Manually forwarded ticket"] --> B["Routing Agent: search/read local Issues"]
-    B --> C{"Existing solution applies?"}
+    A["Manually forwarded ticket"] --> B["Routing Agent: judge ticket"]
+    B --> R{"Engineering request?"}
+    R -->|"No"| S["Return to customer support; skip engineering"]
+    R -->|"Yes: retrieve local Issues on demand"| C{"Existing solution applies?"}
     C -->|"Agent analyzed / engineer resolved"| D["Return stored solution; skip engineering Agent"]
     C -->|"Matching investigation"| Q["Join existing investigating task"]
     C -->|"No"| W["Persist investigating claim / wait for capacity"]
@@ -36,6 +38,8 @@ Initial routing is serialized per project until its outcome or in-progress claim
 `investigating` is coordination metadata, not a third kind of solution. It contains only the earlier original ticket, scope and investigation identity, with no partial findings or repair. After an exact audited read, Routing Agent can return `join` with its path/hash and a concrete symptom match. ESA atomically rechecks project, exact component/version/environment scope, reviewed membership, source visibility, current ownership and live lease before joining. The new routing run retains its own usage/audit; members follow one shared investigation and receive its final Issue assignment. No Issue is created at intake. A generic exception alone is insufficient to establish common cause.
 
 A queued ticket can outlast an investigation that was active when it arrived. If the registered pipeline claim has completed beyond the ticket's frozen cutoff, the directory still exposes only its original input as `investigating` coordination metadata. It exposes no later diagnosis, Issue title, findings or solution; a `join` decision shares the investigation and current result visibility rules still apply. Later knowledge is never presented as time-eligible repair evidence. Claim metadata does not advance the historical availability of a repair. Completed knowledge available within the cutoff continues through `agent_analyzed`/`engineer_resolved` instead.
+
+For non-engineering requests accidentally forwarded by support, Routing Agent returns `return_to_support` with customer-service next steps. ESA records `returned_to_support` / `customer_support`, invokes no engineering Agent, and creates no Issue or solution. This decision belongs to Routing Agent; there is no keyword admission classifier.
 
 Exact input duplicates already share a task before model invocation. Differently worded duplicates depend on Routing Agent's applicability judgment; concurrency control cannot prove semantic equivalence or prevent a model from missing a match. Joining fails closed if the target fails/expires or its source changes during routing; it does not launch a replacement engineer automatically.
 
@@ -73,9 +77,13 @@ Use the normal private tokens and provider URL from [ESA operations](ESA_OPERATI
 
 Compose binds `ESA_ISSUES_DIRECTORY` (default `../../runtime/esa/issues`, relative to `deploy/redmine`) into ESA at `/var/lib/esa/issues`. Pre-create the host directory and ensure the container service user (UID 1000) can write it and the provider user can read it. Start the host provider with `-issues-directory` pointing to that host folder. A separately containerized provider should mount it read-only and use its own mount path. The named ESA state volume remains separate from this generated projection, including when PostgreSQL is the authority.
 
+For a host provider, set `ESA_UID` and `ESA_GID` in the private Compose `.env` to the host account's `id -u` and `id -g`; defaults remain 1000:1000. The state volume and shared directory must belong to this identity before starting ESA. If changing an existing deployment, stop its writer and adjust only those storage owners; do not delete its volumes. Matching ownership also lets the host provider read the private files ESA creates.
+
+Colima must actually share the host directory. A profile started without host mounts can create an unrelated VM-local directory at the same path. Pre-create the host directory, stop the local stack and VM, then restart the dedicated profile with `colima start --profile redmine --mount /absolute/project/runtime/esa/issues:w` before starting Compose. Check `colima ssh --profile redmine -- findmnt -T /absolute/project/runtime/esa/issues`: a shared filesystem, rather than the VM root filesystem, must cover the path. There is no need to share the entire home directory. Permission or missing-view failures happen before model invocation and require explicit forwarding after the deployment is repaired.
+
 ## Calls, usage and validation
 
-`report.routing` records the decision, selected path/hash, reason and routing usage. `report.usage` aggregates actual routing and engineering calls/tokens. Reuse, join or initial clarification uses one routing call and zero engineering calls; supported new analysis normally uses three calls in total: initial routing, engineering, then assignment routing. An engineering result without supported findings stops after two calls and creates no Issue. `budget.max_calls: 1` is the per-stage invocation limit, not a claim that the complete workflow always costs one model call. The existing overall timeout and advisory per-ticket token thresholds still apply. Missing usage for any invoked stage makes the aggregate unknown.
+`report.routing` records the decision, selected path/hash, reason and routing usage. `report.usage` aggregates actual routing and engineering calls/tokens. Reuse, join, return to customer support or initial clarification uses one routing call and zero engineering calls; supported new analysis normally uses three calls in total: initial routing, engineering, then assignment routing. An engineering result without supported findings stops after two calls and creates no Issue. `budget.max_calls: 1` is the per-stage invocation limit, not a claim that the complete workflow always costs one model call. The existing overall timeout and advisory per-ticket token thresholds still apply. Missing usage for any invoked stage makes the aggregate unknown.
 
 Engineering receives only the original ticket, its restricted diagnostic Task Contract, frozen source and approved runtime tools. Its strict output contains `findings`, `limitations` and an `issue_request` with a suggested title and reason. It cannot emit `issue`/`existing_id`, search the catalogue, choose membership, review knowledge or close tickets.
 

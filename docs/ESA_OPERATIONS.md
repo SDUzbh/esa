@@ -62,6 +62,41 @@ Configure the matching provider URL/token on ESA. In Compose, use a reachable pr
 
 The provider resolves a task-local packet and caches source by project, commit, scope and policy. The model sees no `.git` history. Reads/searches verify source hashes. Source-only registrations deny runtime work; an optional `packet_path` can supply a registered runtime only when commit, cutoff and diagnostic fingerprint match. The managed helper currently supports the Kafka metadata-disconnect fixture, not a universal installer.
 
+## Ticket runner and runtime logs
+
+Build host binaries with `scripts/build_esa.sh` and start the registry-based provider above. Then explicitly forward a ticket from a file:
+
+```sh
+python3 scripts/analyze_ticket.py examples/agent-ticket.json \
+  --routing-provider http://127.0.0.1:8091 \
+  --issues-directory runtime/esa/issues --output runtime/ticket-example
+```
+
+The positional argument accepts an ESA Ticket JSON object or an Event JSON containing `ticket`. Supply nonempty string `id`, `project_id` and `subject`, plus the original description, versions, components, environment and comments. Original source dates are preserved; missing creation/update dates use the explicit intake time. `examples/agent-ticket.json` is a support-only fixture; replace its content/project/version to exercise a registered engineering scenario. Raw Jira exports require conversion to this Ticket contract.
+
+`--routing-provider` selects the provider base URL. Its Routing Agent decides reuse, join, clarification, customer support or engineering; this is not an engineering bypass or keyword classifier. The default starts `bin/esa-host` with a fresh private state, the configured rules and the normal service/worker pipeline. It shares only the generated Issue projection root with the provider, which must use the same root. This isolated state starts with no prior Issues. It disables Redmine synchronization and stops the local service on normal exit, interruption or failure; managed engineering environments retain their existing cleanup policy. It retains the private state/results/logs for inspection. An abrupt OS kill cannot run process cleanup.
+
+To use existing Issues and the existing service's worker coordination, append `--esa-url http://127.0.0.1:8090`. That service must already use the selected provider, have a host-accessible API and use the same service credential. The script forwards through its authenticated `/v1/events` API and polls `/v1/tickets/{id}`; it does not change an existing service's provider configuration or stop that service. Project scope comes from the ticket. `--forwarded-by` defaults to the invoking OS user prefixed with `cli:`. The token is read from `ESA_API_TOKEN` or `--token-env-file` (default `deploy/redmine/.env`); it is never put in arguments or logs. The output directory must be new and is private. There is no automatic retry of analysis or forced reanalysis of a cached ticket.
+
+The provider exposes operator-only `GET /runs/{id}/logs?stage=route|engineer|assign&offset=0`, authenticated with its service token. Pages contain the original Codex CLI JSON event payloads, `available`, `next_offset` (bytes in the source log) and `has_more`. Each page contains at most 200 complete events and is size bounded. Partial trailing events are retried from the same cursor. Missing/uninvoked stages return `available: false` with no events. The endpoint confines paths to the provider's run directory, including symlinks. These private logs are not exposed through the Redmine browser API.
+
+The script streams event/tool summaries to the terminal and saves each stage under `logs/<run_id>/routing.events.jsonl`, `engineering.events.jsonl` and `assignment.events.jsonl`. Events include model messages, tool arguments/results, errors and completion usage when emitted by the CLI. There is no synthesized reasoning trace. A support return or Issue reuse has no engineering log. Joined investigations retain separate run directories. `event.json`, `receipt.json`, `result.json` and `logs.json` preserve the submitted snapshot, receipt, final/latest API result and log cursors. Logs are also downloaded on failed analysis; failures return nonzero. The default client wait is 1,200 seconds, independently configurable through `--wait-seconds`; token warnings never stop analysis.
+
+### Weighted token alerts
+
+`budget.token_weights` defaults to `{"input":1,"cached_input":0.1,"output":1}`. Omitted fields inherit these defaults; weights must be finite and nonnegative, and explicit zero is allowed. The calculation is:
+
+```text
+weighted_input = (input_tokens - cached_input_tokens) * input_weight
+                 + cached_input_tokens * cached_input_weight
+weighted_output = output_tokens * output_weight
+weighted_total = weighted_input + weighted_output
+```
+
+The existing thresholds (`max_input_tokens: 16000`, `max_output_tokens: 6000`, `warn_total_tokens: 22000`) now compare weighted units. These are advisory credit-equivalent estimates, not actual billed credits. Raw counts remain unchanged; cache hits are parsed from reported CLI usage and summed across routing, engineering and assignment. Cached input is not added twice. Reasoning output is already included in output and is not counted again. Older providers without cache statistics receive no discount; unknown usage stays unknown. Final report warnings reflect current aggregate usage; per-stage raw events/audits retain stage counts and warnings. Existing historical reports are preserved. Restart the provider and ESA service after rebuilding to activate these changes.
+
+## Profile environments
+
 Five versioned Profiles (`general`, `java-debug`, `performance`, `compatibility`, `configuration`) provide `SKILL.md`, environment and tool manifests. Profiles share one preinstalled toolkit image, retain `toolset.txt` declarations and use the common `deploy/tools/toolset.release.txt` inspection. Approved runtime requests create the sandbox lazily after Profile selection. Run `python3 scripts/update_tool_images.py` before managed runtime diagnosis; see [tool image operations](TOOL_IMAGES.md). Skill text does not grant authority. Catalog hashes are frozen and checked; actual readiness and runtime permissions determine usable capabilities. A separate tool JVM does not automatically provide a registered customer-runtime compatibility variant.
 
 Extended MCP tools use underscore names: `source_search`, `capability_request`, `tool_install`. Source search is bounded literal matching, not parser-verified symbols or a static analysis service. Planned tool-enabled Codex reports require an approved plan in the tool audit.

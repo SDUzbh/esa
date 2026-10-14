@@ -93,9 +93,10 @@ func (p *Provider) invoke(ctx context.Context, dir, prompt, sourceKey string, bu
 		if ev.Type == "turn.completed" {
 			turns++
 			lastUsage = append(json.RawMessage{}, ev.Usage...)
-			if input, output, ok := reportedTokens(ev.Usage); ok {
-				usage.InputTokens += input
-				usage.OutputTokens += output
+			if reported, ok := reportedTokens(ev.Usage); ok {
+				usage.InputTokens += reported.InputTokens
+				usage.CachedInputTokens += reported.CachedInputTokens
+				usage.OutputTokens += reported.OutputTokens
 				usage.TokensReported = true
 				emitAlerts(usage)
 			}

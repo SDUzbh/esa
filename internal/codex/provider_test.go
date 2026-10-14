@@ -142,12 +142,23 @@ func TestFingerprintNormalizesRedmineLineEndingsOnly(t *testing.T) {
 }
 
 func TestMissingUsageRemainsUnknown(t *testing.T) {
-	for _, raw := range []string{`null`, `{}`, `{"input_tokens":8}`, `{"input_tokens":null,"output_tokens":0}`, `{"input_tokens":-1,"output_tokens":2}`} {
-		if _, _, ok := reportedTokens(json.RawMessage(raw)); ok {
+	for _, raw := range []string{`null`, `{}`, `{"input_tokens":8}`, `{"input_tokens":null,"output_tokens":0}`, `{"input_tokens":-1,"output_tokens":2}`, `{"input_tokens":8,"cached_input_tokens":9,"output_tokens":0}`, `{"input_tokens":8,"cached_input_tokens":-1,"output_tokens":0}`} {
+		if _, ok := reportedTokens(json.RawMessage(raw)); ok {
 			t.Fatalf("invalid usage recorded as measured: %s", raw)
 		}
 	}
-	if input, output, ok := reportedTokens(json.RawMessage(`{"input_tokens":0,"output_tokens":0}`)); !ok || input != 0 || output != 0 {
+	if usage, ok := reportedTokens(json.RawMessage(`{"input_tokens":0,"output_tokens":0}`)); !ok || usage.InputTokens != 0 || usage.OutputTokens != 0 {
 		t.Fatal("measured zero usage must remain distinguishable from unknown")
+	}
+}
+
+func TestCachedUsageAndReasoningAreNotDoubleCounted(t *testing.T) {
+	u, ok := reportedTokens(json.RawMessage(`{"input_tokens":100,"cached_input_tokens":80,"output_tokens":30,"reasoning_output_tokens":20}`))
+	if !ok || u.CachedInputTokens != 80 || u.OutputTokens != 30 {
+		t.Fatal("reported cache/output split lost", u)
+	}
+	aggregate := combineUsage(combineUsage(u, u), u)
+	if aggregate.CachedInputTokens != 240 || aggregate.InputTokens != 300 || aggregate.OutputTokens != 90 || !aggregate.TokensReported {
+		t.Fatal("stage cache aggregation is incorrect", aggregate)
 	}
 }

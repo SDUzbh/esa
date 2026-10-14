@@ -78,13 +78,13 @@ func validateReport(report Report, input AnalyzeRequest, records []IssueRecord) 
 	maxCalls := input.Budget.MaxCalls
 	if report.Routing != nil {
 		maxCalls++
-		if report.Routing.Action != "reuse" && report.Routing.Action != "analyze" && report.Routing.Action != "request_information" && report.Routing.Action != "join" {
+		if report.Routing.Action != "reuse" && report.Routing.Action != "analyze" && report.Routing.Action != "request_information" && report.Routing.Action != "join" && report.Routing.Action != "return_to_support" {
 			return fmt.Errorf("invalid routing action")
 		}
 		if report.Routing.Action != "analyze" && (report.Usage.Calls > 1 || len(report.Findings) > 0) {
 			return fmt.Errorf("reuse/clarification cannot invoke engineering or claim new findings")
 		}
-		if (report.Routing.Action == "request_information" || report.Routing.Action == "join") && (len(report.Evidence) > 0 || report.Issue != nil) {
+		if (report.Routing.Action == "request_information" || report.Routing.Action == "join" || report.Routing.Action == "return_to_support") && (len(report.Evidence) > 0 || report.Issue != nil) {
 			return fmt.Errorf("clarification cannot publish a solution")
 		}
 		if report.Routing.Usage.Calls != 1 {
@@ -282,7 +282,7 @@ func (e *Engine) ProcessOne(ctx context.Context, analyzer Analyzer) (bool, error
 	if invoked && report.Usage.Calls < 1 {
 		report.Usage.Calls = 1
 	}
-	AddAlerts(&report, TokenAlerts(report.Usage, e.Config.Budget)...)
+	UpdateTokenAlerts(&report, e.Config.Budget)
 	if !report.Usage.TokensReported {
 		report.Limitations = append(report.Limitations, "Provider usage is unknown; it must not be interpreted as zero.")
 	}
@@ -311,6 +311,8 @@ func (e *Engine) ProcessOne(ctx context.Context, analyzer Analyzer) (bool, error
 		} else if callErr != nil {
 			current.State = "failed"
 			r.Error = callErr.Error()
+		} else if report.Routing != nil && report.Routing.Action == "return_to_support" {
+			current.State, r.Route, r.Error = "returned_to_support", "customer_support", ""
 		} else if report.Routing != nil && report.Routing.Action == "join" {
 			if err := e.joinInvestigation(s, &current, report, records); err != nil {
 				current.State, r.Error = "failed", err.Error()

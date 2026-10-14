@@ -403,13 +403,14 @@ func (p *Provider) analyzeEngineering(ctx context.Context, in esa.AnalyzeRequest
 	return report, nil
 }
 
-func reportedTokens(raw json.RawMessage) (int, int, bool) {
+func reportedTokens(raw json.RawMessage) (esa.Usage, bool) {
 	var u struct {
 		Input  *int `json:"input_tokens"`
 		Output *int `json:"output_tokens"`
+		Cached int  `json:"cached_input_tokens"`
 	}
-	if json.Unmarshal(raw, &u) != nil || u.Input == nil || u.Output == nil || *u.Input < 0 || *u.Output < 0 {
-		return 0, 0, false
+	if json.Unmarshal(raw, &u) != nil || u.Input == nil || u.Output == nil || *u.Input < 0 || *u.Output < 0 || u.Cached < 0 || u.Cached > *u.Input {
+		return esa.Usage{}, false
 	}
-	return *u.Input, *u.Output, true
+	return esa.Usage{InputTokens: *u.Input, CachedInputTokens: u.Cached, OutputTokens: *u.Output, TokensReported: true}, true
 }

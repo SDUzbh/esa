@@ -44,7 +44,7 @@ flowchart TD
 * Create or import an ordinary Redmine issue and prepare its diagnostic metadata. These actions do not submit it to ESA.
 *  An authorized user selects **Forward to ESA**. The durable outbox sends the snapshot with the human actor and forwarding time.
 * Every forwarded open issue enters a shared task, independent of Tracker or metadata completeness. Go exports a historical, project-scoped local Issue directory and sends its path/hash instead of Issue or case bodies. Identical diagnostic inputs share an investigation.
-* The Routing Agent searches and reads the directory. Both `agent_analyzed` proposals and `engineer_resolved` solutions can be reused, with engineer solutions preferred when applicable. Reuse returns the stored solution and skips the engineering Agent and sandbox setup. Matching `investigating` records join the existing task without another engineering call. Otherwise it requests essential information or queues new read-only engineering analysis; at most three engineering environments run concurrently. See [Issue directory and routing](docs/ISSUE_DIRECTORY.md).
+* The Routing Agent searches and reads the directory. Both `agent_analyzed` proposals and `engineer_resolved` solutions can be reused, with engineer solutions preferred when applicable. Reuse returns the stored solution and skips the engineering Agent and sandbox setup. Ordinary non-engineering requests return to customer support without an engineering call. Matching `investigating` records join the existing task without another engineering call. Otherwise it requests essential information or queues new read-only engineering analysis; at most three engineering environments run concurrently. See [Issue directory and routing](docs/ISSUE_DIRECTORY.md).
 * Engineering returns findings and a grouping request without catalogue access or an Issue ID. Routing Agent decides existing/new grouping; ESA validates its decision before linking or creating an Issue. Engineer review updates canonical solution provenance. Reuse stores a reference with a separate applicability review and never duplicates knowledge or promotes an Agent proposal to trusted status. Membership edits change links only; reanalysis requires explicit forwarding. ESA does not modify product source or close Redmine issues.
 * Forward a resolved issue to collect a case. An identical already reviewed resolution inherits canonical trust; other cases start as drafts. Linked cases share the solution's approval and withdrawal state. Approved knowledge enters subsequent eligible directory views. Forward later source changes to withdraw obsolete evidence.
 
@@ -79,7 +79,7 @@ DOCKER_CONTEXT=colima-redmine docker-compose -f deploy/redmine/compose.yaml buil
 DOCKER_CONTEXT=colima-redmine docker-compose -f deploy/redmine/compose.yaml up -d
 ```
 
-The build produces Linux ARM64 `bin/esa` and host binaries for `esa-replay`, `esa-codex` and `esa-classifier`. Set `ESA_GO_ARCH=amd64` for an AMD64 service deployment. No external Go modules or Python packages are required. Building does not activate an existing deployment: rebuild and restart its images to use updated code. The Redmine service runs plugin migrations at startup, including the migration adding manual forwarding provenance to the outbox.
+The build produces Linux ARM64 `bin/esa` and host binaries for `esa-host`, `esa-replay`, `esa-codex` and `esa-classifier`. Set `ESA_GO_ARCH=amd64` for an AMD64 service deployment. No external Go modules or Python packages are required. Building does not activate an existing deployment: rebuild and restart its images to use updated code. The Redmine service runs plugin migrations at startup, including the migration adding manual forwarding provenance to the outbox.
 
 For direct development, configure a service token and use a separate store:
 
@@ -89,6 +89,15 @@ export ESA_API_TOKEN='<at least 24 random characters>'
 ```
 
 The service token in `deploy/redmine/.env` is private. The browser never receives it. The plugin derives project and issue visibility from the current Redmine user. The Go service is reachable only inside the Compose network.
+
+Run a JSON ticket through Routing Agent and download the provider's runtime events:
+
+```sh
+python3 scripts/analyze_ticket.py examples/agent-ticket.json \
+  --routing-provider http://127.0.0.1:8091 --output runtime/ticket-example
+```
+
+Start the registered provider first. The script defaults to an isolated real ESA service and stops it on exit; `--esa-url` targets an existing service configured for that provider. Routing determines whether engineering is needed. Event logs and results stay in the new output directory. See [ticket runner and weighted token alerts](docs/ESA_OPERATIONS.md#ticket-runner-and-runtime-logs). Cached input counts at 0.1 for advisory alerts; uncached input/output count at 1.
 
 ## Optional classifier
 

@@ -85,7 +85,7 @@ func (api *API) classifierPredict(w http.ResponseWriter, r *http.Request) {
 	}
 	p := ClassifierPrediction{TicketID: t.ID, ProjectID: t.ProjectID, Text: text, ForwardedAt: t.ForwardedAt, CreatedAt: api.Engine.Now(), Prediction: m.Predict(text)}
 	p.ID = hash([]string{t.ID, t.ProjectID, text, t.ForwardedAt.UTC().Format(time.RFC3339Nano), m.Version})
-	err = api.Engine.Store.Update(func(s *State) error {
+	err = api.Engine.update(func(s *State) error {
 		current, ok := s.Tickets[t.ID]
 		if !ok || current.Private || current.ProjectID != t.ProjectID || classifierText(current) != text || !current.ForwardedAt.Equal(t.ForwardedAt) {
 			return ErrConflict
@@ -149,7 +149,7 @@ func (api *API) classifierFeedback(w http.ResponseWriter, r *http.Request) {
 	}
 	sort.Strings(req.Labels)
 	var record ClassifierFeedback
-	err = api.Engine.Store.Update(func(s *State) error {
+	err = api.Engine.update(func(s *State) error {
 		current, ok := s.Tickets[t.ID]
 		if !ok || current.Private || current.ProjectID != t.ProjectID {
 			return ErrNotFound

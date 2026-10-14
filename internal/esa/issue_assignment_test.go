@@ -99,7 +99,7 @@ func TestCandidateIssueMustRemainVisibleWhenResultArrives(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := e.Store.Snapshot()
-	if s.Runs[b.RunID].State != "failed" || s.Runs[b.RunID].IssueID != "" || len(s.Issues) != 1 {
+	if s.Runs[b.RunID].State != "failed" || s.Runs[b.RunID].IssueID != "" || len(s.Issues) != 0 {
 		t.Fatal("withdrawn candidate was assigned or replaced by a fabricated issue")
 	}
 }
@@ -144,7 +144,7 @@ func TestReusedConclusionRetainsSourceVisibilityAndWithdrawal(t *testing.T) {
 	}
 	s := e.Store.Snapshot()
 	task := s.Investigations[s.Runs[r.RunID].InvestigationID]
-	if s.Runs[r.RunID].SourceTicketID != first.ID || s.Solutions[task.SolutionID].SourceTicketID != first.ID {
+	if s.Runs[r.RunID].SourceTicketID != first.ID || task.Application == nil || task.Application.SourceTicketID != first.ID || len(s.Solutions) != 1 {
 		t.Fatal("reuse lost its original evidence source")
 	}
 	for _, path := range []string{"/v1/tickets/consumer", "/v1/investigations/" + task.ID, "/v1/investigations/" + task.ID + "/solutions"} {
@@ -157,7 +157,7 @@ func TestReusedConclusionRetainsSourceVisibilityAndWithdrawal(t *testing.T) {
 	receive(t, e, "private", first)
 	s = e.Store.Snapshot()
 	task = s.Investigations[task.ID]
-	if task.State != "withdrawn" || s.Solutions[task.SolutionID].State != "withdrawn" {
+	if task.State != "withdrawn" || task.Application == nil || task.Application.State != "withdrawn" {
 		t.Fatal("source privacy failed to withdraw reused proposal")
 	}
 }

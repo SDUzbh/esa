@@ -30,15 +30,16 @@ func TestSharedInvestigationsReviewedCaseSupersedesPendingAndSplitPreservesInput
 		t.Fatalf("review precedence: %+v", solution)
 	}
 	memberSnapshot := s.LatestSnapshot["member"]
-	r, err := e.ReviewMembership("member", MembershipReview{ExpectedSnapshotID: memberSnapshot, Reviewer: "engineer", Reason: "Contradictory evidence requires a separate investigation"})
+	membership, _ := activeMembership(s, "member")
+	r, err := e.ReviewMembership("member", MembershipReview{ExpectedMembershipID: membership.ID, ExpectedSnapshotID: memberSnapshot, Reviewer: "engineer", Reason: "Contradictory evidence requires a separate investigation"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	s = e.Store.Snapshot()
-	if r.RunID == initial.ID || s.Runs[r.RunID].Route != "engineering_analysis" || hash(s.Runs[initial.ID].Input) != hash(initial.Input) || len(s.MembershipHistory) < 4 {
+	if r.RunID != initial.ID || len(s.Investigations) != 1 || hash(s.Runs[initial.ID].Input) != hash(initial.Input) || len(s.MembershipHistory) < 4 {
 		t.Fatal("split rewrote historical input or failed to retain membership revisions")
 	}
-	if _, err = e.ReviewMembership("member", MembershipReview{ExpectedSnapshotID: memberSnapshot, Reviewer: "engineer", Reason: "Stale split"}); err == nil {
+	if _, err = e.ReviewMembership("member", MembershipReview{ExpectedMembershipID: membership.ID, ExpectedSnapshotID: memberSnapshot, Reviewer: "engineer", Reason: "Stale split"}); err == nil {
 		t.Fatal("stale membership review accepted")
 	}
 }

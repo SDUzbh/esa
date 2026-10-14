@@ -11,7 +11,7 @@ func TestFutureKnowledgeExcludedAndWithdrawalVersioned(t *testing.T) {
 	before := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
 	approved := before.Add(time.Hour)
 	withdrawn := approved.Add(time.Hour)
-	draft := esa.Case{ID: "case-1", TicketID: "old", ProjectID: "1", Category: "code_defect", State: "draft", Version: 1, CreatedAt: before, UpdatedAt: before, Components: []string{"consumer"}, Versions: []string{"3.7.0"}, Signals: []string{"nullpointerexception"}, Keywords: []string{"consumer", "partition", "assignment", "nullpointerexception"}, Environment: map[string]string{"jdk": "17"}, Resolution: esa.Resolution{Solution: "Future solution"}}
+	draft := esa.Case{ID: "case-1", TicketID: "old", ProjectID: "1", State: "draft", Version: 1, CreatedAt: before, UpdatedAt: before, Components: []string{"consumer"}, Versions: []string{"3.7.0"}, Environment: map[string]string{"jdk": "17"}, Resolution: esa.Resolution{Solution: "Future solution"}}
 	trusted := draft
 	trusted.State = "trusted"
 	trusted.Version = 2

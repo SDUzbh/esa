@@ -1,6 +1,6 @@
 {
   "version": "6",
-  "worker": {"lease_seconds": 60, "max_active_per_project": 1},
+  "worker": {"lease_seconds": 60, "max_active_per_project": 4},
   "classifier": { "enabled": false, "models": {} },
   "budget": {"max_calls": 1, "max_input_tokens": 16000, "max_output_tokens": 6000, "warn_total_tokens": 22000, "timeout_seconds": 900}
 }

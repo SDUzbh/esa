@@ -8,7 +8,7 @@ import (
 )
 
 // Cache/task contract revision; old queued contracts require a fresh forwarding.
-const WorkflowVersion = "8"
+const WorkflowVersion = "10"
 
 type Comment struct {
 	ID        string    `json:"id"`
@@ -26,45 +26,42 @@ type Resolution struct {
 }
 
 type Ticket struct {
-	ForwardedBy      string            `json:"forwarded_by,omitempty"`
-	ForwardedAt      time.Time         `json:"forwarded_at,omitempty"`
-	ID               string            `json:"id"`
-	SourceKey        string            `json:"source_key,omitempty"`
-	ProjectID        string            `json:"project_id"`
-	Project          string            `json:"project,omitempty"`
-	Subject          string            `json:"subject"`
-	Description      string            `json:"description"`
-	Tracker          string            `json:"tracker"`
-	Status           string            `json:"status"`
-	Assignee         string            `json:"assignee,omitempty"`
-	Source           string            `json:"source"`
-	Components       []string          `json:"components"`
-	Versions         []string          `json:"versions"`
-	Environment      map[string]string `json:"environment"`
-	ErrorCodes       []string          `json:"error_codes"`
-	Comments         []Comment         `json:"comments"`
-	CreatedAt        time.Time         `json:"created_at"`
-	UpdatedAt        time.Time         `json:"updated_at"`
-	Closed           bool              `json:"closed"`
-	Private          bool              `json:"private"`
-	Resolution       Resolution        `json:"resolution"`
-	CategoryOverride string            `json:"category_override,omitempty"`
-	Labels           json.RawMessage   `json:"labels,omitempty"`
+	StoredFields JSONFields        `json:"-"`
+	ForwardedBy  string            `json:"forwarded_by,omitempty"`
+	ForwardedAt  time.Time         `json:"forwarded_at,omitempty"`
+	ID           string            `json:"id"`
+	SourceKey    string            `json:"source_key,omitempty"`
+	ProjectID    string            `json:"project_id"`
+	Project      string            `json:"project,omitempty"`
+	Subject      string            `json:"subject"`
+	Description  string            `json:"description"`
+	Tracker      string            `json:"tracker"`
+	Status       string            `json:"status"`
+	Assignee     string            `json:"assignee,omitempty"`
+	Source       string            `json:"source"`
+	Components   []string          `json:"components"`
+	Versions     []string          `json:"versions"`
+	Environment  map[string]string `json:"environment"`
+	ErrorCodes   []string          `json:"error_codes"`
+	Comments     []Comment         `json:"comments"`
+	CreatedAt    time.Time         `json:"created_at"`
+	UpdatedAt    time.Time         `json:"updated_at"`
+	Closed       bool              `json:"closed"`
+	Private      bool              `json:"private"`
+	Resolution   Resolution        `json:"resolution"`
 }
 
 type Event struct {
-	ForwardedBy string    `json:"forwarded_by"`
-	ForwardedAt time.Time `json:"forwarded_at"`
-	Force       bool      `json:"force,omitempty"`
-	ID          string    `json:"id"`
-	Origin      string    `json:"origin"`
-	OccurredAt  time.Time `json:"occurred_at"`
-	ReceivedAt  time.Time `json:"received_at"`
-	Ticket      Ticket    `json:"ticket"`
-	Raw         jsonRaw   `json:"raw,omitempty"`
+	ForwardedBy string          `json:"forwarded_by"`
+	ForwardedAt time.Time       `json:"forwarded_at"`
+	Force       bool            `json:"force,omitempty"`
+	ID          string          `json:"id"`
+	Origin      string          `json:"origin"`
+	OccurredAt  time.Time       `json:"occurred_at"`
+	ReceivedAt  time.Time       `json:"received_at"`
+	Ticket      Ticket          `json:"ticket"`
+	Raw         json.RawMessage `json:"raw,omitempty"`
 }
-
-type jsonRaw = json.RawMessage
 
 type Config struct {
 	Version    string           `json:"version"`
@@ -105,65 +102,28 @@ type Budget struct {
 	WarnTotalTokens int `json:"warn_total_tokens,omitempty"`
 }
 
-// Classification is retained solely to preserve historical stored reports.
-// New intake, routing and provider contracts do not produce it.
-type Classification struct {
-	Category    string            `json:"category"`
-	Categories  []string          `json:"categories,omitempty"`
-	Tags        []string          `json:"tags,omitempty"`
-	Confirmed   bool              `json:"confirmed"`
-	Source      string            `json:"source,omitempty"`
-	Suggestions []json.RawMessage `json:"suggestions,omitempty"`
-	RuleIDs     []string          `json:"rule_ids"`
-	Candidates  []string          `json:"candidates,omitempty"`
-}
-
 type Case struct {
-	IssueID     string            `json:"engineering_issue_id,omitempty"`
-	ID          string            `json:"id"`
-	SourceHash  string            `json:"source_hash"`
-	TicketID    string            `json:"ticket_id"`
-	ProjectID   string            `json:"project_id"`
-	SourceKey   string            `json:"source_key"`
-	Subject     string            `json:"subject"`
-	Summary     string            `json:"summary"`
-	Category    string            `json:"category"`
-	Categories  []string          `json:"categories,omitempty"`
-	Tags        []string          `json:"tags,omitempty"`
-	Components  []string          `json:"components"`
-	Versions    []string          `json:"versions"`
-	Environment map[string]string `json:"environment"`
-	Signals     []string          `json:"signals"`
-	Keywords    []string          `json:"keywords"`
-	Resolution  Resolution        `json:"resolution"`
-	State       string            `json:"state"`
-	ReviewedBy  string            `json:"reviewed_by,omitempty"`
-	ReviewNote  string            `json:"review_note,omitempty"`
-	Version     int               `json:"version"`
-	CreatedAt   time.Time         `json:"created_at"`
-	UpdatedAt   time.Time         `json:"updated_at"`
-	TrustedAt   time.Time         `json:"trusted_at,omitempty"`
-}
-
-// Historical retrieval audit fields; new tasks use the local Issue directory.
-type RetrievalTrace struct {
-	Version    string  `json:"version"`
-	CorpusHash string  `json:"corpus_hash"`
-	BM25Rank   int     `json:"bm25_rank"`
-	SignalRank int     `json:"signal_rank"`
-	RRFScore   float64 `json:"rrf_score"`
-}
-
-type Match struct {
-	Retrieval   *RetrievalTrace `json:"retrieval,omitempty"`
-	Categories  []string        `json:"categories,omitempty"`
-	CaseID      string          `json:"case_id"`
-	CaseVersion int             `json:"case_version"`
-	Subject     string          `json:"subject"`
-	Score       int             `json:"score"`
-	Applicable  bool            `json:"applicable"`
-	Reasons     []string        `json:"reasons"`
-	Solution    string          `json:"solution,omitempty"`
+	SolutionID   string            `json:"solution_id,omitempty"`
+	StoredFields JSONFields        `json:"-"`
+	IssueID      string            `json:"engineering_issue_id,omitempty"`
+	ID           string            `json:"id"`
+	SourceHash   string            `json:"source_hash"`
+	TicketID     string            `json:"ticket_id"`
+	ProjectID    string            `json:"project_id"`
+	SourceKey    string            `json:"source_key"`
+	Subject      string            `json:"subject"`
+	Summary      string            `json:"summary"`
+	Components   []string          `json:"components"`
+	Versions     []string          `json:"versions"`
+	Environment  map[string]string `json:"environment"`
+	Resolution   Resolution        `json:"resolution"`
+	State        string            `json:"state"`
+	ReviewedBy   string            `json:"reviewed_by,omitempty"`
+	ReviewNote   string            `json:"review_note,omitempty"`
+	Version      int               `json:"version"`
+	CreatedAt    time.Time         `json:"created_at"`
+	UpdatedAt    time.Time         `json:"updated_at"`
+	TrustedAt    time.Time         `json:"trusted_at,omitempty"`
 }
 
 type Usage struct {
@@ -194,11 +154,20 @@ type IssueAssignment struct {
 	Title      string `json:"title"`
 	Reason     string `json:"reason"`
 }
+
+// Engineering requests grouping; only routing selects the authoritative Issue.
+type IssueRequest struct {
+	Title  string `json:"title"`
+	Reason string `json:"reason"`
+}
 type Report struct {
+	IssueRequest        *IssueRequest        `json:"issue_request,omitempty"`
+	AssignmentRouting   *RoutingResult       `json:"assignment_routing,omitempty"`
+	AccessedIssueIDs    []string             `json:"accessed_issue_ids,omitempty"`
+	StoredFields        JSONFields           `json:"-"`
 	Routing             *RoutingResult       `json:"routing,omitempty"`
 	Envelope            *ReportEnvelope      `json:"assessment,omitempty"`
 	Plan                *AnalysisPlan        `json:"plan,omitempty"`
-	AgentClassification *Classification      `json:"agent_classification,omitempty"`
 	Issue               *IssueAssignment     `json:"issue,omitempty"`
 	Findings            []Finding            `json:"findings,omitempty"`
 	Summary             string               `json:"summary"`
@@ -225,28 +194,26 @@ type EnvironmentRequest struct {
 }
 
 type Run struct {
-	SourceTicketID     string          `json:"source_ticket_id,omitempty"`
-	InvestigationID    string          `json:"investigation_id,omitempty"`
-	SnapshotID         string          `json:"snapshot_id,omitempty"`
-	ObservationCutoff  time.Time       `json:"observation_cutoff,omitempty"`
-	IssueID            string          `json:"issue_id,omitempty"`
-	ID                 string          `json:"id"`
-	TicketID           string          `json:"ticket_id"`
-	ProjectID          string          `json:"project_id"`
-	InputHash          string          `json:"input_hash"`
-	WorkflowVersion    string          `json:"workflow_version"`
-	RuleVersion        string          `json:"rule_version"`
-	CaseGeneration     int             `json:"case_generation"`
-	Input              Ticket          `json:"input"`
-	Classification     *Classification `json:"classification,omitempty"`
-	Route              string          `json:"route"`
-	State              string          `json:"state"`
-	Matches            []Match         `json:"matches"`
-	MissingInformation []string        `json:"missing_information"`
-	Report             Report          `json:"report"`
-	Error              string          `json:"error,omitempty"`
-	CreatedAt          time.Time       `json:"created_at"`
-	UpdatedAt          time.Time       `json:"updated_at"`
+	StoredFields       JSONFields `json:"-"`
+	SourceTicketID     string     `json:"source_ticket_id,omitempty"`
+	InvestigationID    string     `json:"investigation_id,omitempty"`
+	SnapshotID         string     `json:"snapshot_id,omitempty"`
+	ObservationCutoff  time.Time  `json:"observation_cutoff,omitempty"`
+	IssueID            string     `json:"issue_id,omitempty"`
+	ID                 string     `json:"id"`
+	TicketID           string     `json:"ticket_id"`
+	ProjectID          string     `json:"project_id"`
+	InputHash          string     `json:"input_hash"`
+	WorkflowVersion    string     `json:"workflow_version"`
+	RuleVersion        string     `json:"rule_version"`
+	Input              Ticket     `json:"input"`
+	Route              string     `json:"route"`
+	State              string     `json:"state"`
+	MissingInformation []string   `json:"missing_information"`
+	Report             Report     `json:"report"`
+	Error              string     `json:"error,omitempty"`
+	CreatedAt          time.Time  `json:"created_at"`
+	UpdatedAt          time.Time  `json:"updated_at"`
 }
 
 type Receipt struct {
@@ -258,6 +225,8 @@ type Receipt struct {
 }
 
 type State struct {
+	IssueAccessSequence   uint64                          `json:"issue_access_sequence,omitempty"`
+	StoredFields          JSONFields                      `json:"-"`
 	LatestSnapshot        map[string]string               `json:"latest_snapshot,omitempty"`
 	Snapshots             map[string]TicketSnapshot       `json:"snapshots,omitempty"`
 	Issues                map[string]EngineeringIssue     `json:"engineering_issues,omitempty"`
@@ -272,7 +241,6 @@ type State struct {
 	ClassifierPredictions map[string]ClassifierPrediction `json:"classifier_predictions,omitempty"`
 	ClassifierFeedback    map[string]ClassifierFeedback   `json:"classifier_feedback,omitempty"`
 	SchemaVersion         int                             `json:"schema_version"`
-	Generation            int                             `json:"generation"`
 	Tickets               map[string]Ticket               `json:"tickets"`
 	Events                map[string]Event                `json:"events"`
 	Receipts              map[string]Receipt              `json:"receipts"`

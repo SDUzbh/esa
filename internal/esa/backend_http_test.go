@@ -109,7 +109,7 @@ func TestTransactionalBackendAcrossWorkers(t *testing.T) {
 	}
 	before := hash(s)
 	unavailable.Store(true)
-	if err := first.Update(func(s *State) error { s.Generation++; return nil }); err == nil {
+	if err := first.Update(func(s *State) error { s.LastClaimedProject = "changed"; return nil }); err == nil {
 		t.Fatal("unavailable authority accepted a write")
 	}
 	if hash(first.Snapshot()) != before {

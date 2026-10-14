@@ -22,7 +22,7 @@ def main():
     token = os.environ['ESA_API_TOKEN']
     directory = Path(args.store).parent
     directory.mkdir(parents=True, exist_ok=True)
-    calls, lock = [], threading.Lock()
+    calls, routing_calls, lock = [], [], threading.Lock()
 
     class Provider(BaseHTTPRequestHandler):
         def log_message(self, *_):
@@ -39,13 +39,35 @@ def main():
             packet = json.loads(self.rfile.read(size))
             assert packet['read_only'] and packet['task_contract']['read_only']
             with lock:
-                calls.append({'run_id': packet['run_id'], 'snapshot_id': packet['task_contract']['snapshot_id'], 'cutoff': packet['task_contract']['observation_cutoff']})
+                stage = packet.get('stage', '')
+                entry = {'run_id': packet['run_id'], 'snapshot_id': packet['task_contract']['snapshot_id'], 'cutoff': packet['task_contract']['observation_cutoff'], 'stage': stage}
+                calls.append(entry)
                 (directory / 'provider-calls.json').write_text(json.dumps(calls))
+                if stage in ('route', 'assign'):
+                    routing_calls.append(entry)
+                    (directory / 'routing-calls.json').write_text(json.dumps(routing_calls))
             evidence = {'source': 'git', 'reference': 'fixture:Example.java:10', 'quote': 'assignment.size()'}
             result = {'summary': 'Fixture empty assignment hypothesis', 'issue': {'existing_id': '', 'title': 'Fixture assignment', 'reason': 'Deterministic test input'},
                       'findings': [{'commit': 'fixture', 'file': 'Example.java', 'start_line': 10, 'end_line': 10, 'problem': 'Assignment may be absent', 'solution': 'Guard assignment before use', 'evidence': [evidence]}],
                       'evidence': [evidence], 'recommendations': ['Guard assignment'], 'verification_steps': ['Exercise empty assignment'], 'limitations': ['Synthetic provider; no causal or source mapping validation'],
                       'usage': {'calls': 1, 'input_tokens': 20, 'output_tokens': 10, 'tokens_reported': True}}
+            if stage:
+                routing = {'action': 'analyze', 'record_path': '', 'record_hash': '', 'reason': 'Synthetic fixture needs source diagnosis', 'usage': {'calls': 1, 'input_tokens': 12, 'output_tokens': 8, 'tokens_reported': True}}
+                result['routing'] = routing
+                if stage == 'route':
+                    result = {'summary': 'Fixture routed for analysis', 'routing': routing, 'limitations': ['No engineering work yet'], 'usage': routing['usage']}
+                elif stage == 'engineer':
+                    issue = result.pop('issue')
+                    result['issue_request'] = {'title': issue['title'], 'reason': issue['reason']}
+                    result['usage'].update(calls=2, input_tokens=32, output_tokens=18)
+                elif stage == 'assign':
+                    issue = result['issue']
+                    result['issue_request'] = {'title': issue['title'], 'reason': issue['reason']}
+                    result['assignment_routing'] = {'action': 'create', 'title': issue['title'], 'reason': issue['reason'], 'record_path': '', 'record_hash': '', 'usage': routing['usage']}
+                    result['usage'].update(calls=3, input_tokens=44, output_tokens=26)
+                else:
+                    self.send_error(400)
+                    return
             encoded = json.dumps(result).encode()
             self.send_response(200)
             self.send_header('Content-Type', 'application/json')

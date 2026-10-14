@@ -5,76 +5,69 @@ import (
 	"strings"
 )
 
-// Reviewed assignment is also the split/merge primitive. Sharing an issue ID
-// never changes a frozen task or extends the scope of an existing solution.
+func activeMembership(s State, ticketID string) (IssueTicketLink, bool) {
+	var found IssueTicketLink
+	for _, link := range s.Memberships {
+		if link.TicketID == ticketID && link.State == "tentative" && (found.ID == "" || link.AvailableAt.After(found.AvailableAt) || link.AvailableAt.Equal(found.AvailableAt) && link.ID < found.ID) {
+			found = link
+		}
+	}
+	return found, found.ID != ""
+}
+
+// Membership review never forwards a snapshot, queues work or rewrites a report.
 func (e *Engine) ReviewMembership(ticketID string, review MembershipReview) (Receipt, error) {
 	var receipt Receipt
-	err := e.Store.Update(func(s *State) error {
-		prepareInvestigations(s)
+	err := e.update(func(s *State) error {
 		t, ok := s.Tickets[ticketID]
 		if !ok || t.Private || t.Closed {
 			return ErrNotFound
 		}
-		if s.Runs[s.Latest[ticketID]].IssueID == "" {
-			return fmt.Errorf("%w: complete analysis before reviewing issue membership", ErrConflict)
+		old, ok := activeMembership(*s, ticketID)
+		if !ok || old.IssueID == "" {
+			return fmt.Errorf("%w: complete analysis before reviewing membership", ErrConflict)
 		}
-		if s.LatestSnapshot[ticketID] != review.ExpectedSnapshotID {
-			return fmt.Errorf("%w: snapshot changed", ErrConflict)
+		if review.ExpectedSnapshotID != s.LatestSnapshot[ticketID] || review.ExpectedMembershipID != old.ID {
+			return fmt.Errorf("%w: snapshot or membership changed", ErrConflict)
 		}
 		if strings.TrimSpace(review.Reviewer) == "" || strings.TrimSpace(review.Reason) == "" {
 			return fmt.Errorf("%w: membership reviewer and reason required", ErrInvalid)
 		}
-		issue, ok := s.Issues[review.IssueID]
-		if review.IssueID != "" && (!ok || issue.ProjectID != t.ProjectID || issue.CreatedAt.After(e.Now())) {
-			return fmt.Errorf("%w: engineering issue outside eligible project registry", ErrInvalid)
+		issue, exists := s.Issues[review.IssueID]
+		if review.IssueID != "" && (!exists || issue.ProjectID != t.ProjectID || issue.CreatedAt.After(e.Now())) {
+			return fmt.Errorf("%w: issue outside project registry", ErrInvalid)
 		}
-		if !ok {
-			issue = EngineeringIssue{ID: randomID("issue_"), ProjectID: t.ProjectID, Title: t.Subject, CreatedAt: e.Now()}
+		if exists && old.IssueID == issue.ID && old.Reviewer != "" {
+			touchIssue(s, issue.ID, e.Now())
+			receipt = Receipt{TicketID: ticketID, RunID: s.Latest[ticketID], Action: "membership_unchanged"}
+			return nil
+		}
+		if !exists {
+			issue = EngineeringIssue{ID: randomID("issue_"), ProjectID: t.ProjectID, Title: t.Subject, TitleSourceTicketID: t.ID, CreatedAt: e.Now()}
 			s.Issues[issue.ID] = issue
 		}
-		for id, link := range s.Memberships {
-			if link.TicketID == ticketID && link.State == "tentative" {
-				link.State = "detached"
-				link.Version++
-				link.Reviewer = review.Reviewer
-				link.Basis = review.Reason
-				link.AvailableAt = e.Now()
-				s.Memberships[id] = link
-				s.MembershipHistory = append(s.MembershipHistory, link)
-			}
-		}
 		s.IssueOverrides[ticketID] = issue.ID
-		// An engineer's reassignment is a later authorized observation, not a
-		// retroactive mutation of the initial snapshot or diagnosis cutoff.
-		t.ForwardedAt, t.ForwardedBy = e.Now(), review.Reviewer
-		s.Tickets[ticketID] = t
-		event := Event{ID: randomID("membership_"), Origin: "reviewed_assignment", ForwardedBy: review.Reviewer, ForwardedAt: e.Now(), OccurredAt: e.Now(), ReceivedAt: e.Now(), Ticket: t}
-		captureSnapshot(s, event)
-		s.Events[event.ID] = event
-		previousRunID := s.Latest[ticketID]
-		delete(s.Latest, ticketID)
-		receipt = e.enqueue(s, t, e.Now(), false)
-		supersedeInactiveTask(s, previousRunID, e.Now())
-		if receipt.Action == "created" {
-			run := s.Runs[receipt.RunID]
-			task := s.Investigations[run.InvestigationID]
-			if task.ID != "" {
-				task.Contract.ReviewContext = review.Reason
-				s.Investigations[task.ID] = task
-			}
+		touchIssue(s, issue.ID, e.Now())
+		if old.IssueID == issue.ID {
+			old.Version++
+			old.Reviewer = review.Reviewer
+			old.Basis = review.Reason
+			old.AvailableAt = e.Now()
+			s.Memberships[old.ID] = old
+			s.MembershipHistory = append(s.MembershipHistory, old)
+		} else {
+			old.State = "detached"
+			old.Version++
+			old.Reviewer = review.Reviewer
+			old.Basis = review.Reason
+			old.AvailableAt = e.Now()
+			s.Memberships[old.ID] = old
+			s.MembershipHistory = append(s.MembershipHistory, old)
+			link := IssueTicketLink{ID: randomID("link_"), IssueID: issue.ID, TicketID: ticketID, SnapshotID: old.SnapshotID, InvestigationID: old.InvestigationID, Version: 1, Reviewer: review.Reviewer, State: "tentative", Basis: review.Reason, AvailableAt: e.Now()}
+			s.Memberships[link.ID] = link
+			s.MembershipHistory = append(s.MembershipHistory, link)
 		}
-		receipt.EventID = event.ID
-		s.Receipts[event.ID] = receipt
-		for id, link := range s.Memberships {
-			if link.TicketID == ticketID && link.State == "tentative" {
-				link.Version++
-				link.Reviewer = review.Reviewer
-				link.Basis = "Reviewed membership: " + review.Reason
-				link.AvailableAt = e.Now()
-				s.Memberships[id] = link
-				s.MembershipHistory = append(s.MembershipHistory, link)
-			}
-		}
+		receipt = Receipt{TicketID: ticketID, RunID: s.Latest[ticketID], Action: "membership_updated"}
 		return nil
 	})
 	return receipt, err

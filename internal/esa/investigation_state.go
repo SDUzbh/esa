@@ -9,9 +9,9 @@ func projectInvestigationStates(s *State) {
 		}
 		run.State = task.State
 		switch task.State {
-		case "agent_proposed":
+		case "agent_proposed", "reuse_proposed":
 			run.State = "awaiting_review"
-		case "trusted":
+		case "trusted", "applied":
 			run.State = "completed"
 		case "withdrawn":
 			run.State = "invalidated"
@@ -34,7 +34,7 @@ func issueState(s State, id string, visible map[string]bool) string {
 		}
 		allowed := false
 		for _, link := range s.Memberships {
-			allowed = allowed || link.InvestigationID == group.CurrentTaskID && link.State == "tentative" && visible[link.TicketID]
+			allowed = allowed || link.IssueID == id && link.InvestigationID == group.CurrentTaskID && link.State == "tentative" && visible[link.TicketID]
 		}
 		if !allowed {
 			continue

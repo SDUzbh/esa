@@ -136,13 +136,13 @@ func run() error {
 	}
 	var analyzer esa.Analyzer
 	if url := os.Getenv("ESA_ANALYZER_URL"); url != "" {
-		analyzer = esa.HTTPAnalyzer{URL: url, Token: os.Getenv("ESA_ANALYZER_TOKEN")}
+		analyzer = esa.HTTPPipelineAnalyzer{HTTPAnalyzer: esa.HTTPAnalyzer{URL: url, Token: os.Getenv("ESA_ANALYZER_TOKEN")}}
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	server := &http.Server{Addr: *address, Handler: (&esa.API{Engine: engine, Token: token}).Handler(), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 30 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 32 << 10}
 	var workers sync.WaitGroup
-	workers.Add(2)
+	workers.Add(1 + esa.EngineeringConcurrency + 1)
 	go func() {
 		defer workers.Done()
 		ticker := time.NewTicker(5 * time.Second)
@@ -158,25 +158,39 @@ func run() error {
 			}
 		}
 	}()
-	go func() {
-		defer workers.Done()
-		ticker := time.NewTicker(time.Second)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-ticker.C:
+	for worker := 0; worker < esa.EngineeringConcurrency+1; worker++ {
+		go func() {
+			defer workers.Done()
+			ticker := time.NewTicker(time.Second)
+			defer ticker.Stop()
+			for {
+				if ctx.Err() != nil {
+					return
+				}
+				if err := engine.Refresh(); err != nil {
+					slog.Warn("State refresh failed", "error", err)
+					select {
+					case <-ctx.Done():
+						return
+					case <-ticker.C:
+					}
+					continue
+				}
+				worked, err := engine.ProcessOne(ctx, analyzer)
+				if err != nil {
+					slog.Error("Workflow processing failed", "error", err)
+				}
+				if worked && err == nil {
+					continue
+				}
+				select {
+				case <-ctx.Done():
+					return
+				case <-ticker.C:
+				}
 			}
-			if err := engine.Refresh(); err != nil {
-				slog.Warn("State refresh failed", "error", err)
-				continue
-			}
-			if _, err := engine.ProcessOne(ctx, analyzer); err != nil {
-				slog.Error("Workflow processing failed", "error", err)
-			}
-		}
-	}()
+		}()
+	}
 	go func() {
 		<-ctx.Done()
 		shutdown, cancel := context.WithTimeout(context.Background(), 10*time.Second)

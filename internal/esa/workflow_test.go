@@ -241,14 +241,14 @@ func TestDurableStoreAndRollback(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = store.Update(func(s *State) error { s.Generation = 3; return nil }); err != nil {
+	if err = store.Update(func(s *State) error { s.LastClaimedProject = "3"; return nil }); err != nil {
 		t.Fatal(err)
 	}
 	loaded, err := OpenStore(path)
-	if err != nil || loaded.Snapshot().Generation != 3 {
+	if err != nil || loaded.Snapshot().LastClaimedProject != "3" {
 		t.Fatal(err)
 	}
-	if err = loaded.Update(func(s *State) error { s.Generation = 4; return ErrConflict }); !errors.Is(err, ErrConflict) || loaded.Snapshot().Generation != 3 {
+	if err = loaded.Update(func(s *State) error { s.LastClaimedProject = "4"; return ErrConflict }); !errors.Is(err, ErrConflict) || loaded.Snapshot().LastClaimedProject != "3" {
 		t.Fatal("failed transaction committed")
 	}
 	snapshot := loaded.Snapshot()

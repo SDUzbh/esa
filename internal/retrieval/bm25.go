@@ -24,14 +24,28 @@ type Hit struct {
 var tokens = regexp.MustCompile(`[a-z0-9_]+`)
 
 func terms(text string) []string { return tokens.FindAllString(strings.ToLower(text), -1) }
+
+type Index struct {
+	docs    []Document
+	counts  []map[string]int
+	lengths []int
+	df      map[string]int
+	average float64
+	corpus  string
+}
+
 func BM25(query string, documents []Document) ([]Hit, string) {
+	index := Build(documents)
+	return index.Search(query), index.corpus
+}
+func Build(documents []Document) *Index {
 	docs := append([]Document(nil), documents...)
 	sort.Slice(docs, func(i, j int) bool { return docs[i].ID < docs[j].ID })
 	b, _ := json.Marshal(docs)
 	sum := sha256.Sum256(b)
 	corpus := hex.EncodeToString(sum[:])
 	if len(docs) == 0 {
-		return []Hit{}, corpus
+		return &Index{corpus: corpus}
 	}
 	counts := make([]map[string]int, len(docs))
 	lengths := make([]int, len(docs))
@@ -49,9 +63,16 @@ func BM25(query string, documents []Document) ([]Hit, string) {
 		}
 	}
 	if total == 0 {
-		return []Hit{}, corpus
+		return &Index{corpus: corpus}
 	}
 	avg := float64(total) / float64(len(docs))
+	return &Index{docs: docs, counts: counts, lengths: lengths, df: df, average: avg, corpus: corpus}
+}
+func (index *Index) Search(query string) []Hit {
+	docs, counts, lengths, df, avg := index.docs, index.counts, index.lengths, index.df, index.average
+	if len(docs) == 0 {
+		return []Hit{}
+	}
 	queryTerms := map[string]bool{}
 	for _, term := range terms(query) {
 		queryTerms[term] = true
@@ -82,18 +103,5 @@ func BM25(query string, documents []Document) ([]Hit, string) {
 		}
 		return hits[i].Score > hits[j].Score
 	})
-	return hits, corpus
-}
-func RRF(rankings ...[]string) map[string]float64 {
-	scores := map[string]float64{}
-	for _, ranking := range rankings {
-		seen := map[string]bool{}
-		for index, id := range ranking {
-			if !seen[id] {
-				scores[id] += 1.0 / (60.0 + float64(index+1))
-				seen[id] = true
-			}
-		}
-	}
-	return scores
+	return hits
 }

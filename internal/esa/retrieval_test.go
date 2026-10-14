@@ -6,8 +6,8 @@ import (
 	"time"
 )
 
-// Seed through intake and human approval rather than assigning stored keywords
-// or scores. This exercises case feature extraction as well as retrieval.
+// Seed through intake and human approval rather than constructing directory
+// records directly. This exercises case collection as well as retrieval.
 func seedRetrievalCase(t *testing.T, e *Engine, source Ticket, approve bool) Case {
 	t.Helper()
 	source.Closed = true
@@ -66,14 +66,6 @@ func TestCaseContextNeverBypassesAgent(t *testing.T) {
 			run := e.Store.Snapshot().Runs[receipt.RunID]
 			if run.Route != "engineering_analysis" || run.State != "queued" || len(run.Report.Recommendations) != 0 {
 				t.Fatal("host made a diagnosis", run)
-			}
-			if len(run.Matches) != 0 {
-				t.Fatal("intake still preselected cases", run.Matches)
-			}
-			for _, m := range run.Matches {
-				if m.Applicable || m.Solution != "" {
-					t.Fatal("host asserted applicability", m)
-				}
 			}
 			calls := 0
 			processed, err := e.ProcessOne(context.Background(), analyzerFunc(func(_ context.Context, in AnalyzeRequest) (Report, error) {

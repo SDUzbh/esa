@@ -5,8 +5,10 @@
 <% task = @row['investigation']; solution = @row['solution']; engineering_issue = @row['engineering_issue'] %>
 <% if task %><div class="box"><h3>Shared engineering investigation</h3>
 <p><strong>Engineering issue:</strong> <%= engineering_issue ? engineering_issue['id'] : 'Unassigned until analysis completes' %> · <strong>Investigation:</strong> <%= esa_label(task['state']) %></p>
+<% if %w[running investigating].include?(task['state']) && task['phase'].present? %><p><strong>Stage:</strong> <%= esa_label(task['phase']) %><% if task['phase'] == 'waiting_engineering' %> · Waiting for an available engineering worker.<% end %></p><% end %>
 <p><%= link_to 'Engineering issue list', esa_engineering_issues_path %></p>
-<p>Tickets share an investigation when diagnostic content, affected versions, components and environment match. Membership remains tentative until reviewed.</p>
+<p>Identical inputs share an investigation automatically. Routing Agent can also join matching symptoms within the same version, component and environment scope. Membership remains tentative until reviewed.</p>
+<% if @row['solution_application'] %><p><strong>Applicability:</strong> <%= esa_label(@row.dig('solution_application', 'state')) %>. This references existing knowledge; it does not create a new solution.</p><% end %>
 <% if solution %><p><strong>Solution:</strong> Revision <%= solution['revision'] %> · <%= esa_label(solution['state']) %> · <%= solution['origin'] %></p>
 <% if solution['state'] == 'proposed' %><p class="warning">Agent proposal awaiting engineer review. Source citations alone do not verify the cause or repair.</p><% end %>
 <% if solution['state'] == 'trusted' %><% %w[cause solution validation].each do |field| %><p><strong><%= esa_label(field) %>:</strong> <%= solution.dig('resolution', field) %></p><% end %><p>Reviewed by <%= solution['reviewer'] %>. <%= solution['note'] %></p><% end %>
@@ -18,7 +20,10 @@
 <% routing = run.dig('report', 'routing') %>
 <% if routing %><p><strong>Routing decision:</strong> <%= esa_label(routing['action']) %> · <%= routing['reason'] %></p>
 <% if routing['action'] == 'reuse' %><p>Existing solution reused. The engineering Agent was not invoked.</p><% end %>
-<p><strong>Routing calls:</strong> <%= routing.dig('usage', 'calls') || 0 %> · <strong>Engineering calls:</strong> <%= [run.dig('report', 'usage', 'calls').to_i - routing.dig('usage', 'calls').to_i, 0].max %></p><% end %>
+<% assignment = run.dig('report', 'assignment_routing') %>
+<p><strong>Initial routing calls:</strong> <%= routing.dig('usage', 'calls') || 0 %> · <strong>Assignment routing calls:</strong> <%= assignment&.dig('usage', 'calls') || 0 %> · <strong>Engineering calls:</strong> <%= [run.dig('report', 'usage', 'calls').to_i - routing.dig('usage', 'calls').to_i - assignment&.dig('usage', 'calls').to_i, 0].max %></p><% end %>
+<% if run.dig('report', 'issue_request') %><p><strong>Engineering grouping request:</strong> <%= run.dig('report', 'issue_request', 'title') %> · <%= run.dig('report', 'issue_request', 'reason') %></p><% end %>
+<% if run.dig('report', 'assignment_routing') %><p><strong>Routing Agent grouping:</strong> <%= esa_label(run.dig('report', 'assignment_routing', 'action')) %> · <%= run.dig('report', 'assignment_routing', 'reason') %></p><% end %>
 <p><%= run.dig('report', 'summary') %></p>
 <% Array(run.dig('report', 'alerts')).each do |alert| %><p class="warning"><strong>Analysis warning:</strong> <%= alert['message'] %></p><% end %>
 <% Array(run.dig('report', 'environment_requests')).each do |request| %><div class="box"><h3>Environment change requested</h3><p><%= request['reason'] %></p><p><strong>Proposed change:</strong> <%= request['proposed_change'] %></p><p><strong>Validation:</strong> <%= request['validation'] %></p><p>Pending engineer review.</p></div><% end %>
@@ -66,17 +71,18 @@
 <% { 'resolution_reason' => 'reason', 'cause' => 'cause', 'solution' => 'solution', 'validation' => 'validation' }.each do |name, field| %><p><%= label_tag name, esa_label(name) %><%= text_area_tag name, @metadata.dig('resolution', field), rows: 3, cols: 75 %></p><% end %>
 </div><%= submit_tag 'Save metadata locally' %><% end %><% end %>
 <% if User.current.allowed_to?(:review_esa, @issue.project) %>
-<% if task && engineering_issue && !@issue.closed? %><h3>Review issue membership</h3><%= form_tag esa_review_membership_path(@issue) do %>
+<% if engineering_issue && @row['membership'] && !@issue.closed? %><h3>Review issue membership</h3><%= form_tag esa_review_membership_path(@issue) do %>
 <%= hidden_field_tag :snapshot_id, @row['snapshot_id'] %>
+<%= hidden_field_tag :membership_id, @row.dig('membership', 'id') %>
 <p><%= label_tag :engineering_issue_id, 'Engineering issue ID' %> <%= text_field_tag :engineering_issue_id, '', size: 50 %> Leave blank to split into a new issue.</p>
 <p><%= label_tag :membership_reason, 'Reason and contradictory evidence' %> <%= text_field_tag :membership_reason, '', size: 65, required: true %></p>
-<%= submit_tag 'Revise membership' %><% end %><% end %>
-<% if record && @issue.closed? %><h3>Case review</h3><%= form_tag esa_review_case_path(@issue) do %><%= text_field_tag :note, '', placeholder: 'Review evidence and applicability', size: 65 %><%= button_tag 'Approve trusted case', name: :review_action, value: 'approve' %><%= button_tag 'Reject case', name: :review_action, value: 'reject' %><% end %><% end %>
-<% if task && solution %><h3>Shared solution review</h3><%= form_tag esa_review_investigation_path(@issue) do %>
-<%= hidden_field_tag :solution_id, solution['id'] %><div class="box tabular">
-<% %w[cause solution validation].each do |field| %><p><%= label_tag field, esa_label(field) %><%= text_area_tag field, solution.dig('resolution', field), rows: 3, cols: 75 %></p><% end %>
+<p>Changes membership only. To investigate again, explicitly forward a new analysis request.</p><%= submit_tag 'Revise membership' %><% end %><% end %>
+<% if record && @issue.closed? && !record['solution_id'].present? %><h3>Case review</h3><%= form_tag esa_review_case_path(@issue) do %><%= text_field_tag :note, '', placeholder: 'Review evidence and applicability', size: 65 %><%= button_tag 'Approve trusted case', name: :review_action, value: 'approve' %><%= button_tag 'Reject case', name: :review_action, value: 'reject' %><% end %><% end %>
+<% if task && solution %><h3><%= @row['solution_application'] ? 'Review solution applicability' : 'Shared solution review' %></h3><%= form_tag esa_review_investigation_path(@issue) do %>
+<%= hidden_field_tag :solution_id, solution['id'] %><%= hidden_field_tag :application_revision, @row.dig('solution_application', 'revision') %><div class="box tabular">
+<% unless @row['solution_application'] %><% %w[cause solution validation].each do |field| %><p><%= label_tag field, esa_label(field) %><%= text_area_tag field, solution.dig('resolution', field), rows: 3, cols: 75 %></p><% end %><% end %>
 <p><%= label_tag :note, 'Review note' %><%= text_field_tag :note, '', size: 65 %></p></div>
-<%= button_tag 'Publish reviewed solution', name: :review_action, value: 'approve' %> <%= button_tag 'Reject proposal', name: :review_action, value: 'reject' %> <%= button_tag 'Withdraw solution', name: :review_action, value: 'withdraw' %>
+<%= button_tag(@row['solution_application'] ? 'Accept applicability' : 'Publish reviewed solution', name: :review_action, value: 'approve') %> <%= button_tag 'Reject proposal', name: :review_action, value: 'reject' %> <%= button_tag(@row['solution_application'] ? 'Withdraw applicability' : 'Withdraw solution', name: :review_action, value: 'withdraw') %>
 <% end %><% end %>
 <% end %>
 <h3>Run history</h3><table class="list"><thead><tr><th>Created</th><th>State</th><th>Route</th><th>Config version</th><th>Provider calls</th></tr></thead><tbody><% @result['history'].each do |item| %><tr><td><%= item['created_at'] %></td><td><%= esa_label(item['state']) %></td><td><%= esa_label(item['route']) %></td><td><%= item['rule_version'] %></td><td><%= item.dig('report', 'usage', 'calls') || 0 %></td></tr><% end %></tbody></table>

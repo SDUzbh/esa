@@ -36,7 +36,7 @@ func run() error {
 	registryPath := flag.String("registry", "", "Project/release registry for per-task historical source resolution")
 	profiles := flag.String("profiles", "profiles", "Operator-approved versioned Profile and Skill directory")
 	toolCatalog := flag.String("tool-catalog", "", "Private JSON catalog of approved pinned temporary tools")
-	concurrency := flag.Int("concurrency", 1, "Maximum registry investigations running simultaneously")
+	concurrency := flag.Int("concurrency", 3, "Maximum engineering environments running simultaneously (1..3)")
 	issuesRoot := flag.String("issues-directory", "runtime/esa/issues", "Local read-only root of ESA Issue projections shared with the service")
 	runs := flag.String("runs", ".esa/codex-runs", "Private invocation audit directory")
 	tokenFile := flag.String("token-env-file", "deploy/redmine/.env", "Private environment file containing ESA_API_TOKEN")
@@ -163,11 +163,11 @@ func run() error {
 			return fmt.Errorf("tool catalog must contain at most 64 packages")
 		}
 	}
+	if *concurrency < 1 || *concurrency > 3 {
+		return fmt.Errorf("engineering concurrency must be 1..3")
+	}
+	provider.Slots = make(chan struct{}, *concurrency)
 	if *registryPath != "" {
-		if *concurrency < 1 || *concurrency > 8 {
-			return fmt.Errorf("registry concurrency must be 1..8")
-		}
-		provider.Slots = make(chan struct{}, *concurrency)
 		script := ""
 		if *managed {
 			script, err = filepath.Abs("scripts/replay_session.py")

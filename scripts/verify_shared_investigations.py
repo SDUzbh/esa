@@ -58,7 +58,9 @@ def main():
                     break
                 time.sleep(0.05)
             assert row['solution']['state'] == 'proposed'
-            assert len(json.loads((directory / 'provider-calls.json').read_text())) == 1, 'duplicate provider spend'
+            provider_calls = json.loads((directory / 'provider-calls.json').read_text())
+            assert [call['stage'] for call in provider_calls] == ['route', 'engineer', 'assign'], 'duplicate or missing pipeline stages'
+            assert row['latest_run']['report']['usage']['calls'] == 3, 'pipeline usage was not aggregated'
             assert request('/v1/engineering-issues')['issues'][0]['visible_ticket_count'] == 100
             task_id, solution_id = row['investigation']['id'], row['solution']['id']
             owner = row['solution']['source_ticket_id']
@@ -73,9 +75,10 @@ def main():
             assert [revision['state'] for revision in history] == ['proposed', 'trusted']
             assert history[0]['id'] == solution_id
             assert updated['latest_run']['report']['assessment']['causal_verification'] == 'unverified'
-            split = request('/v1/tickets/' + member + '/membership/review', {'expected_snapshot_id': updated['snapshot_id'], 'issue_id': '', 'reviewer': 'fixture-engineer', 'reason': 'Independent customer symptom needs separate scope review'})
-            assert split['run_id'] != receipts[0]['run_id'], 'split retained the original task'
-            print(json.dumps({'status': 'passed', 'concurrent_tickets': 100, 'initial_provider_calls': 1, 'checks': ['deduplication', 'pending_not_trusted', 'visibility', 'immutable_solution_revisions', 'reviewed_split', 'causal_status']}))
+            split = request('/v1/tickets/' + member + '/membership/review', {'expected_snapshot_id': updated['snapshot_id'], 'expected_membership_id': updated['membership']['id'], 'issue_id': '', 'reviewer': 'fixture-engineer', 'reason': 'Independent customer symptom needs separate scope review'})
+            assert split['run_id'] == receipts[0]['run_id'], 'membership change queued a new investigation'
+            assert len(json.loads((directory / 'provider-calls.json').read_text())) == 3, 'membership change invoked a provider'
+            print(json.dumps({'status': 'passed', 'concurrent_tickets': 100, 'initial_provider_calls': 3, 'initial_engineering_calls': 1, 'checks': ['deduplication', 'pipeline_stages', 'aggregate_usage', 'pending_not_trusted', 'visibility', 'immutable_solution_revisions', 'reviewed_split', 'causal_status']}))
         finally:
             os.killpg(process.pid, signal.SIGTERM)
             try:

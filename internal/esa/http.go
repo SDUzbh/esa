@@ -83,20 +83,20 @@ func ticketAllowed(r *http.Request, id string) bool {
 
 // Withhold a report if its case evidence is outside the user's issue visibility.
 func visibleRun(r *http.Request, s State, run Run) Run {
+	// Retired runs without explicit provenance cannot establish visibility of
+	// their former cross-ticket evidence. Preserve them only in the stored audit.
+	if run.WorkflowVersion != WorkflowVersion && run.InvestigationID == "" && run.SourceTicketID == "" {
+		run.Report = Report{Summary: "Historical evidence has no verifiable source provenance; inspect the retained audit with an authorized engineer."}
+	}
+	run.StoredFields = nil
+	run.Report.StoredFields = nil
+	run.Report.AccessedIssueIDs = nil
+	run.Input.StoredFields = nil
 	if run.SourceTicketID != "" {
 		source, ok := s.Tickets[run.SourceTicketID]
 		if !ok || source.Private || !ticketAllowed(r, run.SourceTicketID) || !allowed(r, source.ProjectID) {
 			run.SourceTicketID = ""
 			run.Report = Report{Summary: "Shared investigation evidence is outside your issue visibility. Ask an authorized engineer to review it."}
-			run.Matches = nil
-		}
-	}
-	for _, m := range run.Matches {
-		c, ok := s.Cases[m.CaseID]
-		if !ok || !ticketAllowed(r, c.TicketID) || !allowed(r, c.ProjectID) {
-			run.Matches = nil
-			run.Report = Report{Summary: "Case evidence is outside your issue visibility. Ask an authorized engineer to review this analysis."}
-			break
 		}
 	}
 	return run
@@ -167,13 +167,15 @@ func (api *API) events(w http.ResponseWriter, r *http.Request) {
 }
 
 type TicketRow struct {
-	SnapshotID       string            `json:"snapshot_id,omitempty"`
-	Investigation    *Investigation    `json:"investigation,omitempty"`
-	Solution         *SolutionRevision `json:"solution,omitempty"`
-	EngineeringIssue *EngineeringIssue `json:"engineering_issue,omitempty"`
-	Ticket           Ticket            `json:"ticket"`
-	LatestRun        *Run              `json:"latest_run,omitempty"`
-	Case             *Case             `json:"case,omitempty"`
+	Application      *SolutionApplication `json:"solution_application,omitempty"`
+	Membership       *IssueTicketLink     `json:"membership,omitempty"`
+	SnapshotID       string               `json:"snapshot_id,omitempty"`
+	Investigation    *Investigation       `json:"investigation,omitempty"`
+	Solution         *SolutionRevision    `json:"solution,omitempty"`
+	EngineeringIssue *EngineeringIssue    `json:"engineering_issue,omitempty"`
+	Ticket           Ticket               `json:"ticket"`
+	LatestRun        *Run                 `json:"latest_run,omitempty"`
+	Case             *Case                `json:"case,omitempty"`
 }
 
 func rowFor(s State, t Ticket) TicketRow {
@@ -183,7 +185,8 @@ func rowFor(s State, t Ticket) TicketRow {
 		row.LatestRun = &run
 		if task, ok := s.Investigations[run.InvestigationID]; ok {
 			row.Investigation = &task
-			if solution, ok := s.Solutions[task.SolutionID]; ok {
+			row.Application = task.Application
+			if solution, ok := taskSolution(s, task); ok {
 				row.Solution = &solution
 			}
 			if issue, ok := s.Issues[task.IssueID]; ok {
@@ -191,10 +194,39 @@ func rowFor(s State, t Ticket) TicketRow {
 			}
 		}
 	}
+	if link, ok := activeMembership(s, t.ID); ok {
+		row.Membership = &link
+		if issue, exists := s.Issues[link.IssueID]; exists {
+			row.EngineeringIssue = &issue
+		}
+		if row.Investigation != nil && link.IssueID != row.Investigation.IssueID {
+			row.Investigation = nil
+			row.Solution = nil
+			row.Application = nil
+			if row.LatestRun != nil {
+				copy := *row.LatestRun
+				copy.IssueID = link.IssueID
+				copy.State = "membership_reviewed"
+				copy.Report = Report{Summary: "Membership updated without analysis. The previous diagnosis remains in history; request analysis explicitly if needed."}
+				row.LatestRun = &copy
+			}
+		}
+	}
 	for _, c := range s.Cases {
 		if c.TicketID == t.ID {
 			row.Case = &c
 			break
+		}
+	}
+	if row.Investigation != nil && row.Investigation.IssueID != "" {
+		if _, exists := s.Issues[row.Investigation.IssueID]; !exists {
+			row.Investigation, row.Solution, row.Application = nil, nil, nil
+			if row.LatestRun != nil {
+				copy := *row.LatestRun
+				copy.State = "issue_removed"
+				copy.Report = Report{Summary: "The associated engineering issue was removed by retention. Earlier evidence remains in history; explicitly forward the ticket to analyze again."}
+				row.LatestRun = &copy
+			}
 		}
 	}
 	return row
@@ -343,6 +375,20 @@ func (api *API) ticket(w http.ResponseWriter, r *http.Request) {
 	if !ok || t.ForwardedBy == "" || t.ForwardedAt.IsZero() || !ticketAllowed(r, t.ID) || !allowed(r, t.ProjectID) {
 		writeError(w, ErrNotFound)
 		return
+	}
+	if !t.Private {
+		if err := api.Engine.update(func(state *State) error {
+			current := state.Tickets[t.ID]
+			if !current.Private && ticketAllowed(r, current.ID) && allowed(r, current.ProjectID) {
+				touchTicketIssue(state, current.ID, api.Engine.Now())
+			}
+			return nil
+		}); err != nil {
+			writeError(w, err)
+			return
+		}
+		s = api.Engine.Store.Snapshot()
+		t = s.Tickets[t.ID]
 	}
 	history := []Run{}
 	seen := map[string]bool{}

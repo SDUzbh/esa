@@ -46,6 +46,9 @@ func TestRoutingCLIHelper(t *testing.T) {
 		if decision == "reuse_agent" {
 			kind = "agent_analyzed"
 		}
+		if strings.HasPrefix(decision, "join") || decision == "reuse_pending" {
+			kind = "investigating"
+		}
 		args, _ := json.Marshal(map[string]any{"query": "", "kind": kind, "limit": 20})
 		result, err := server.Call(context.Background(), "issue_search", args)
 		if err != nil {
@@ -57,15 +60,18 @@ func TestRoutingCLIHelper(t *testing.T) {
 		}
 		_ = json.Unmarshal(packet, &found)
 		routing := map[string]string{"action": "analyze", "record_path": "", "record_hash": "", "reason": "No reusable solution covers this ticket"}
-		if strings.HasPrefix(decision, "reuse") || decision == "no_read" || decision == "invent" {
+		if strings.HasPrefix(decision, "reuse") || strings.HasPrefix(decision, "join") || decision == "no_read" || decision == "invent" {
 			entry := found.Entries[0]
-			if decision != "no_read" {
+			if decision != "no_read" && decision != "join_unread" {
 				args, _ = json.Marshal(map[string]string{"path": entry.Path, "sha256": entry.SHA256})
 				if _, err = server.Call(context.Background(), "issue_read", args); err != nil {
 					panic(err)
 				}
 			}
 			routing = map[string]string{"action": "reuse", "record_path": entry.Path, "record_hash": entry.SHA256, "reason": "The record covers the same failing behavior, version and environment"}
+			if strings.HasPrefix(decision, "join") {
+				routing["action"] = "join"
+			}
 			if decision == "invent" {
 				routing["record_path"] = "engineer_resolved/invented/issue.json"
 			}
@@ -80,8 +86,57 @@ func TestRoutingCLIHelper(t *testing.T) {
 		if err = os.WriteFile(output, raw, 0600); err != nil {
 			panic(err)
 		}
+	} else if filepath.Base(dir) == "assignment" {
+		raw, err := os.ReadFile(filepath.Join(dir, "tools-config.json"))
+		if err != nil {
+			panic(err)
+		}
+		var config replaytools.Config
+		if err = json.Unmarshal(raw, &config); err != nil {
+			panic(err)
+		}
+		server := replaytools.Server{Config: config}
+		if decision != "assignment_no_request" {
+			context, err := server.Call(context.Background(), "issue_context", json.RawMessage(`{}`))
+			if err != nil || context["routing_context"] == nil {
+				panic("Routing Agent could not read engineering request")
+			}
+		}
+		grouping := map[string]string{"action": "create", "record_path": "", "record_hash": "", "title": "Routing approved canonical title", "reason": "The inspected diagnosis describes a separate cause"}
+		if decision == "assign_existing" || decision == "assignment_unread" {
+			result, err := server.Call(context.Background(), "issue_search", json.RawMessage(`{"query":"","limit":20}`))
+			if err != nil {
+				panic(err)
+			}
+			packet, _ := json.Marshal(result)
+			var found struct {
+				Entries []esa.IssueIndexEntry `json:"entries"`
+			}
+			if err = json.Unmarshal(packet, &found); err != nil {
+				panic(err)
+			}
+			entry := found.Entries[0]
+			if decision != "assignment_unread" {
+				args, _ := json.Marshal(map[string]string{"path": entry.Path, "sha256": entry.SHA256})
+				if _, err = server.Call(context.Background(), "issue_read", args); err != nil {
+					panic(err)
+				}
+			}
+			grouping["action"], grouping["record_path"], grouping["record_hash"] = "assign", entry.Path, entry.SHA256
+		} else if decision == "assignment_info" {
+			grouping["action"], grouping["title"] = "request_information", ""
+		} else if decision == "assignment_override" {
+			grouping["action"] = "assign"
+		}
+		if _, err = server.Call(context.Background(), "read_code", json.RawMessage(`{"path":"Example.java"}`)); err == nil {
+			panic("Routing Agent acquired product source access")
+		}
+		raw, _ = json.Marshal(grouping)
+		if err = os.WriteFile(output, raw, 0600); err != nil {
+			panic(err)
+		}
 	} else {
-		answer := EngineeringOutput{Issue: esa.IssueAssignment{Title: "A newly diagnosed defect", Reason: "Observed in frozen source"}, Findings: []esa.Finding{{Commit: "old", File: "Example.java", StartLine: 1, EndLine: 1, Problem: "An empty value is dereferenced", Solution: "Guard the empty value", Evidence: []esa.Evidence{{Source: "git", Reference: "old:Example.java:1", Quote: "bug();"}}}}}
+		answer := EngineeringOutput{IssueRequest: esa.IssueRequest{Title: "A newly diagnosed defect", Reason: "Observed in frozen source"}, Findings: []esa.Finding{{Commit: "old", File: "Example.java", StartLine: 1, EndLine: 1, Problem: "An empty value is dereferenced", Solution: "Guard the empty value", Evidence: []esa.Evidence{{Source: "git", Reference: "old:Example.java:1", Quote: "bug();"}}}}}
 		raw, _ := json.Marshal(answer)
 		if err := os.WriteFile(output, raw, 0600); err != nil {
 			panic(err)
@@ -116,6 +171,9 @@ func routingFixture(t *testing.T, decision string) (*Provider, esa.AnalyzeReques
 	in := esa.AnalyzeRequest{RunID: "run_routing", Ticket: ticket, IssueDirectory: relative, IssueDirectoryHash: digest, ReadOnly: true, Contract: &esa.TaskContract{ReadOnly: true, ObservationCutoff: at}, Budget: esa.Budget{MaxCalls: 1, MaxInputTokens: 10000, MaxOutputTokens: 1000, TimeoutSeconds: 20}}
 	sourceCalls := new(int)
 	p := &Provider{CLI: cli, ToolCommand: "unused-fixture", Model: decision, RunsDir: t.TempDir(), IssuesRoot: root, Resolve: func(_ context.Context, in esa.AnalyzeRequest) (Registration, error) {
+		if in.IssueDirectory != "" || in.IssueDirectoryHash != "" || in.Contract != nil && in.Contract.IssueID != "" {
+			t.Fatal("engineering source registration received Issue authority or catalogue context")
+		}
 		*sourceCalls++
 		return Registration{Packet: Packet{Ticket: in.Ticket, Commit: "old", Cutoff: at, Documents: []Document{{Source: "git", Prefix: "old:Example.java:", First: 1, Lines: []string{"bug();"}}}}}, nil
 	}}
@@ -129,6 +187,9 @@ func TestRoutingReusesBothIssueKindsWithoutEngineering(t *testing.T) {
 				report, err := p.Analyze(context.Background(), in)
 				if err != nil || report.Routing == nil || report.Routing.Action != "reuse" || report.Usage.Calls != 1 || report.Usage.InputTokens != 12 || len(report.Findings) != 0 || len(report.Recommendations) != 1 {
 					t.Fatal("reuse failed", report, err)
+				}
+				if len(report.AccessedIssueIDs) != 1 || report.AccessedIssueIDs[0] != "issue_"+map[string]string{"agent": "agent_analyzed", "engineer": "engineer_resolved"}[kind] {
+					t.Fatal("verified read was not reported as an access", report.AccessedIssueIDs)
 				}
 			}
 			if *sourceCalls != 0 {
@@ -153,8 +214,83 @@ func TestRoutingReusesBothIssueKindsWithoutEngineering(t *testing.T) {
 func TestRoutingCallsEngineeringOnlyForNewProblem(t *testing.T) {
 	p, in, sourceCalls := routingFixture(t, "analyze")
 	report, err := p.Analyze(context.Background(), in)
-	if err != nil || *sourceCalls != 1 || report.Usage.Calls != 2 || report.Usage.InputTokens != 24 || len(report.Findings) != 1 || report.Routing.Action != "analyze" {
+	if err != nil || *sourceCalls != 1 || report.Usage.Calls != 3 || report.Usage.InputTokens != 36 || len(report.Findings) != 1 || report.Routing.Action != "analyze" {
 		t.Fatal(report, sourceCalls, err)
+	}
+	if len(report.AccessedIssueIDs) != 0 {
+		t.Fatal("search-only routing refreshed candidate access order")
+	}
+	contextPath := filepath.Join(p.RunsDir, in.RunID, "routing", "assignment-request.json")
+	raw, err := os.ReadFile(contextPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), "PRIVATE_CATALOGUE_SOLUTION") || !strings.Contains(string(raw), "issue_search") {
+		t.Fatal("handoff duplicated solution bodies or lost the search trail", string(raw))
+	}
+	server := replaytools.Server{Config: replaytools.Config{IssuesOnly: true, AuditPath: filepath.Join(t.TempDir(), "tools.jsonl"), IssuesRoot: p.IssuesRoot, IssueDirectory: in.IssueDirectory, IssueDirectoryHash: in.IssueDirectoryHash, IssueContext: contextPath}}
+	context, err := server.Call(context.Background(), "issue_context", json.RawMessage(`{}`))
+	if err != nil || context["routing_context"] == nil {
+		t.Fatal("Routing Agent cannot read the engineering handoff", err)
+	}
+	engineeringPrompt, err := os.ReadFile(filepath.Join(p.RunsDir, in.RunID, "engineering", in.RunID, "prompt.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, denied := range []string{"issue_directory", "issue_context", "assignment-request.json", "PRIVATE_CATALOGUE_SOLUTION"} {
+		if strings.Contains(string(engineeringPrompt), denied) {
+			t.Fatal("engineering received catalogue context", string(engineeringPrompt))
+		}
+	}
+	engineeringReport, err := os.ReadFile(filepath.Join(p.RunsDir, in.RunID, "engineering", in.RunID, "report.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var request esa.Report
+	if err = json.Unmarshal(engineeringReport, &request); err != nil || request.Issue != nil || request.IssueRequest == nil || report.AssignmentRouting == nil || report.Issue.Title != "Routing approved canonical title" {
+		t.Fatal("engineering controlled the final assignment", string(engineeringReport), report, err)
+	}
+	wrong := strings.Replace(string(raw), in.IssueDirectoryHash, "wrong-directory", 1)
+	wrongPath := filepath.Join(t.TempDir(), "wrong-context.json")
+	if err = os.WriteFile(wrongPath, []byte(wrong), 0600); err != nil {
+		t.Fatal(err)
+	}
+	server.Config.IssueContext = wrongPath
+	if _, err = server.Call(t.Context(), "issue_context", json.RawMessage(`{}`)); err == nil {
+		t.Fatal("handoff from another directory was accepted")
+	}
+}
+
+func TestAssignmentRoutingControlsGroupingAndFailureSpend(t *testing.T) {
+	for _, decision := range []string{"assign_existing", "assignment_info", "assignment_override", "assignment_unread", "assignment_no_request"} {
+		t.Run(decision, func(t *testing.T) {
+			p, in, sourceCalls := routingFixture(t, decision)
+			if decision == "assignment_override" {
+				in.Contract.IssueID = "reviewed-human-issue"
+			}
+			report, err := p.Analyze(context.Background(), in)
+			if report.Usage.Calls != 3 || report.Usage.InputTokens != 36 || *sourceCalls != 1 || len(report.Findings) != 1 {
+				t.Fatal("grouping lost stage costs or original findings", report, err)
+			}
+			switch decision {
+			case "assignment_unread", "assignment_no_request":
+				if err == nil || report.Issue != nil {
+					t.Fatal("unread grouping was accepted", report, err)
+				}
+			case "assignment_info":
+				if err != nil || report.Issue != nil || report.AssignmentRouting.Action != "request_information" {
+					t.Fatal("grouping clarification assigned an Issue", report, err)
+				}
+			case "assignment_override":
+				if err != nil || report.Issue == nil || report.Issue.ExistingID != in.Contract.IssueID {
+					t.Fatal("reviewed override lost", report, err)
+				}
+			default:
+				if err != nil || report.Issue == nil || report.Issue.ExistingID == "" || report.AssignmentRouting.Action != "assign" || len(report.AccessedIssueIDs) != 1 {
+					t.Fatal("Routing Agent did not assign the existing Issue", report, err)
+				}
+			}
+		})
 	}
 }
 func TestRoutingClarifiesWithoutEngineering(t *testing.T) {

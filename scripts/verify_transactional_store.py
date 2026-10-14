@@ -23,6 +23,8 @@ state = EsaBackendState.authority
 seed = state.packet.fetch(:state)
 input = Marshal.load(Marshal.dump(seed))
 input['snapshots'] = {'snapshot_1' => {'id' => 'snapshot_1', 'ticket' => {'project_id' => '1'}, 'hash' => 'original'}}
+input['engineering_issues'] = {'issue_1' => {'id' => 'issue_1', 'project_id' => '1', 'title' => 'Retention fixture'}}
+input['solution_revisions'] = {'solution_1' => {'id' => 'solution_1', 'project_id' => '1', 'issue_id' => 'issue_1'}}
 results = Queue.new
 threads = 2.times.map do
   Thread.new do
@@ -52,7 +54,13 @@ begin
 rescue ArgumentError
 end
 raise 'delete rollback failed' unless EsaBackendState.authority.packet == packet
-puts JSON.generate(status: 'passed', checks: ['transactional_claim', 'immutable_snapshot', 'rollback', 'single_authority'])
+pruned = Marshal.load(Marshal.dump(packet[:state]))
+pruned['engineering_issues'] = {}
+raise 'issue eviction failed' unless EsaBackendState.authority.commit!(pruned, 1)
+retained = EsaBackendState.authority.packet[:state]
+raise 'issue retained' unless retained.fetch('engineering_issues', {}).empty?
+raise 'eviction changed immutable history' unless retained['snapshots'] == packet[:state]['snapshots'] && retained['solution_revisions'] == packet[:state]['solution_revisions']
+puts JSON.generate(status: 'passed', checks: ['transactional_claim', 'immutable_snapshot', 'rollback', 'single_authority', 'issue_eviction_retains_history'])
 '''
 
 def run(args, **kwargs):

@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"regexp"
 	"sort"
 	"strings"
 	"sync/atomic"
@@ -19,10 +18,6 @@ import (
 var ErrInvalid = errors.New("invalid request")
 var ErrNotFound = errors.New("not found")
 var ErrConflict = errors.New("conflict")
-
-var words = regexp.MustCompile(`[A-Za-z0-9_]+(?:[.][A-Za-z0-9_]+)*`)
-var exceptions = regexp.MustCompile(`\b[A-Za-z][A-Za-z0-9_.]*(?:Exception|Error)\b`)
-var stopWords = map[string]bool{"the": true, "this": true, "that": true, "with": true, "from": true, "have": true, "when": true, "then": true, "there": true, "issue": true, "error": true, "exception": true, "timeout": true, "oom": true, "using": true, "after": true, "before": true, "does": true, "should": true, "could": true, "would": true, "and": true, "for": true, "not": true, "are": true, "was": true, "can": true, "but": true, "our": true, "has": true, "will": true, "how": true}
 
 type Engine struct {
 	IssueDirectory string
@@ -55,7 +50,7 @@ func NewEngine(store *Store, config Config) (*Engine, error) {
 		}
 	}
 	if config.Worker.MaxActivePerProject == 0 {
-		e.Config.Worker.MaxActivePerProject = 1
+		e.Config.Worker.MaxActivePerProject = EngineeringConcurrency + 1
 	}
 	if e.Config.Worker.MaxActivePerProject < 1 || e.Config.Worker.MaxActivePerProject > 8 {
 		return nil, fmt.Errorf("%w: max_active_per_project must be 1..8", ErrInvalid)
@@ -77,6 +72,9 @@ func NewEngine(store *Store, config Config) (*Engine, error) {
 		}
 		e.clock.Store(at.UnixNano())
 		e.Now = func() time.Time { return time.Unix(0, e.clock.Load()).UTC() }
+	}
+	if err := e.update(func(*State) error { return nil }); err != nil {
+		return nil, err
 	}
 	return e, nil
 }
@@ -154,28 +152,6 @@ func ticketText(t Ticket) string {
 	}
 	return text.String()
 }
-func keywords(text string) []string {
-	out := []string{}
-	for _, w := range words.FindAllString(lower(text), -1) {
-		if len(w) > 2 && !stopWords[w] {
-			out = append(out, w)
-		}
-	}
-	return unique(out)
-}
-func signals(t Ticket) []string {
-	out := append([]string{}, t.ErrorCodes...)
-	out = append(out, exceptions.FindAllString(ticketText(t), -1)...)
-	filtered := []string{}
-	for _, x := range unique(out) {
-		if !stopWords[x] && x != "timeoutexception" && x != "java.util.concurrent.timeoutexception" {
-			filtered = append(filtered, x)
-		}
-	}
-	return filtered
-}
-
-// CasesAt selects the latest case revision visible at the observation time.
 func CasesAt(history []Case, at time.Time) []Case {
 	latest := map[string]Case{}
 	for _, c := range history {
@@ -219,8 +195,7 @@ func (e *Engine) Receive(event Event) (Receipt, error) {
 	}
 	t.ForwardedBy = event.ForwardedBy
 	t.ForwardedAt = event.ForwardedAt
-	t.CategoryOverride = ""
-	t.Labels = nil
+	t.StoredFields = nil
 	now := e.Now()
 	event.ReceivedAt = now
 	if event.OccurredAt.IsZero() {
@@ -245,8 +220,7 @@ func (e *Engine) Receive(event Event) (Receipt, error) {
 	}
 	event.Ticket = t
 	var receipt Receipt
-	err := e.Store.Update(func(s *State) error {
-		generation := s.Generation
+	err := e.update(func(s *State) error {
 		previousRunID := s.Latest[t.ID]
 		if old, ok := s.Events[event.ID]; ok {
 			if hash(old.Ticket) != hash(t) || old.Origin != event.Origin || old.Force != event.Force {
@@ -273,9 +247,6 @@ func (e *Engine) Receive(event Event) (Receipt, error) {
 			e.detachChangedMemberships(s, t)
 			if t.Private {
 				if c, ok := s.Cases["case_"+hash(t.ID)[:24]]; ok && c.State != "invalidated" {
-					if c.State == "trusted" {
-						s.Generation++
-					}
 					c.State = "invalidated"
 					c.Version++
 					c.UpdatedAt = now
@@ -294,42 +265,37 @@ func (e *Engine) Receive(event Event) (Receipt, error) {
 				receipt.CaseID = c.ID
 			} else {
 				if c, ok := s.Cases["case_"+hash(t.ID)[:24]]; ok && c.State != "invalidated" {
-					wasTrusted := c.State == "trusted"
 					c.State = "invalidated"
 					c.ReviewNote = "The source ticket was reopened."
 					c.Version++
 					c.UpdatedAt = now
 					s.Cases[c.ID] = c
 					s.CaseHistory = append(s.CaseHistory, c)
-					if wasTrusted {
-						s.Generation++
-					}
 				}
 				receipt = e.enqueue(s, t, now, event.Force)
 				receipt.EventID = event.ID
 			}
 			supersedeInactiveTask(s, previousRunID, now)
+			touchTicketIssue(s, t.ID, now)
 		}
+		e.invalidateApplications(s)
 		s.Events[event.ID] = event
 		s.Receipts[event.ID] = receipt
-		if generation != s.Generation {
-			e.invalidateCaseRecommendations(s, now)
-		}
 		return nil
 	})
 	return receipt, err
 }
 
 func (e *Engine) collectCase(s *State, t Ticket, now time.Time) Case {
-	c := Case{ID: "case_" + hash(t.ID)[:24], TicketID: t.ID, ProjectID: t.ProjectID, SourceKey: t.SourceKey, Subject: t.Subject, Summary: t.Description, Components: unique(t.Components), Versions: unique(t.Versions), Environment: t.Environment, Signals: signals(t), Keywords: keywords(ticketText(t)), Resolution: t.Resolution, State: "draft", CreatedAt: now, UpdatedAt: now, Version: 1}
+	c := Case{ID: "case_" + hash(t.ID)[:24], TicketID: t.ID, ProjectID: t.ProjectID, SourceKey: t.SourceKey, Subject: t.Subject, Summary: t.Description, Components: unique(t.Components), Versions: unique(t.Versions), Environment: t.Environment, Resolution: t.Resolution, State: "draft", CreatedAt: now, UpdatedAt: now, Version: 1}
 	c.IssueID = s.Runs[s.Latest[t.ID]].IssueID
+	if override := s.IssueOverrides[t.ID]; override != "" {
+		c.IssueID = override
+	}
 	c.SourceHash = hash(struct {
 		Input      string
 		Resolution Resolution
 	}{diagnosticHash(t), t.Resolution})
-	if len(c.Keywords) > 100 {
-		c.Keywords = c.Keywords[:100]
-	}
 	if lower(t.Resolution.Reason) == "duplicate" {
 		c.State = "duplicate"
 	} else if contains([]string{"rejected", "cancelled", "won't fix", "wontfix", "not a problem", "invalid"}, t.Resolution.Reason) {
@@ -344,9 +310,13 @@ func (e *Engine) collectCase(s *State, t Ticket, now time.Time) Case {
 		}
 		c.CreatedAt = old.CreatedAt
 		c.Version = old.Version + 1
-		if old.State == "trusted" {
-			s.Generation++
-		}
+	}
+	if sol, ok := canonicalSolution(*s, c.IssueID, caseScope(c)); ok && sol.State == "trusted" && sameResolution(sol.Resolution, c.Resolution) {
+		c.SolutionID = sol.ID
+		c.State = "trusted"
+		c.ReviewedBy = sol.Reviewer
+		c.ReviewNote = sol.Note
+		c.TrustedAt = sol.AvailableAt
 	}
 	s.Cases[c.ID] = c
 	s.CaseHistory = append(s.CaseHistory, c)
@@ -362,66 +332,79 @@ type Review struct {
 
 func (e *Engine) ReviewCase(id string, review Review) (Case, error) {
 	var result Case
-	err := e.Store.Update(func(s *State) error {
+	err := e.update(func(s *State) error {
 		c, ok := s.Cases[id]
+		original := c
 		if !ok {
 			return ErrNotFound
 		}
-		if review.Reviewer == "" || !contains([]string{"approve", "reject"}, review.Action) {
-			return fmt.Errorf("%w: reviewer and approve/reject action are required", ErrInvalid)
+		if c.IssueID != "" {
+			if _, exists := s.Issues[c.IssueID]; !exists {
+				return fmt.Errorf("%w: engineering issue was removed", ErrConflict)
+			}
+			touchIssue(s, c.IssueID, e.Now())
+		}
+		if review.Reviewer == "" || !contains([]string{"approve", "reject", "withdraw"}, review.Action) {
+			return fmt.Errorf("%w: reviewer and valid review action required", ErrInvalid)
 		}
 		if review.Resolution != nil {
 			c.Resolution = *review.Resolution
 		}
-		wasTrusted := c.State == "trusted"
 		if review.Action == "approve" {
 			t, ok := s.Tickets[c.TicketID]
 			if !ok || !t.Closed || t.Private || c.State == "duplicate" || c.State == "archived" || c.State == "invalidated" {
-				return fmt.Errorf("%w: source ticket is not eligible for a trusted case", ErrInvalid)
+				return fmt.Errorf("%w: source ticket is not eligible", ErrInvalid)
 			}
 			if c.Resolution.Cause == "" || c.Resolution.Solution == "" || c.Resolution.Validation == "" || len(c.Components) == 0 || len(c.Versions) == 0 {
-				return fmt.Errorf("%w: confirmed cause, solution, validation, component, and affected version are required", ErrInvalid)
+				return fmt.Errorf("%w: confirmed cause, solution, verification and scope required", ErrInvalid)
 			}
-			c.State = "trusted"
-			c.TrustedAt = e.Now()
-		} else {
-			c.State = "rejected"
-			c.TrustedAt = time.Time{}
 		}
+		state := map[string]string{"approve": "trusted", "reject": "rejected", "withdraw": "withdrawn"}[review.Action]
+		if sol, ok := canonicalSolution(*s, c.IssueID, caseScope(c)); ok && c.IssueID != "" {
+			c.SolutionID = sol.ID
+			s.Cases[id] = c
+			if sol.State == state && sameResolution(sol.Resolution, c.Resolution) {
+				e.syncCases(s, sol)
+			} else {
+				next := sol
+				next.State = state
+				next.Origin = "engineer"
+				next.SourceTicketID = c.TicketID
+				next.Resolution = c.Resolution
+				next.Reviewer = review.Reviewer
+				next.Note = review.Note
+				e.publishSolution(s, s.Investigations[sol.InvestigationID], sol, next)
+			}
+			result = s.Cases[id]
+			if hash(result) != hash(original) && result.Version == original.Version {
+				result.Version++
+				result.UpdatedAt = e.Now()
+				s.Cases[id] = result
+				s.CaseHistory = append(s.CaseHistory, result)
+			}
+			return nil
+		}
+		if c.State == state && sameResolution(s.Cases[id].Resolution, c.Resolution) {
+			result = c
+			return nil
+		}
+		c.State = state
 		c.ReviewedBy = review.Reviewer
 		c.ReviewNote = review.Note
 		c.Version++
 		c.UpdatedAt = e.Now()
+		if state == "trusted" {
+			c.TrustedAt = e.Now()
+		} else {
+			c.TrustedAt = time.Time{}
+		}
 		s.Cases[id] = c
 		s.CaseHistory = append(s.CaseHistory, c)
-		if wasTrusted || c.State == "trusted" {
-			s.Generation++
-			e.publishReviewedCase(s, c)
-			e.invalidateCaseRecommendations(s, e.Now())
-		}
+		e.invalidateApplications(s)
 		result = c
 		return nil
 	})
 	return result, err
-}
-
-// Retire obsolete historical case recommendations without matching tickets or
-// scheduling analysis. New decisions are owned by the Agent.
-func (e *Engine) invalidateCaseRecommendations(s *State, now time.Time) {
-	for id, run := range s.Runs {
-		if run.Route != "case_reuse" || run.State == "invalidated" {
-			continue
-		}
-		for _, match := range run.Matches {
-			c, ok := s.Cases[match.CaseID]
-			if !ok || c.State != "trusted" || c.Version != match.CaseVersion {
-				run.State, run.UpdatedAt = "invalidated", now
-				run.Error = "The source case changed or was withdrawn. Forward this ticket for Agent review."
-				s.Runs[id] = run
-				break
-			}
-		}
-	}
 }
 
 func (e *Engine) AnalyzeTicket(id string, force bool, actor string) (Receipt, error) {

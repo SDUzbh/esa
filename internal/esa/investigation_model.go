@@ -26,11 +26,15 @@ type TicketSnapshot struct {
 	Cutoff      time.Time `json:"observation_cutoff"`
 }
 type EngineeringIssue struct {
-	ID        string    `json:"id"`
-	ProjectID string    `json:"project_id"`
-	Title     string    `json:"title"`
-	State     string    `json:"state,omitempty"`
-	CreatedAt time.Time `json:"created_at"`
+	LastAccessedAt      time.Time `json:"last_accessed_at,omitempty"`
+	AccessOrder         uint64    `json:"access_order,omitempty"`
+	TitleSourceTicketID string    `json:"title_source_ticket_id,omitempty"`
+	TitleRestricted     bool      `json:"title_restricted,omitempty"`
+	ID                  string    `json:"id"`
+	ProjectID           string    `json:"project_id"`
+	Title               string    `json:"title"`
+	State               string    `json:"state,omitempty"`
+	CreatedAt           time.Time `json:"created_at"`
 }
 type IssueTicketLink struct {
 	Version         int       `json:"version"`
@@ -45,10 +49,11 @@ type IssueTicketLink struct {
 	AvailableAt     time.Time `json:"available_at"`
 }
 type MembershipReview struct {
-	ExpectedSnapshotID string `json:"expected_snapshot_id"`
-	IssueID            string `json:"issue_id"`
-	Reviewer           string `json:"reviewer"`
-	Reason             string `json:"reason"`
+	ExpectedMembershipID string `json:"expected_membership_id"`
+	ExpectedSnapshotID   string `json:"expected_snapshot_id"`
+	IssueID              string `json:"issue_id"`
+	Reviewer             string `json:"reviewer"`
+	Reason               string `json:"reason"`
 }
 type InvestigationGroup struct {
 	ID            string    `json:"id"`
@@ -60,34 +65,38 @@ type InvestigationGroup struct {
 	CreatedAt     time.Time `json:"created_at"`
 }
 type TaskContract struct {
-	ReviewContext      string    `json:"review_context,omitempty"`
-	Objective          string    `json:"objective"`
-	SnapshotID         string    `json:"snapshot_id"`
-	InputHash          string    `json:"input_hash"`
-	ObservationCutoff  time.Time `json:"observation_cutoff"`
-	IssueID            string    `json:"issue_id"`
-	CompletionCriteria []string  `json:"completion_criteria"`
-	ReadOnly           bool      `json:"read_only"`
+	StoredFields       JSONFields `json:"-"`
+	Objective          string     `json:"objective"`
+	SnapshotID         string     `json:"snapshot_id"`
+	InputHash          string     `json:"input_hash"`
+	ObservationCutoff  time.Time  `json:"observation_cutoff"`
+	IssueID            string     `json:"issue_id"`
+	CompletionCriteria []string   `json:"completion_criteria"`
+	ReadOnly           bool       `json:"read_only"`
 }
 type Investigation struct {
-	ID                string       `json:"id"`
-	GroupID           string       `json:"group_id"`
-	IssueID           string       `json:"issue_id"`
-	ProjectID         string       `json:"project_id"`
-	RunID             string       `json:"run_id"`
-	State             string       `json:"state"`
-	Contract          TaskContract `json:"contract"`
-	Owner             string       `json:"owner,omitempty"`
-	Epoch             int          `json:"epoch"`
-	LeaseUntil        time.Time    `json:"lease_until,omitempty"`
-	HeartbeatAt       time.Time    `json:"heartbeat_at,omitempty"`
-	InvocationStarted bool         `json:"invocation_started"`
-	SolutionID        string       `json:"solution_id,omitempty"`
-	CreatedAt         time.Time    `json:"created_at"`
-	UpdatedAt         time.Time    `json:"updated_at"`
-	ElapsedMS         int64        `json:"elapsed_ms"`
+	JoinedInvestigationID string               `json:"joined_investigation_id,omitempty"`
+	Phase                 string               `json:"phase,omitempty"`
+	Application           *SolutionApplication `json:"solution_application,omitempty"`
+	ID                    string               `json:"id"`
+	GroupID               string               `json:"group_id"`
+	IssueID               string               `json:"issue_id"`
+	ProjectID             string               `json:"project_id"`
+	RunID                 string               `json:"run_id"`
+	State                 string               `json:"state"`
+	Contract              TaskContract         `json:"contract"`
+	Owner                 string               `json:"owner,omitempty"`
+	Epoch                 int                  `json:"epoch"`
+	LeaseUntil            time.Time            `json:"lease_until,omitempty"`
+	HeartbeatAt           time.Time            `json:"heartbeat_at,omitempty"`
+	InvocationStarted     bool                 `json:"invocation_started"`
+	SolutionID            string               `json:"solution_id,omitempty"`
+	CreatedAt             time.Time            `json:"created_at"`
+	UpdatedAt             time.Time            `json:"updated_at"`
+	ElapsedMS             int64                `json:"elapsed_ms"`
 }
 type SolutionRevision struct {
+	StoredFields    JSONFields `json:"-"`
 	ID              string     `json:"id"`
 	IssueID         string     `json:"issue_id"`
 	InvestigationID string     `json:"investigation_id"`
@@ -99,7 +108,6 @@ type SolutionRevision struct {
 	Revision        int        `json:"revision"`
 	Supersedes      string     `json:"supersedes,omitempty"`
 	RunID           string     `json:"run_id,omitempty"`
-	Report          *Report    `json:"report,omitempty"` // Historical inline reports; new revisions reference RunID.
 	Resolution      Resolution `json:"resolution"`
 	Reviewer        string     `json:"reviewer,omitempty"`
 	Note            string     `json:"note,omitempty"`
@@ -107,9 +115,28 @@ type SolutionRevision struct {
 	RecordedAt      time.Time  `json:"recorded_at"`
 }
 type SolutionReview struct {
-	ExpectedSolutionID string     `json:"expected_solution_id"`
-	Action             string     `json:"action"`
-	Reviewer           string     `json:"reviewer"`
-	Note               string     `json:"note"`
-	Resolution         Resolution `json:"resolution"`
+	ExpectedApplicationRevision int        `json:"expected_application_revision,omitempty"`
+	ExpectedSolutionID          string     `json:"expected_solution_id"`
+	Action                      string     `json:"action"`
+	Reviewer                    string     `json:"reviewer"`
+	Note                        string     `json:"note"`
+	Resolution                  Resolution `json:"resolution"`
+}
+
+// An application references existing knowledge. Its applicability review does
+// not publish another knowledge revision or change the source's trust status.
+type SolutionApplication struct {
+	SolutionID     string              `json:"solution_id,omitempty"`
+	CaseID         string              `json:"case_id,omitempty"`
+	CaseVersion    int                 `json:"case_version,omitempty"`
+	SourceTicketID string              `json:"source_ticket_id"`
+	State          string              `json:"state"`
+	Revision       int                 `json:"revision"`
+	Reviews        []ApplicationReview `json:"reviews,omitempty"`
+}
+type ApplicationReview struct {
+	State       string    `json:"state"`
+	Reviewer    string    `json:"reviewer"`
+	Note        string    `json:"note"`
+	AvailableAt time.Time `json:"available_at"`
 }

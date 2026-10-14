@@ -2,6 +2,7 @@
 <div class="contextual"><%= link_to 'All ESA tickets', esa_path %></div>
 <h2>ESA · Engineering issues</h2>
 <p>Engineering issues organize shared investigations. Tentative membership does not confirm a common cause. Counts include only tickets you can view.</p>
-<table class="list"><thead><tr><th>Engineering issue</th><th>Subject</th><th>State</th><th>Visible tickets</th></tr></thead><tbody>
-<% Array(@result['issues']).each do |row| %><tr><td><%= row.dig('issue', 'id') %></td><td><%= row.dig('issue', 'title') %></td><td><%= esa_label(row.dig('issue', 'state')) %></td><td><% Array(row['ticket_ids']).each do |id| %><%= link_to "##{id.delete_prefix('redmine:')}", esa_ticket_path(id.delete_prefix('redmine:')) %> <% end %></td></tr><% end %>
+<p>ESA retains at most 100 engineering issues across all projects. Empty issues are removed automatically; capacity eviction uses least recent access. Earlier ticket reports remain in history. Browsing this list does not refresh access order.</p>
+<table class="list"><thead><tr><th>Engineering issue</th><th>Engineering title</th><th>Representative ticket</th><th>State</th><th>Visible tickets</th></tr></thead><tbody>
+<% Array(@result['issues']).each do |row| %><tr><td><%= row.dig('issue', 'id') %></td><td><%= row.dig('issue', 'title').presence || 'Restricted title' %></td><td><%= row.dig('representative_ticket', 'subject') %></td><td><%= esa_label(row.dig('issue', 'state')) %></td><td><% Array(row['ticket_ids']).each do |id| %><%= link_to "##{id.delete_prefix('redmine:')}", esa_ticket_path(id.delete_prefix('redmine:')) %> <% end %></td></tr><% end %>
 </tbody></table>

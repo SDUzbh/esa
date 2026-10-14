@@ -71,7 +71,7 @@ func (e *Engine) detachChangedMemberships(s *State, t Ticket) {
 	if t.Private {
 		for id, task := range s.Investigations {
 			run := s.Runs[task.RunID]
-			if (run.TicketID == t.ID || s.Solutions[task.SolutionID].SourceTicketID == t.ID) && task.State != "withdrawn" {
+			if (run.TicketID == t.ID || taskSourceTicket(*s, task) == t.ID) && task.State != "withdrawn" {
 				task.State = "withdrawn"
 				task.UpdatedAt = e.Now()
 				s.Investigations[id] = task
@@ -84,20 +84,26 @@ func (e *Engine) detachChangedMemberships(s *State, t Ticket) {
 			}
 		}
 	}
+	e.invalidateApplications(s)
 }
 func taskHasActiveMembers(s State, task Investigation) bool {
 	for _, link := range s.Memberships {
-		if link.InvestigationID != task.ID || link.State != "tentative" {
+		if link.InvestigationID != task.ID || link.State != "tentative" || link.IssueID != task.IssueID {
 			continue
 		}
 		t, ok := s.Tickets[link.TicketID]
-		if ok && !t.Private && !t.Closed && s.Latest[link.TicketID] == task.RunID && investigationSignature(t) == s.Groups[task.GroupID].Signature {
+		if ok && !t.Private && !t.Closed && s.Latest[link.TicketID] == task.RunID && investigationSignature(t) == investigationSignature(s.Snapshots[link.SnapshotID].Ticket) && investigationScope(t) == s.Groups[task.GroupID].ScopeHash {
 			return true
 		}
 	}
 	return false
 }
 func availableTask(s State, task Investigation, cutoff time.Time) bool {
+	if task.IssueID != "" {
+		if _, exists := s.Issues[task.IssueID]; !exists {
+			return false
+		}
+	}
 	if task.CreatedAt.After(cutoff) || task.Contract.ObservationCutoff.After(cutoff) {
 		return false
 	}
@@ -107,10 +113,10 @@ func availableTask(s State, task Investigation, cutoff time.Time) bool {
 		return false
 	}
 	switch task.State {
-	case "queued", "running", "awaiting_configuration", "failed", "awaiting_information", "rejected":
+	case "queued", "running", "investigating", "awaiting_configuration", "failed", "awaiting_information", "rejected":
 		return true
-	case "agent_proposed", "trusted":
-		solution, ok := s.Solutions[task.SolutionID]
+	case "agent_proposed", "trusted", "reuse_proposed", "applied":
+		solution, ok := taskSolution(s, task)
 		return ok && !s.Tickets[solution.SourceTicketID].Private && (solution.State == "proposed" || solution.State == "trusted")
 	}
 	return false
@@ -128,7 +134,7 @@ func supersedeInactiveTask(s *State, runID string, now time.Time) {
 }
 
 func (e *Engine) newRun(s *State, t Ticket, snap TicketSnapshot, cutoff, now time.Time) Run {
-	return Run{ID: randomID("run_"), TicketID: t.ID, ProjectID: t.ProjectID, WorkflowVersion: WorkflowVersion, RuleVersion: e.Config.Version, Input: t, InputHash: diagnosticHash(t), SnapshotID: snap.ID, ObservationCutoff: cutoff, CaseGeneration: s.Generation, CreatedAt: now, UpdatedAt: now}
+	return Run{ID: randomID("run_"), TicketID: t.ID, ProjectID: t.ProjectID, WorkflowVersion: WorkflowVersion, RuleVersion: e.Config.Version, Input: t, InputHash: diagnosticHash(t), SnapshotID: snap.ID, ObservationCutoff: cutoff, CreatedAt: now, UpdatedAt: now}
 }
 
 func recordRun(s *State, run Run) Receipt {
@@ -165,7 +171,7 @@ func (e *Engine) enqueue(s *State, t Ticket, now time.Time, force bool) Receipt 
 	}
 	if !force {
 		if old, ok := s.Runs[s.Latest[t.ID]]; ok && old.WorkflowVersion == WorkflowVersion && old.InputHash == diagnosticHash(t) && old.RuleVersion == e.Config.Version {
-			if old.InvestigationID == "" || availableTask(*s, s.Investigations[old.InvestigationID], cutoff) {
+			if (s.IssueOverrides[t.ID] == "" || old.IssueID == s.IssueOverrides[t.ID]) && (old.InvestigationID == "" || availableTask(*s, s.Investigations[old.InvestigationID], cutoff)) {
 				return Receipt{TicketID: t.ID, RunID: old.ID, Action: "cached"}
 			}
 		}
@@ -192,7 +198,7 @@ func (e *Engine) enqueue(s *State, t Ticket, now time.Time, force bool) Receipt 
 	id := randomID("investigation_")
 	run := e.newRun(s, t, snap, cutoff, now)
 	runID := run.ID
-	contract := TaskContract{Objective: "Search the registered local Issue directory and judge the ticket against existing Agent analyses and engineer solutions. Reuse a justified conclusion, request essential information, or analyze read-only and provide source-pinned findings, a repair recommendation and verification steps.", SnapshotID: snap.ID, InputHash: snap.Hash, ObservationCutoff: cutoff, IssueID: group.IssueID, ReadOnly: true, CompletionCriteria: []string{"Address the reported behavior using supplied historical evidence", "Separate supported findings from uncertainty", "Do not modify product source or close customer tickets"}}
+	contract := TaskContract{Objective: "Routing Agent judges the ticket against the local Issue directory. Reuse a justified solution or obtain read-only engineering findings and an issue_request; Routing Agent then decides Issue grouping. Request essential missing information rather than inventing a result.", SnapshotID: snap.ID, InputHash: snap.Hash, ObservationCutoff: cutoff, IssueID: group.IssueID, ReadOnly: true, CompletionCriteria: []string{"Address the reported behavior using supplied historical evidence", "Engineering submits a grouping request; Routing Agent decides assignment", "Do not modify product source or close customer tickets"}}
 	task := Investigation{ID: id, GroupID: groupID, IssueID: group.IssueID, ProjectID: t.ProjectID, RunID: runID, State: "queued", Contract: contract, CreatedAt: cutoff, UpdatedAt: now}
 	run.InvestigationID, run.IssueID, run.Route = id, group.IssueID, "engineering_analysis"
 	group.CurrentTaskID = id
@@ -207,10 +213,22 @@ func (e *Engine) enqueue(s *State, t Ticket, now time.Time, force bool) Receipt 
 
 func (e *Engine) ReviewSolution(id string, review SolutionReview) (SolutionRevision, error) {
 	var result SolutionRevision
-	err := e.Store.Update(func(s *State) error {
+	err := e.update(func(s *State) error {
 		task, ok := s.Investigations[id]
 		if !ok {
 			return ErrNotFound
+		}
+		if _, exists := s.Issues[task.IssueID]; !exists {
+			return fmt.Errorf("%w: engineering issue was removed", ErrConflict)
+		}
+		touchIssue(s, task.IssueID, e.Now())
+		if strings.TrimSpace(review.Reviewer) == "" || !contains([]string{"approve", "reject", "withdraw"}, review.Action) {
+			return fmt.Errorf("%w: reviewer and valid action required", ErrInvalid)
+		}
+		if task.Application != nil {
+			var err error
+			result, err = e.reviewApplication(s, task, review)
+			return err
 		}
 		old, ok := s.Solutions[task.SolutionID]
 		if !ok {
@@ -219,11 +237,8 @@ func (e *Engine) ReviewSolution(id string, review SolutionReview) (SolutionRevis
 		if review.ExpectedSolutionID != old.ID {
 			return fmt.Errorf("%w: solution revision changed", ErrConflict)
 		}
-		if strings.TrimSpace(review.Reviewer) == "" || !contains([]string{"approve", "reject", "withdraw"}, review.Action) {
-			return fmt.Errorf("%w: reviewer and valid action required", ErrInvalid)
-		}
 		if review.Action == "approve" && (strings.TrimSpace(review.Resolution.Cause) == "" || strings.TrimSpace(review.Resolution.Solution) == "" || strings.TrimSpace(review.Resolution.Validation) == "") {
-			return fmt.Errorf("%w: cause, solution and verification are required", ErrInvalid)
+			return fmt.Errorf("%w: cause, solution and verification required", ErrInvalid)
 		}
 		source := s.Tickets[s.Runs[task.RunID].TicketID]
 		group := s.Groups[task.GroupID]
@@ -242,6 +257,10 @@ func (e *Engine) ReviewSolution(id string, review SolutionReview) (SolutionRevis
 			result.State = "rejected"
 		case "withdraw":
 			result.State = "withdrawn"
+		}
+		if result.State == old.State && sameResolution(result.Resolution, old.Resolution) {
+			result = old
+			return nil
 		}
 		result = e.publishSolution(s, task, old, result)
 		return nil

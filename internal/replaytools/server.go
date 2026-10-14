@@ -26,6 +26,7 @@ type Document struct {
 	Lines  []string `json:"lines"`
 }
 type Config struct {
+	IssueContext          string                 `json:"issue_context,omitempty"`
 	IssuesRoot            string                 `json:"issues_root,omitempty"`
 	IssueDirectory        string                 `json:"issue_directory,omitempty"`
 	IssueDirectoryHash    string                 `json:"issue_directory_hash,omitempty"`
@@ -109,9 +110,10 @@ func ReadAudit(path string) ([]Document, []esa.EnvironmentRequest, error) {
 }
 
 type Server struct {
-	Config  Config
-	granted []string
-	cleanup func() error
+	issueDirectory *esa.IssueDirectory
+	Config         Config
+	granted        []string
+	cleanup        func() error
 }
 
 type RuntimeSetup struct {
@@ -184,7 +186,10 @@ func (s *Server) owned(ctx context.Context) error {
 	return nil
 }
 func (s *Server) Call(ctx context.Context, name string, args json.RawMessage) (map[string]any, error) {
-	if name == "issue_search" || name == "issue_read" {
+	if name == "issue_search" || name == "issue_read" || name == "issue_context" {
+		if !s.Config.IssuesOnly {
+			return nil, errors.New("Issue catalogue access belongs to Routing Agent")
+		}
 		return s.issueCall(name, args)
 	}
 	if s.Config.IssuesOnly {
@@ -360,9 +365,7 @@ func (s *Server) Serve(ctx context.Context, in io.Reader, out io.Writer) (result
 		case "tools/list":
 			available := tools(s.Config.ProfilesRoot != "")
 			if s.Config.IssuesOnly {
-				available = routingTools()
-			} else if s.Config.IssueDirectory != "" {
-				available = append(available, routingTools()...)
+				available = routingTools(s.Config.IssueContext != "")
 			}
 			result = map[string]any{"tools": available}
 		case "tools/call":

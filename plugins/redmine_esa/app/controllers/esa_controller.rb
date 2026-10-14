@@ -135,7 +135,7 @@ class EsaController < ApplicationController
     row = @client.request(:get, "/v1/tickets/redmine:#{@issue.id}").fetch('ticket')
     task = row.fetch('investigation') { raise Esa::Error, 'No shared investigation is available.' }
     @client.request(:post, "/v1/investigations/#{task.fetch('id')}/review", {
-      expected_solution_id: params[:solution_id].to_s, action: params[:review_action],
+      expected_solution_id: params[:solution_id], expected_application_revision: params[:application_revision].to_i, action: params[:review_action],
       reviewer: User.current.login, note: params[:note].to_s,
       resolution: { cause: params[:cause].to_s, solution: params[:solution].to_s, validation: params[:validation].to_s }
     })
@@ -146,7 +146,7 @@ class EsaController < ApplicationController
   def review_membership
     return unless require_permission(:review_esa)
     @client.request(:post, "/v1/tickets/redmine:#{@issue.id}/membership/review", {
-      expected_snapshot_id: params[:snapshot_id].to_s, issue_id: params[:engineering_issue_id].to_s.strip,
+      expected_snapshot_id: params[:snapshot_id], expected_membership_id: params[:membership_id].to_s, issue_id: params[:engineering_issue_id].to_s.strip,
       reviewer: User.current.login, reason: params[:membership_reason].to_s
     })
     flash[:notice] = 'Issue membership revised. Frozen investigation inputs and earlier solutions remain in history.'

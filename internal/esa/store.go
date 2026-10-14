@@ -205,7 +205,7 @@ func (s *Store) needsWork(now time.Time, provider bool) bool {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	for _, task := range s.state.Investigations {
-		if task.State == "queued" || task.State == "running" && !task.LeaseUntil.After(now) || provider && task.State == "awaiting_configuration" && !task.InvocationStarted {
+		if task.State == "queued" || activeInvestigation(task) && !task.LeaseUntil.After(now) || provider && task.State == "awaiting_configuration" && !task.InvocationStarted {
 			return true
 		}
 	}

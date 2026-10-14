@@ -9,15 +9,35 @@ flowchart LR
     A["Manually forwarded ticket"] --> B["Routing Agent: search/read local Issues"]
     B --> C{"Existing solution applies?"}
     C -->|"Agent analyzed / engineer resolved"| D["Return stored solution; skip engineering Agent"]
-    C -->|"No"| E["Engineering Agent + approved sandbox tools"]
+    C -->|"Matching investigation"| Q["Join existing investigating task"]
+    C -->|"No"| W["Persist investigating claim / wait for capacity"]
+    W --> E["Engineering workers: maximum 3 / isolated tools"]
     C -->|"Missing essential information"| F["Request information"]
-    E --> G["Supported result: assign or create Issue"]
+    E --> G["Engineering grouping request + findings"]
+    G --> I["Routing Agent: assign / create / request information"]
+    I --> J["Backend validation and membership update"]
     D --> H["Link ticket; preserve source/review status"]
 ```
 
-Routing has only `issue_search` and `issue_read`. It cannot inspect product code, install software or run debugging tools. Only a new problem enters the engineering adapter and source registry. Reuse does not resolve source refs, prepare a runtime or invoke the engineering Agent. Each stage runs at most once per request; uncertain failures need explicit retry.
+Routing has `issue_search` and `issue_read`, plus `issue_context` for the post-analysis request. Routing cannot inspect product code, install software or run debugging tools. Engineering has none of the Issue tools: the server rejects catalogue calls even if an obsolete registration contains directory paths. Only a new problem enters the engineering adapter and source registry. Reuse does not resolve source refs, prepare a runtime or invoke the engineering Agent. Each stage runs at most once per request; uncertain failures need explicit retry.
 
-Both completed Agent proposals and engineer solutions can be reused. Engineer solutions take precedence when applicable; an Agent proposal need not wait for approval before reuse. Applicability remains a Routing Agent judgment about symptoms, component, version and environment. Agent proposals do not become trusted repairs through reuse. A reused engineer solution retains its source review provenance, while applicability to a new ticket remains reviewable. No ticket is automatically closed.
+Both completed Agent proposals and engineer solutions can be reused. Engineer solutions take precedence when applicable; an Agent proposal need not wait for approval before reuse. Applicability remains a Routing Agent judgment about symptoms, component, version and environment. Agent proposals do not become trusted repairs through reuse. Reuse stores a reference to the original solution or case revision. Applicability to the new ticket has a separate review history; accepting it does not publish another knowledge revision or change the source review state. A changed or withdrawn source invalidates dependent applications. No ticket is automatically closed.
+
+The live Engineering Issue catalogue is capped at 100 globally using least recent access, after empty Issue cleanup. Removed Issue IDs are excluded even when historical cases or solutions remain on disk. Successful `issue_read` operations count as accesses when the stage completes; `issue_search` and directory export do not. Standalone cases and frozen historical views are separate from this Issue count. See [retention policy](ESA_OPERATIONS.md#issue-retention).
+
+## Pipeline and in-progress deduplication
+
+The live service sends three named stages to the same Codex adapter: `route`, `engineer`, and `assign`. The latter two continue the audited run without repeating intake routing. Stage inputs bind the same immutable ticket, contract and directory hash. Successful stage reports are cached; atomic attempt directories prevent an interrupted stage from silently spending again. A failed or uncertain stage requires operator inspection and an explicit new run.
+
+ESA runs four bounded consumers. The shipped `worker.max_active_per_project: 4` counts whole workflows, including routing/waiting/assignment; operators may lower it. Engineering capacity is a separate global hard limit of three, reserved in state transactions across workers/projects. The adapter independently caps engineering environments with `-concurrency` (default 3, range 1..3). An environment is prepared only for an assigned task and cleaned before the engineering stage returns. Assignment routing releases that capacity for the next task. Source-only registrations still have no runnable environment.
+
+Initial routing is serialized per project until its outcome or in-progress claim is committed. The expensive engineering stage does not hold that routing gate. `investigation.state: investigating` remains active while waiting for capacity, diagnosing and requesting grouping; `phase` distinguishes `waiting_engineering`, `investigating`, and `assignment`. Heartbeats, lease expiry and fencing protect all active phases. Failed, superseded, private or replaced work is no longer offered as active advice; uncertain work is not automatically retried.
+
+`investigating` is coordination metadata, not a third kind of solution. It contains only the earlier original ticket, scope and investigation identity, with no partial findings or repair. After an exact audited read, Routing Agent can return `join` with its path/hash and a concrete symptom match. ESA atomically rechecks project, exact component/version/environment scope, reviewed membership, source visibility, current ownership and live lease before joining. The new routing run retains its own usage/audit; members follow one shared investigation and receive its final Issue assignment. No Issue is created at intake. A generic exception alone is insufficient to establish common cause.
+
+A queued ticket can outlast an investigation that was active when it arrived. If the registered pipeline claim has completed beyond the ticket's frozen cutoff, the directory still exposes only its original input as `investigating` coordination metadata. It exposes no later diagnosis, Issue title, findings or solution; a `join` decision shares the investigation and current result visibility rules still apply. Later knowledge is never presented as time-eligible repair evidence. Claim metadata does not advance the historical availability of a repair. Completed knowledge available within the cutoff continues through `agent_analyzed`/`engineer_resolved` instead.
+
+Exact input duplicates already share a task before model invocation. Differently worded duplicates depend on Routing Agent's applicability judgment; concurrency control cannot prove semantic equivalence or prevent a model from missing a match. Joining fails closed if the target fails/expires or its source changes during routing; it does not launch a replacement engineer automatically.
 
 ## Layout
 
@@ -29,6 +49,7 @@ Both completed Agent proposals and engineer solutions can be reused. Engineer so
     index.jsonl
     agent_analyzed/<issue-key>/<scope-hash>/issue.json
     engineer_resolved/<issue-key>/<scope-hash>/issue.json
+    investigating/<investigation-key>/<scope-hash>/issue.json
 ```
 
 The index supports paginated search over title, source key, symptoms, diagnosis, component and version. Search returns bounded metadata with relative record paths and hashes; `issue_read` loads only selected records. Empty-query browsing handles differences in wording. The archive is not truncated to the first ten Issues or five cases.
@@ -37,7 +58,7 @@ A scope hash keeps different affected versions/environments separate within an I
 
 Each view is built from revisions available at its frozen forwarding cutoff and limited to one project. Current private, rejected or withdrawn sources are excluded. Files and the manifest are hash-checked; path traversal and symlink escapes are denied. Reuse requires a successful read audit for the exact selected path/hash. Before publishing, ESA reconstructs the report from that record and rechecks the source against authoritative state. The Agent cannot supply a replacement solution body.
 
-Views are immutable and published atomically. A later task gets a fresh eligible view after analysis, engineer review or source withdrawal. Older view files remain private audit artifacts and are never exposed to another task merely because they share a root. Do not edit them. Retention/garbage collection is operator-managed: preserve views referenced by active tasks or retained audits; there is no automatic archive deletion.
+Views are immutable and published atomically. Identical eligible record sets reuse a content-addressed view across task cutoffs; the manifest records the latest included availability, which cannot exceed the task cutoff. Analysis, review or withdrawal changes the eligible record set and produces another view. The tool server loads the index once per session and compiles BM25 once per kind, reusing it across queries. Older view files remain private audit artifacts and are never exposed to another task merely because they share a root. Do not edit them. Retention/garbage collection is operator-managed: preserve views referenced by active tasks or retained audits; there is no automatic archive deletion.
 
 ## Local service and Compose
 
@@ -54,8 +75,14 @@ Compose binds `ESA_ISSUES_DIRECTORY` (default `../../runtime/esa/issues`, relati
 
 ## Calls, usage and validation
 
-`report.routing` records the decision, selected path/hash, reason and routing usage. `report.usage` aggregates actual routing and engineering calls/tokens. Reuse or clarification uses one routing call and zero engineering calls; new analysis normally uses two calls in total. `budget.max_calls: 1` is the per-stage invocation limit, not a claim that the complete workflow always costs one model call. The existing overall timeout and advisory per-ticket token thresholds still apply. Missing usage for either invoked stage makes the aggregate unknown.
+`report.routing` records the decision, selected path/hash, reason and routing usage. `report.usage` aggregates actual routing and engineering calls/tokens. Reuse, join or initial clarification uses one routing call and zero engineering calls; supported new analysis normally uses three calls in total: initial routing, engineering, then assignment routing. An engineering result without supported findings stops after two calls and creates no Issue. `budget.max_calls: 1` is the per-stage invocation limit, not a claim that the complete workflow always costs one model call. The existing overall timeout and advisory per-ticket token thresholds still apply. Missing usage for any invoked stage makes the aggregate unknown.
 
-Request, routing and engineering audits are stored beneath the provider's private per-run directory. Repeating a completed request returns its cached report; a partial/uncertain invocation is not silently retried. The replay tester continues to interact through public ESA APIs and does not implement this routing workflow itself.
+Engineering receives only the original ticket, its restricted diagnostic Task Contract, frozen source and approved runtime tools. Its strict output contains `findings`, `limitations` and an `issue_request` with a suggested title and reason. It cannot emit `issue`/`existing_id`, search the catalogue, choose membership, review knowledge or close tickets.
 
-Automated routing tests use a subprocess fixture and the real directory tool handlers: both Issue kinds skip engineering/source/runtime setup, unseen records cannot be reused, new problems invoke engineering once, and clarification invokes no engineering. Directory and application tests cover pagination, scope separation, historical cutoffs, withdrawal and source visibility. These tests verify orchestration and constraints, not model matching accuracy on real customer tickets.
+For supported findings, the adapter registers a local `assignment-request.json` with the original ticket, request, findings and earlier routing search trail. Routing Agent reads it through directory-hash-bound `issue_context`, reuses prior queries and reads relevant records on demand. Existing Issue assignment requires an exact audited record read; a frozen human override can be assigned without a record. The backend rechecks the exact record and current membership authority before writing. A grouping request for information retains the diagnosis and creates no new membership decision. Failure never silently falls back to Engineering Agent assignment.
+
+`report.issue_request` preserves Engineering Agent's suggestion; `report.assignment_routing` records Routing Agent's action, reason, record and usage. `report.issue` is the resulting validated assignment. Routing cannot rewrite the engineering findings. The final stage has its own private audit under `assignment/`.
+
+Request, routing and engineering audits are stored beneath the provider's private per-run directory. Repeating a completed request returns its cached report; a partial/uncertain invocation is not silently retried. Joined routing spend remains on its original run rather than being copied into the shared engineering report. The replay tester continues to interact through public ESA APIs and does not implement this routing workflow itself.
+
+Automated routing tests use a subprocess fixture and the real directory tool handlers: both Issue kinds skip engineering/source/runtime setup, unseen records cannot be reused, new problems invoke engineering once, and clarification invokes no engineering. Directory and application tests cover pagination, scope separation, historical cutoffs, withdrawal and source visibility. Pipeline tests also verify both Routing Agent request types, three-worker capacity across projects/workers, the fourth task waiting, release before grouping review, pending joins, delayed joins without future findings, lease fencing and visibility rechecks. These tests verify orchestration and constraints, not model matching accuracy on real customer tickets.

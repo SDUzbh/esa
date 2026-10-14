@@ -89,7 +89,7 @@ func TestContextOnlyRegistrationStillInvokesAgent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	answer := EngineeringOutput{Issue: esa.IssueAssignment{Title: "More context needed", Reason: "Affected release is unknown"}, Limitations: []string{"Provide the affected version and reproduction steps"}}
+	answer := EngineeringOutput{IssueRequest: esa.IssueRequest{Title: "More context needed", Reason: "Affected release is unknown"}, Limitations: []string{"Provide the affected version and reproduction steps"}}
 	data, _ := json.Marshal(answer)
 	fixture := filepath.Join(dir, "answer.json")
 	if err = os.WriteFile(fixture, data, 0600); err != nil {

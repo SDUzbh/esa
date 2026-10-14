@@ -32,7 +32,7 @@ func TestProviderCachesOneInvocationAndRejectsChangedInput(t *testing.T) {
 	dir := t.TempDir()
 	counter := filepath.Join(dir, "invocations")
 	fixture := filepath.Join(dir, "fixture.json")
-	r := EngineeringOutput{Issue: esa.IssueAssignment{Title: "Disconnect", Reason: "New defect"}, Findings: []esa.Finding{{Commit: "old", File: "file.java", StartLine: 10, EndLine: 10, Problem: "Disconnect", Solution: "Fail and retry", Evidence: []esa.Evidence{{Source: "git", Reference: "old:file.java:10", Quote: "complete(response);"}}}}}
+	r := EngineeringOutput{IssueRequest: esa.IssueRequest{Title: "Disconnect", Reason: "New defect"}, Findings: []esa.Finding{{Commit: "old", File: "file.java", StartLine: 10, EndLine: 10, Problem: "Disconnect", Solution: "Fail and retry", Evidence: []esa.Evidence{{Source: "git", Reference: "old:file.java:10", Quote: "complete(response);"}}}}}
 	b, _ := json.Marshal(r)
 	os.WriteFile(fixture, b, 0600)
 	script := filepath.Join(dir, "fake-codex")

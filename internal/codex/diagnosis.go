@@ -12,9 +12,9 @@ import (
 
 // EngineeringOutput is the model contract. Display fields are derived locally.
 type EngineeringOutput struct {
-	Issue       esa.IssueAssignment `json:"issue"`
-	Findings    []esa.Finding       `json:"findings"`
-	Limitations []string            `json:"limitations"`
+	IssueRequest esa.IssueRequest `json:"issue_request"`
+	Findings     []esa.Finding    `json:"findings"`
+	Limitations  []string         `json:"limitations"`
 }
 
 func object(properties map[string]any) map[string]any {
@@ -38,15 +38,15 @@ func evidenceSchema(sources ...string) map[string]any {
 func EngineeringSchema(sources ...string) []byte {
 	integer := map[string]any{"type": "integer", "minimum": 1}
 	finding := object(map[string]any{"commit": str(), "file": str(), "start_line": integer, "end_line": integer, "problem": str(), "solution": str(), "evidence": array(evidenceSchema(sources...))})
-	schema := object(map[string]any{"issue": object(map[string]any{"existing_id": str(), "title": str(), "reason": str()}), "findings": array(finding), "limitations": array(str())})
+	schema := object(map[string]any{"issue_request": object(map[string]any{"title": str(), "reason": str()}), "findings": array(finding), "limitations": array(str())})
 	b, _ := json.Marshal(schema)
 	return b
 }
 func (out EngineeringOutput) Report(packet Packet) (esa.Report, error) {
-	if strings.TrimSpace(out.Issue.Title) == "" || strings.TrimSpace(out.Issue.Reason) == "" {
-		return esa.Report{}, errors.New("issue title and reason are required")
+	if strings.TrimSpace(out.IssueRequest.Title) == "" || strings.TrimSpace(out.IssueRequest.Reason) == "" {
+		return esa.Report{}, errors.New("issue request title and reason are required")
 	}
-	r := esa.Report{Issue: &out.Issue, Findings: out.Findings, Summary: out.Issue.Title, Limitations: out.Limitations}
+	r := esa.Report{IssueRequest: &out.IssueRequest, Findings: out.Findings, Summary: out.IssueRequest.Title, Limitations: out.Limitations}
 	for _, f := range out.Findings {
 		if f.Commit != packet.Commit || f.File == "" || strings.Contains(f.File, ":") || f.StartLine < 1 || f.EndLine < f.StartLine || f.EndLine-f.StartLine >= 200 || strings.TrimSpace(f.Problem) == "" || strings.TrimSpace(f.Solution) == "" || len(f.Evidence) == 0 {
 			return r, errors.New("finding requires historical commit, file, bounded lines, problem, solution and evidence")

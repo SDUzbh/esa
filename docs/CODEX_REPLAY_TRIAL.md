@@ -2,7 +2,7 @@
 
 This document describes the focused application-provider trial, not the current external system tester. Its retained reports are historical artifacts. For current replay and evaluation, use [external system replay](TICKET_BACKTEST.md).
 
-This trial connects the installed, already authenticated Codex CLI through a Go HTTP adapter. ESA keeps deterministic routing hints and the asynchronous worker; the Agent returns issue assignment and specific code findings. Existing display fields are derived for engineer review. Ruby remains the Redmine integration layer. No Kafka or original Jira files are edited.
+This trial connects the installed, already authenticated Codex CLI through a Go HTTP adapter. ESA owns the asynchronous worker. In the current provider, Engineering Agent returns specific code findings and a grouping request; Routing Agent supplies the final Issue assignment. Existing display fields are derived for engineer review. Ruby remains the Redmine integration layer. No Kafka or original Jira files are edited.
 
 ## Selected issue and scope
 
@@ -33,7 +33,7 @@ GOCACHE="$PWD/.tools/go-cache" GOTOOLCHAIN=local .tools/go/bin/go build -o bin/e
 GOCACHE="$PWD/.tools/go-cache" GOTOOLCHAIN=local .tools/go/bin/go build -o bin/esa-codex ./cmd/esa-codex
 ```
 
-Prepare a **new**, nonexisting bundle directory. The current trial uses `.esa/replays/KAFKA-2880/trial-1`; the scripts select that directory explicitly.
+Prepare a **new**, nonexisting bundle directory. This historical fixture uses `.esa/replays/KAFKA-2880/trial-1`.
 
 ```sh
 bin/esa-replay -raw data/jira/raw/KAFKA-2880.json -repo kafka -ref 0.9.0.0 \
@@ -44,7 +44,7 @@ python3 scripts/replay_trial.py prepare
 python3 scripts/manage_codex_provider.py start
 ```
 
-Set the public endpoint `ESA_ANALYZER_URL=http://host.lima.internal:8091/analyze` in the private Compose `.env`, rebuild/recreate ESA, then run `python3 scripts/verify_codex_replay.py`. This script imports one historical ticket through Redmine; it does not import the Jira archive. `--retry` explicitly forces a new run and must only be used after inspecting previous provider activity.
+The former live Redmine import verifiers were removed because they depended on retired automatic intake and case matching. Current native routing coverage uses `go test ./internal/codex -run TestNativeRouting`; it exercises the public HTTP provider with fixture subprocesses and does not consume model tokens or modify live tickets. Use the external pipeline below for system replay.
 
 The previous imported-report evaluator has been removed. The current command below starts a **new system replay** through public APIs. It does not ingest or evaluate the diagnosis from this historical provider trial:
 

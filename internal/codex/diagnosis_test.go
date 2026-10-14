@@ -14,7 +14,7 @@ import (
 func TestStructuredLocationMustBeHistoricalAndInspected(t *testing.T) {
 	packet := Packet{Commit: "old", Documents: []Document{{Source: "git", Prefix: "old:x.java:", First: 2, Lines: []string{"bug();", "tail();"}}}}
 	f := esa.Finding{Commit: "old", File: "x.java", StartLine: 2, EndLine: 2, Problem: "Null completion", Solution: "Fail future", Evidence: []esa.Evidence{{Source: "git", Reference: "old:x.java:2", Quote: "bug();"}}}
-	out := EngineeringOutput{Issue: esa.IssueAssignment{Title: "Completion failure", Reason: "New issue"}, Findings: []esa.Finding{f}}
+	out := EngineeringOutput{IssueRequest: esa.IssueRequest{Title: "Completion failure", Reason: "New issue"}, Findings: []esa.Finding{f}}
 	if _, e := out.Report(packet); e != nil {
 		t.Fatal(e)
 	}
@@ -37,7 +37,7 @@ func TestStructuredLocationMustBeHistoricalAndInspected(t *testing.T) {
 func TestRetrospectiveProviderUsesSeparateToolsAndRecordsUsage(t *testing.T) {
 	dir := t.TempDir()
 	fixture := filepath.Join(dir, "fixture.json")
-	request := codexreview.ReviewRequest{SourceKey: "BUG-1", Baseline: "old", Candidate: codexreview.Candidate{Commit: "fix", PRs: []string{"#1"}}, Prediction: esa.Report{AgentClassification: &esa.Classification{Category: "code_defect"}, Findings: []esa.Finding{{Commit: "old", File: "x.java", StartLine: 2, EndLine: 2}}}, Documents: []codexreview.Document{{Source: "patch", Prefix: "fix:patch:", First: 1, Lines: []string{"+ fail(disconnected);"}}}}
+	request := codexreview.ReviewRequest{SourceKey: "BUG-1", Baseline: "old", Candidate: codexreview.Candidate{Commit: "fix", PRs: []string{"#1"}}, Prediction: esa.Report{Findings: []esa.Finding{{Commit: "old", File: "x.java", StartLine: 2, EndLine: 2}}}, Documents: []codexreview.Document{{Source: "patch", Prefix: "fix:patch:", First: 1, Lines: []string{"+ fail(disconnected);"}}}}
 	answer := map[string]any{"commit": "fix", "verdict": "resolved", "explanation": "The PR fails a disconnected response instead of completing it successfully.", "findings": []codexreview.FindingReview{{Index: 0, Localization: "correct", Problem: "correct", Solution: "correct", Explanation: "The finding describes the completion correction."}}, "evidence": []esa.Evidence{{Source: "patch", Reference: "fix:patch:1", Quote: "fail(disconnected)"}}, "limitations": []string{"Static PR review only."}}
 	b, _ := json.Marshal(answer)
 	if e := os.WriteFile(fixture, b, 0600); e != nil {
@@ -65,9 +65,22 @@ func TestRetrospectiveProviderUsesSeparateToolsAndRecordsUsage(t *testing.T) {
 
 func TestDiagnosisSchemaDoesNotAskForClassification(t *testing.T) {
 	schema := string(EngineeringSchema())
-	for _, field := range []string{"classification", "categories", "tags"} {
+	for _, field := range []string{"classification", "categories", "tags", "issue", "existing_id", "assignment_routing"} {
 		if strings.Contains(schema, `"`+field+`"`) {
 			t.Fatal("classification remains in active schema", schema)
+		}
+	}
+}
+
+func TestEngineeringCannotEmitAnIssueAssignment(t *testing.T) {
+	for _, raw := range []string{
+		`{"issue":{"existing_id":"issue_other","title":"Cause","reason":"claim"},"findings":[],"limitations":[]}`,
+		`{"issue_request":{"title":"Cause","reason":"evidence","existing_id":"issue_other"},"findings":[],"limitations":[]}`,
+		`{"issue_request":{"title":"Cause","reason":"evidence"},"issue":{"existing_id":"issue_other"},"findings":[],"limitations":[]}`,
+	} {
+		var output EngineeringOutput
+		if err := decodeAgentOutput([]byte(raw), &output); err == nil {
+			t.Fatal("engineering output bypassed its grouping request contract", raw)
 		}
 	}
 }

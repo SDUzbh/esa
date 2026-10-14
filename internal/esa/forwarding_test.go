@@ -22,7 +22,7 @@ func TestManualForwardingRequiredBeforeIntake(t *testing.T) {
 		ticket.Subject = subject
 		receipt := receive(t, e, subject, ticket)
 		run := e.Store.Snapshot().Runs[receipt.RunID]
-		if run.Route != "engineering_analysis" || run.Classification != nil {
+		if run.Route != "engineering_analysis" {
 			t.Fatal("classification still controls forwarding", run)
 		}
 	}

@@ -123,9 +123,9 @@ func TestUnchangedAuthoritySkipsArchiveTransfer(t *testing.T) {
 	if err = store.Refresh(); err != nil || fullReads != 1 {
 		t.Fatal("unchanged archive was transferred", fullReads, err)
 	}
-	state.Generation = 9
+	state.LastClaimedProject = "9"
 	revision++
-	if err = store.Refresh(); err != nil || fullReads != 2 || store.Snapshot().Generation != 9 {
+	if err = store.Refresh(); err != nil || fullReads != 2 || store.Snapshot().LastClaimedProject != "9" {
 		t.Fatal("changed authority was not refreshed", fullReads, err)
 	}
 }
@@ -183,7 +183,7 @@ func TestAgentAssignmentAndMemberCasePublishOneFamily(t *testing.T) {
 	for _, task := range s.Investigations {
 		if task.IssueID == firstRun.IssueID {
 			solution := s.Solutions[task.SolutionID]
-			if solution.State != "trusted" || solution.SourceTicketID != second.ID || solution.Report != nil || solution.RunID != task.RunID || s.Runs[task.RunID].State != "completed" {
+			if solution.State != "trusted" || solution.SourceTicketID != second.ID || s.Runs[task.RunID].State != "completed" {
 				t.Fatalf("shared reviewed solution diverged: %+v", solution)
 			}
 		}

@@ -11,7 +11,7 @@ The current tester is the standalone [`system_replay`](../system_replay/README.m
 | Product runtime driver | Prepare isolated historical code and dependencies; run observations; reset mutable state; clean owned resources |
 | Optional semantic evaluator | Judge frozen initial findings using supplied PR, code and runtime evidence after a repair passes the behavior gate |
 
-The tester does not create substitute business issues or call application functions. Engineering diagnosis remains read-only. The target-owned provider returns issue assignment and findings with immutable commit, file, start/end lines, problem description and solution recommendation. Restrictions on source writes and debugging tools belong to that provider's registered runtime; an arbitrary remote provider is not sandboxed by the tester.
+The tester does not create substitute business issues or call application functions. Engineering diagnosis remains read-only. The target-owned provider orchestrates engineering requests and Routing Agent membership decisions, then returns final issue assignment and findings with immutable commit, file, start/end lines, problem description and solution recommendation. Restrictions on source writes and debugging tools belong to that provider's registered runtime; an arbitrary remote provider is not sandboxed by the tester.
 
 ## Flow and historical boundaries
 

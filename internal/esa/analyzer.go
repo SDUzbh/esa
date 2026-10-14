@@ -11,6 +11,7 @@ import (
 )
 
 type AnalyzeRequest struct {
+	Stage              string        `json:"stage,omitempty"`
 	Contract           *TaskContract `json:"task_contract,omitempty"`
 	IssueDirectory     string        `json:"issue_directory,omitempty"`
 	IssueDirectoryHash string        `json:"issue_directory_hash,omitempty"`
@@ -22,6 +23,20 @@ type AnalyzeRequest struct {
 
 type Analyzer interface {
 	Analyze(context.Context, AnalyzeRequest) (Report, error)
+}
+
+// PipelineAnalyzer separates intake routing from the expensive diagnostic turn.
+// ESA commits the in-progress claim before dispatching the continuation.
+type PipelineAnalyzer interface {
+	Analyzer
+	AnalyzeStage(context.Context, AnalyzeRequest, string) (Report, error)
+}
+
+type HTTPPipelineAnalyzer struct{ HTTPAnalyzer }
+
+func (a HTTPPipelineAnalyzer) AnalyzeStage(ctx context.Context, input AnalyzeRequest, stage string) (Report, error) {
+	input.Stage = stage
+	return a.Analyze(ctx, input)
 }
 
 // HTTPAnalyzer delegates engineering analysis to a configured read-only provider.
@@ -70,5 +85,5 @@ func (a HTTPAnalyzer) Analyze(ctx context.Context, input AnalyzeRequest) (Report
 }
 
 func (e *Engine) Recover() error {
-	return e.Store.Update(e.recoverInvestigations)
+	return e.update(e.recoverInvestigations)
 }

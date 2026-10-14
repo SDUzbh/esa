@@ -154,7 +154,7 @@ func JiraAt(raw []byte, project string, at time.Time) (esa.Ticket, Audit, error)
 	t.UpdatedAt = at
 	t.Assignee = ""
 	t.Resolution = esa.Resolution{}
-	t.CategoryOverride = ""
+	t.StoredFields = nil
 	t.Closed = strings.EqualFold(t.Status, "closed") || strings.EqualFold(t.Status, "resolved") || strings.EqualFold(t.Status, "done")
 	t.Source = "historical_replay"
 	return t, audit, nil

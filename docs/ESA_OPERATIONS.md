@@ -1,26 +1,26 @@
 # ESA operations
 
-ESA uses one workflow: forwarded snapshots, trusted-case retrieval, shared investigations and engineer-reviewed solutions. `config/rules.json` contains analysis budgets, worker limits and the optional classifier. Editing this repository does not deploy the service or migrate its database.
+ESA uses one workflow: forwarded snapshots, Routing Agent retrieval from local Issue directories, and engineer-reviewed solutions. `config/rules.json` contains analysis budgets, worker limits and the optional classifier. Editing this repository does not deploy the service or migrate its database.
 
 ## Workflow
 
 1. Capture an immutable manually forwarded snapshot with effective, available, recorded and cutoff times. Reject source updates/comments beyond the cutoff; strict replay also rejects unknown comment timestamps.
-2. Retrieve project/time-eligible trusted cases using deterministic BM25/RRF and an eligible-corpus hash. Validate repair applicability separately, using the original signal/keyword, component/version and environment requirements. Ranking never adds a separate hard-coded keyword gate. Similarity never confers trust.
-3. When no trusted case applies, check context and compute an exact diagnostic/environment/version signature. Create a tentative Engineering Issue, membership, group and frozen Task Contract. Matching tickets share one investigation and solution reference. The Agent receives eligible existing families and can propose an existing assignment; the frozen Task Contract is retained, manual splits take precedence, and tentative links record the new proposal.
-4. Claim the task atomically with a lease, heartbeat and fencing epoch. Rotate projects and limit active tasks per project (default one). Provider work runs outside transactions; outbox polling runs separately.
-5. Within one primary Codex session, the Agent chooses an approved Profile through `capability_request`. Go validates manifests and grants; further capability requests use the same session. Publish an immutable Agent solution in `proposed` state.
+2. Every open snapshot enters an exact diagnostic/environment/version signature group. Identical inputs share a task; otherwise create an unassigned group and frozen Task Contract. Intake creates no Issue.
+3. Claim the task with a lease, heartbeat and fencing epoch. Rotate projects and limit active tasks per project (default one). Work runs outside transactions.
+4. Generate a project/cutoff-scoped local Issue directory, separating `agent_analyzed` proposals from `engineer_resolved` solutions. Send only the view path/hash; existing Issue/case content is retrieved on demand, without inlining or a top-N archive cutoff.
+5. Routing Agent has only local Issue search/read tools. Applicable records from either directory kind are reused without invoking engineering, resolving source or setting up a sandbox. An engineer solution has priority when applicable; an Agent proposal can also be reused. With no reusable solution, engineering chooses an approved Profile and analyzes read-only. Only an accepted supported result assigns/creates an Issue. Insufficient or superseded results create none; explicit human membership decisions take precedence.
 6. Engineer review uses an expected solution ID and publishes another immutable revision. A reviewed case from any linked member can supersede the shared family's proposals within the same scope. All case, solution review and withdrawal paths publish through one revision writer. Reopening/changing source scope withdraws trusted advice. A membership review can split or reassign a ticket, retaining old snapshots and membership history.
 
-Rejected/failed/incomplete investigations remain linked and never become repairs. Available usage, alerts and partial evidence are retained even when output validation fails. Investigation state owns execution status; run and family statuses are projections. New solutions reference the immutable run report rather than storing another copy. Uncertain invocations require explicit retry. New versions/environments and explicit force requests create separate tasks. Exact text matching is conservative: differently worded incidents are not claimed to share a cause. Initially one primary membership is exposed. Candidate assignments are bounded to ten time-visible, public families from the same project/environment scope; assignment does not confer trusted status.
+Rejected/failed/incomplete investigations remain linked and never become repairs. Available usage, alerts and partial evidence are retained even when output validation fails. Investigation state owns execution status; run and family statuses are projections. New solutions reference the immutable run report rather than storing another copy. Uncertain invocations require explicit retry. New versions/environments and explicit force requests create separate tasks. Exact text matching is conservative: differently worded incidents are not claimed to share a cause. Initially one primary membership is exposed. The directory preserves separate records per Issue/scope; paginated retrieval can inspect the complete eligible archive. Reuse requires an exact audited read and a final authoritative-source check. The backend reconstructs the reused solution rather than trusting model-generated replacement text. See [Issue directory operations](ISSUE_DIRECTORY.md) for layout, root configuration, mounts and retention. Historical Issues remain readable; old queued contracts require fresh forwarding. Starting a replacement investigation detaches the old active membership while retaining history.
 
-A later case approval publishes a new recommendation at the review's availability time without rewriting the original snapshot or diagnosis cutoff. Recommendation refresh cannot enqueue engineering analysis. An unstarted investigation with no remaining active members becomes superseded; in-flight work retains its usage audit and cannot replace the reviewed recommendation.
+A later case approval does not match open tickets, replace unrelated investigations or enqueue analysis. It becomes context for subsequent tasks; review of a case already linked to an Issue may still revise that shared solution within the same scope. Original snapshots and diagnosis cutoffs remain frozen. An unstarted investigation with no active members becomes superseded; in-flight work retains its usage audit.
 
 ## Run and persist
 
 ```sh
 export ESA_API_TOKEN='<private service token of at least 24 random characters>'
 .tools/go/bin/go run ./cmd/esa -listen 127.0.0.1:8090 \
-  -store runtime/shared-investigations/state.json -rules config/rules.json
+  -store runtime/shared-investigations/state.json -issues-directory runtime/esa/issues -rules config/rules.json
 ```
 
 JSON remains a single-process adapter with an exclusive writer lock. Existing report findings remain readable; queued runs without a current manually forwarded snapshot require a new forwarding. Migration does not fabricate historical provenance. Report assessments use `report.assessment`; older sidecar fields require explicit data migration before reuse. Existing stored data is not rewritten by this naming change.
@@ -43,11 +43,11 @@ This is a **transactional adapter prototype**: HTTP CAS writes whole state (64 M
 
 ## Source registry, Profiles and tools
 
-Copy `config/releases.example.json` to a private runtime file; provide actual local repositories, release refs and verified availability times. The sample date is illustrative, not release evidence. Source resolution requires one affected release and checks registration availability plus author/committer timestamps against the cutoff. It downloads no repository.
+Copy `config/releases.example.json` to a private runtime file; provide actual local repositories, release refs and verified availability times. The sample date is illustrative, not release evidence. Source access requires one affected release and checks registration availability plus author/committer timestamps against the cutoff. An unknown or ambiguous release yields a context-only packet: the Agent may judge existing Issues or request information, but receives no product source/runtime and cannot fabricate findings. It downloads no repository.
 
 ```sh
 bin/esa-codex -registry runtime/releases.json -profiles profiles \
-  -runs runtime/codex -listen 127.0.0.1:8091
+  -issues-directory runtime/esa/issues -runs runtime/codex -listen 127.0.0.1:8091
 ```
 
 Configure the matching provider URL/token on ESA. In Compose, use a reachable provider address rather than assuming container loopback is host loopback. Registry concurrency defaults to one, configurable up to eight.
@@ -64,13 +64,15 @@ Runtime/tool installation verifies ownership, nonroot user, offline network, rea
 
 The Java toolkit includes `javac` and `java`. The registered helper compiles the historical product baseline and publishes its classes read-only. After a runtime grant, the Agent can use `run` to compile auxiliary Java programs under `/workspace/diagnostics` and execute them against `/input/classes` and `/input/deps/*`, keeping the registered product classpath first. `verify_profile_runtime.py` exercises this exact tool-server path by compiling a helper that invokes an existing Kafka class. This verifies executable compilation and runtime access for the registered Java scenario; other languages and product builds need their own registered toolchains and build inputs.
 
+Soot is also preinstalled in the shared image. Through the same `run` tool, the Agent can inspect frozen bytecode and emit Jimple under `/workspace/diagnostics/soot`. The launcher uses the separate analysis JVM with registered target classes, dependencies and JDK 8 libraries. The runtime verification script checks analysis of Kafka `NetworkClient` and unchanged product bytecode. See [tool environment](TOOL_IMAGES.md) for the command. No additional worker or workflow is introduced.
+
 ## Time, reports and UI
 
 Initial retrieval/diagnosis uses the frozen forwarding cutoff. Later reviews and responses carry their own availability; they never rewrite initial input or make future knowledge available retroactively. Historical replay starts the same service with `-replay-at <RFC3339 time> -replay-projects <comma-separated IDs>`; `POST /v1/replay/clock` accepts `{"time":"2020-01-01T00:00:01Z"}`. Never enable this clock in live operation. This evaluates present ESA on historical product input, not historical model/Skill deployment reconstruction.
 
 The report assessment sidecar records snapshot/input/provider-input hashes, times, issue/task IDs, elapsed time and explicit verification limitations. Approved plan hashes, findings and evidence live in the original report without duplicate assessment arrays. Historical inline solution reports and sidecar plans remain readable; new records use run references and `report.plan` exclusively. Provider-reported mapping remains independently unverified. Hypotheses, exact quotation checks, symptom reproduction, review and causal verification are separate. Engineer approval does not mark causality verified. Codex still checks exact inspected source ranges/quotes. Legacy reports remain unassessed.
 
-BM25/RRF uses an in-memory eligible-corpus projection, not a persistent FTS service. Future/other-project documents do not contribute scoring statistics. Token alerts are advisory; missing usage stays unknown. Deadlines and permissions are separate enforced limits.
+The local directory is a generated projection with paginated lexical search. Future/other-project records are excluded before directory publication. Token alerts are advisory; missing usage stays unknown. Deadlines and permissions are separate enforced limits.
 
 | Public route | Purpose |
 | --- | --- |

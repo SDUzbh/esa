@@ -72,12 +72,41 @@ func TestRegistrySelectsHistoricalSourceWithoutRuntimeSubstitution(t *testing.T)
 	if _, err = r.Resolve(context.Background(), in); err == nil {
 		t.Fatal("future commit accepted")
 	}
-	in.Ticket.Versions = []string{"unknown"}
-	if _, err = r.Resolve(context.Background(), in); err == nil {
-		t.Fatal("unregistered release accepted")
+	for _, versions := range [][]string{{"unknown"}, {"1", "2"}, nil} {
+		in.Ticket.Versions = versions
+		result, err := r.Resolve(context.Background(), in)
+		if err != nil || result.SetupEnvironment != nil || result.Packet.Commit != "" || len(result.Packet.Documents) != 0 || len(result.Packet.Limitations) == 0 {
+			t.Fatal("missing environment should reach Agent without invented source/runtime", result, err)
+		}
 	}
-	in.Ticket.Versions = []string{"1", "2"}
-	if _, err = r.Resolve(context.Background(), in); err == nil {
-		t.Fatal("ambiguous release accepted")
+}
+
+func TestContextOnlyRegistrationStillInvokesAgent(t *testing.T) {
+	dir := t.TempDir()
+	at := time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
+	in := esa.AnalyzeRequest{RunID: "run_missing_release", ReadOnly: true, Ticket: esa.Ticket{ID: "query", ProjectID: "1", SourceKey: "query", Subject: "Failure without version", ForwardedAt: at}, Contract: &esa.TaskContract{ReadOnly: true, ObservationCutoff: at}, Budget: esa.Budget{MaxCalls: 1, TimeoutSeconds: 10}}
+	registration, err := (&Registry{}).Resolve(context.Background(), in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	answer := EngineeringOutput{Issue: esa.IssueAssignment{Title: "More context needed", Reason: "Affected release is unknown"}, Limitations: []string{"Provide the affected version and reproduction steps"}}
+	data, _ := json.Marshal(answer)
+	fixture := filepath.Join(dir, "answer.json")
+	if err = os.WriteFile(fixture, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	cli := filepath.Join(dir, "fake-codex")
+	script := "#!/bin/sh\nwhile [ \"$#\" -gt 0 ]; do\nif [ \"$1\" = '-o' ]; then cp '" + fixture + "' \"$2\"; fi\nshift\ndone\nprintf '%s\\n' '{\"type\":\"turn.completed\",\"usage\":{\"input_tokens\":12,\"output_tokens\":8}}'\n"
+	if err = os.WriteFile(cli, []byte(script), 0700); err != nil {
+		t.Fatal(err)
+	}
+	provider := Provider{CLI: cli, RunsDir: filepath.Join(dir, "runs"), Packet: registration.Packet}
+	report, err := provider.analyzeEngineering(context.Background(), in)
+	if err != nil || len(report.Findings) != 0 || len(report.Evidence) != 0 || len(report.Limitations) == 0 || report.Usage.InputTokens != 12 {
+		t.Fatal("context-only packet did not reach Agent", report, err)
+	}
+	prompt, err := os.ReadFile(filepath.Join(dir, "runs", in.RunID, "prompt.txt"))
+	if err != nil || !strings.Contains(string(prompt), "No product source or runtime") {
+		t.Fatal("Agent did not receive environment limitation", err)
 	}
 }

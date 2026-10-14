@@ -25,12 +25,13 @@ var exceptions = regexp.MustCompile(`\b[A-Za-z][A-Za-z0-9_.]*(?:Exception|Error)
 var stopWords = map[string]bool{"the": true, "this": true, "that": true, "with": true, "from": true, "have": true, "when": true, "then": true, "there": true, "issue": true, "error": true, "exception": true, "timeout": true, "oom": true, "using": true, "after": true, "before": true, "does": true, "should": true, "could": true, "would": true, "and": true, "for": true, "not": true, "are": true, "was": true, "can": true, "but": true, "our": true, "has": true, "will": true, "how": true}
 
 type Engine struct {
-	Store       *Store
-	Config      Config
-	Now         func() time.Time
-	classifiers map[string]*classifier.Model
-	workerID    string
-	clock       atomic.Int64
+	IssueDirectory string
+	Store          *Store
+	Config         Config
+	Now            func() time.Time
+	classifiers    map[string]*classifier.Model
+	workerID       string
+	clock          atomic.Int64
 }
 
 func NewEngine(store *Store, config Config) (*Engine, error) {
@@ -196,97 +197,6 @@ func CasesAt(history []Case, at time.Time) []Case {
 	return out
 }
 
-func matchCases(t Ticket, cases []Case, limit int) []Match {
-	out := []Match{}
-	kw := keywords(ticketText(t))
-	sig := signals(t)
-	for _, c := range cases {
-		if c.State != "trusted" || c.ProjectID != t.ProjectID || c.TicketID == t.ID {
-			continue
-		}
-		commonWords := intersects(kw, c.Keywords)
-		commonSignals := intersects(sig, c.Signals)
-		commonComponents := intersects(t.Components, c.Components)
-		commonVersions := intersects(t.Versions, c.Versions)
-		if len(commonWords) < 2 && len(commonSignals) == 0 {
-			continue
-		}
-		m := Match{CaseID: c.ID, CaseVersion: c.Version, Subject: c.Subject, Reasons: []string{}, Score: len(commonWords)}
-		if len(commonSignals) > 0 {
-			m.Score += 10
-			m.Reasons = append(m.Reasons, "Matching diagnostic signals: "+strings.Join(commonSignals, ", "))
-		}
-		if len(commonWords) > 0 {
-			m.Reasons = append(m.Reasons, "Matching keywords: "+strings.Join(commonWords, ", "))
-		}
-		if len(commonComponents) > 0 {
-			m.Score += 5
-			m.Reasons = append(m.Reasons, "Matching component")
-		}
-		if len(commonVersions) > 0 {
-			m.Score += 5
-			m.Reasons = append(m.Reasons, "Matching affected version")
-		}
-		environmentFits := true
-		for k, v := range c.Environment {
-			if v != "" && lower(t.Environment[k]) != lower(v) {
-				environmentFits = false
-			}
-		}
-		m.Applicable = len(commonComponents) > 0 && len(commonVersions) > 0 && environmentFits && (len(commonSignals) > 0 || len(commonWords) >= 4)
-		if m.Applicable {
-			m.Solution = c.Resolution.Solution
-		} else {
-			m.Reasons = append(m.Reasons, "Applicability requires further verification")
-		}
-		out = append(out, m)
-	}
-	sort.Slice(out, func(i, j int) bool {
-		if out[i].Applicable != out[j].Applicable {
-			return out[i].Applicable
-		}
-		if out[i].Score == out[j].Score {
-			return out[i].CaseID < out[j].CaseID
-		}
-		return out[i].Score > out[j].Score
-	})
-	if limit > 0 && len(out) > limit {
-		out = out[:limit]
-	}
-	return out
-}
-
-func (e *Engine) Decide(t Ticket, history []Case, at time.Time) ([]Match, string, string, []string) {
-	if t.Private {
-		return nil, "restricted", "restricted", nil
-	}
-	if t.ForwardedBy == "" || t.ForwardedAt.IsZero() || t.ForwardedAt.After(at) {
-		return nil, "manual_forward", "awaiting_forward", nil
-	}
-	matches := MatchCases(t, CasesAt(history, at))
-	for _, match := range matches {
-		if match.Applicable {
-			return matches, "case_reuse", "completed", nil
-		}
-	}
-	missing := []string{}
-	if len(t.Components) == 0 {
-		missing = append(missing, "Affected component")
-	}
-	if len(t.Versions) == 0 {
-		missing = append(missing, "Affected version")
-	}
-	if len(t.Environment) == 0 {
-		missing = append(missing, "Runtime environment")
-	}
-	if strings.TrimSpace(t.Description) == "" {
-		missing = append(missing, "Observed behavior and reproduction conditions")
-	}
-	if len(missing) > 0 {
-		return matches, "request_information", "awaiting_information", missing
-	}
-	return matches, "engineering_analysis", "queued", nil
-}
 func diagnosticHash(t Ticket) string {
 	comments := []string{}
 	for _, c := range t.Comments {
@@ -403,7 +313,7 @@ func (e *Engine) Receive(event Event) (Receipt, error) {
 		s.Events[event.ID] = event
 		s.Receipts[event.ID] = receipt
 		if generation != s.Generation {
-			e.refreshRecommendations(s, now)
+			e.invalidateCaseRecommendations(s, now)
 		}
 		return nil
 	})
@@ -426,6 +336,9 @@ func (e *Engine) collectCase(s *State, t Ticket, now time.Time) Case {
 		c.State = "archived"
 	}
 	if old, ok := s.Cases[c.ID]; ok {
+		if c.IssueID == "" {
+			c.IssueID = old.IssueID
+		}
 		if old.SourceHash == c.SourceHash && old.State != "invalidated" {
 			return old
 		}
@@ -484,7 +397,7 @@ func (e *Engine) ReviewCase(id string, review Review) (Case, error) {
 		if wasTrusted || c.State == "trusted" {
 			s.Generation++
 			e.publishReviewedCase(s, c)
-			e.refreshRecommendations(s, e.Now())
+			e.invalidateCaseRecommendations(s, e.Now())
 		}
 		result = c
 		return nil
@@ -492,29 +405,21 @@ func (e *Engine) ReviewCase(id string, review Review) (Case, error) {
 	return result, err
 }
 
-// Refresh only recommendations. Learning a case never triggers a new model call.
-func (e *Engine) refreshRecommendations(s *State, now time.Time) {
-	for _, t := range s.Tickets {
-		if t.Closed || t.ForwardedBy == "" || t.ForwardedAt.IsZero() {
+// Retire obsolete historical case recommendations without matching tickets or
+// scheduling analysis. New decisions are owned by the Agent.
+func (e *Engine) invalidateCaseRecommendations(s *State, now time.Time) {
+	for id, run := range s.Runs {
+		if run.Route != "case_reuse" || run.State == "invalidated" {
 			continue
 		}
-		matches, route, status, missing := e.Decide(t, eligibleCaseHistory(*s, t), now)
-		old := s.Runs[s.Latest[t.ID]]
-		if route == "case_reuse" {
-			if old.Route == route && old.State == status && old.CaseGeneration == s.Generation && old.RuleVersion == e.Config.Version && old.InputHash == diagnosticHash(t) {
-				continue
+		for _, match := range run.Matches {
+			c, ok := s.Cases[match.CaseID]
+			if !ok || c.State != "trusted" || c.Version != match.CaseVersion {
+				run.State, run.UpdatedAt = "invalidated", now
+				run.Error = "The source case changed or was withdrawn. Forward this ticket for Agent review."
+				s.Runs[id] = run
+				break
 			}
-			// This is a later recommendation observation. Preserve the forwarded
-			// snapshot and initial diagnosis cutoff; never enqueue analysis here.
-			run := e.newRun(s, t, s.Snapshots[s.LatestSnapshot[t.ID]], now, now)
-			run.Route, run.State, run.Matches, run.MissingInformation = route, status, matches, missing
-			recordRun(s, run)
-			supersedeInactiveTask(s, old.ID, now)
-		} else if old.Route == "case_reuse" && old.State != "invalidated" {
-			old.State = "invalidated"
-			old.Error = "A recommended case changed or was withdrawn. Reassess this ticket before applying its earlier recommendation."
-			old.UpdatedAt = now
-			s.Runs[old.ID] = old
 		}
 	}
 }

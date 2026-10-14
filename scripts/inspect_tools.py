@@ -6,7 +6,7 @@ from pathlib import Path
 import shutil
 import subprocess
 
-COMMANDS = ['java', 'javac', 'jdb', 'jcmd', 'jstack', 'jmap', 'javap', 'jdeps', 'python3', 'rg', 'jq', 'git', 'curl', 'gdb', 'strace', 'lsof', 'ip', 'ss', 'dig', 'tcpdump', 'file', 'readelf', 'objdump', 'unzip', 'sha256sum', 'asprof', 'vmstat', 'pidstat', 'iostat', 'time', 'nc', 'diff']
+COMMANDS = ['java', 'javac', 'jdb', 'jcmd', 'jstack', 'jmap', 'javap', 'jdeps', 'python3', 'rg', 'jq', 'git', 'curl', 'gdb', 'strace', 'lsof', 'ip', 'ss', 'dig', 'tcpdump', 'file', 'readelf', 'objdump', 'unzip', 'sha256sum', 'asprof', 'vmstat', 'pidstat', 'iostat', 'time', 'nc', 'diff', 'soot']
 
 def inspect():
     packages = subprocess.run(['dpkg-query', '-W', '-f=${Package}\t${Version}\n'], capture_output=True, text=True, check=True)
@@ -19,6 +19,8 @@ def inspect():
         raise RuntimeError('Required preset tool is missing')
     profiler = subprocess.run(['/opt/esa/async-profiler/bin/asprof', '--version'], capture_output=True, text=True, check=True)
     inventory['async_profiler'] = (profiler.stdout + profiler.stderr).strip()
+    soot = subprocess.run(['soot', '-version'], capture_output=True, text=True, check=True, timeout=30)
+    inventory['soot'] = (soot.stdout + soot.stderr).strip()
     return inventory
 
 def main():

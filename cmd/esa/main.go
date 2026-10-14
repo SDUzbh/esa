@@ -28,6 +28,7 @@ func main() {
 func run() error {
 	address := flag.String("listen", "127.0.0.1:8090", "HTTP listen address")
 	data := flag.String("store", "runtime/esa/state.json", "Single-process durable state file")
+	issueDirectory := flag.String("issues-directory", "", "Local Issue projection root shared read-only with the provider")
 	stateURL := flag.String("state-url", os.Getenv("ESA_STATE_URL"), "Authoritative Redmine state API; disables the local JSON writer")
 	importState := flag.String("import-state", "", "Import a stopped JSON store into an empty authoritative backend and exit")
 	rules := flag.String("rules", "config/rules.json", "Workflow configuration and analysis budget")
@@ -120,6 +121,13 @@ func run() error {
 		return err
 	}
 	engine, err := esa.NewEngine(store, config)
+	if err != nil {
+		return err
+	}
+	if *issueDirectory == "" {
+		*issueDirectory = filepath.Join(filepath.Dir(*data), "issues")
+	}
+	engine.IssueDirectory, err = filepath.Abs(*issueDirectory)
 	if err != nil {
 		return err
 	}

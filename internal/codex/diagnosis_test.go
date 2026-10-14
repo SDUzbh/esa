@@ -32,10 +32,6 @@ func TestStructuredLocationMustBeHistoricalAndInspected(t *testing.T) {
 	if _, e := out.Report(packet); e != nil {
 		t.Fatal("unlocated diagnosis must remain possible", e)
 	}
-	out.Issue.ExistingID = "unknown"
-	if _, e := out.Report(packet); e == nil {
-		t.Fatal("invented existing issue accepted")
-	}
 }
 
 func TestRetrospectiveProviderUsesSeparateToolsAndRecordsUsage(t *testing.T) {

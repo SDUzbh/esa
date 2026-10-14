@@ -37,6 +37,7 @@ func run() error {
 	profiles := flag.String("profiles", "profiles", "Operator-approved versioned Profile and Skill directory")
 	toolCatalog := flag.String("tool-catalog", "", "Private JSON catalog of approved pinned temporary tools")
 	concurrency := flag.Int("concurrency", 1, "Maximum registry investigations running simultaneously")
+	issuesRoot := flag.String("issues-directory", "runtime/esa/issues", "Local read-only root of ESA Issue projections shared with the service")
 	runs := flag.String("runs", ".esa/codex-runs", "Private invocation audit directory")
 	tokenFile := flag.String("token-env-file", "deploy/redmine/.env", "Private environment file containing ESA_API_TOKEN")
 	cli := flag.String("codex", "codex", "Installed Codex CLI")
@@ -145,7 +146,11 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	provider := &codex.Provider{CLI: path, Model: *model, Effort: *effort, RunsDir: dir, Packet: packet, ToolsConfig: *toolsConfig, ToolCommand: toolCommand, ProfilesRoot: profileDir}
+	issueRoot, err := filepath.Abs(*issuesRoot)
+	if err != nil {
+		return err
+	}
+	provider := &codex.Provider{IssuesRoot: issueRoot, CLI: path, Model: *model, Effort: *effort, RunsDir: dir, Packet: packet, ToolsConfig: *toolsConfig, ToolCommand: toolCommand, ProfilesRoot: profileDir}
 	if *toolCatalog != "" {
 		data, err := os.ReadFile(*toolCatalog)
 		if err != nil {

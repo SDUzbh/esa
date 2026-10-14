@@ -121,7 +121,12 @@
         {
           "path": "/state",
           "op": "eq",
-          "value": "awaiting_information"
+          "value": "awaiting_configuration"
+        },
+        {
+          "path": "/route",
+          "op": "eq",
+          "value": "engineering_analysis"
         }
       ],
       "events": [

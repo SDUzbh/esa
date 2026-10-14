@@ -21,7 +21,7 @@ func sharedInvestigationEngine(t *testing.T) *Engine {
 }
 func diagnosticReport() Report {
 	ev := Evidence{Source: "git", Reference: "registered:Example.java:1", Quote: "assignment.size()"}
-	return Report{Summary: "Empty assignment may be dereferenced", Evidence: []Evidence{ev}, Findings: []Finding{{Commit: "registered", File: "Example.java", StartLine: 1, EndLine: 1, Problem: "Empty assignment may be dereferenced", Solution: "Check assignment presence", Evidence: []Evidence{ev}}}, Recommendations: []string{"Check assignment presence"}, Usage: Usage{Calls: 1, InputTokens: 20, OutputTokens: 10, TokensReported: true}}
+	return Report{Issue: &IssueAssignment{Title: "Empty assignment dereference", Reason: "Inspected assignment access"}, Summary: "Empty assignment may be dereferenced", Evidence: []Evidence{ev}, Findings: []Finding{{Commit: "registered", File: "Example.java", StartLine: 1, EndLine: 1, Problem: "Empty assignment may be dereferenced", Solution: "Check assignment presence", Evidence: []Evidence{ev}}}, Recommendations: []string{"Check assignment presence"}, Usage: Usage{Calls: 1, InputTokens: 20, OutputTokens: 10, TokensReported: true}}
 }
 func TestSharedInvestigationsConcurrentReleaseIncidentSharesOneDiagnosis(t *testing.T) {
 	e := sharedInvestigationEngine(t)
@@ -52,13 +52,13 @@ func TestSharedInvestigationsConcurrentReleaseIncidentSharesOneDiagnosis(t *test
 		unique[id] = true
 	}
 	s := e.Store.Snapshot()
-	if len(unique) != 1 || len(s.Investigations) != 1 || len(s.Issues) != 1 || len(s.Snapshots) != 100 || len(s.Memberships) != 100 {
+	if len(unique) != 1 || len(s.Investigations) != 1 || len(s.Issues) != 0 || len(s.Snapshots) != 100 || len(s.Memberships) != 100 {
 		t.Fatalf("duplicate investigations: runs=%d tasks=%d issues=%d snapshots=%d links=%d", len(unique), len(s.Investigations), len(s.Issues), len(s.Snapshots), len(s.Memberships))
 	}
 	var calls atomic.Int64
 	provider := analyzerFunc(func(_ context.Context, in AnalyzeRequest) (Report, error) {
 		calls.Add(1)
-		if in.Contract == nil || !in.Contract.ReadOnly || len(in.KnownIssues) != 1 {
+		if in.Contract == nil || !in.Contract.ReadOnly || in.Contract.IssueID != "" || len(inputIssueRecords(t, e, in)) != 0 {
 			return Report{}, errors.New("missing task contract or known issue")
 		}
 		return diagnosticReport(), nil
@@ -77,6 +77,9 @@ func TestSharedInvestigationsConcurrentReleaseIncidentSharesOneDiagnosis(t *test
 		t.Fatal("repeated engineering invocations", calls.Load())
 	}
 	s = e.Store.Snapshot()
+	if len(s.Issues) != 1 {
+		t.Fatal("analysis did not create one shared issue", len(s.Issues))
+	}
 	task := sortedInvestigations(s)[0]
 	proposal := s.Solutions[task.SolutionID]
 	if task.State != "agent_proposed" || proposal.State != "proposed" || proposal.Origin != "agent" {
@@ -210,8 +213,8 @@ func TestSharedInvestigationsReplayClockAndFutureCaseIsolation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if e.Store.Snapshot().Runs[receipt.RunID].Route == "case_reuse" {
-		t.Fatal("future trusted case reused")
+	if len(e.Store.Snapshot().Runs[receipt.RunID].Matches) != 0 {
+		t.Fatal("future trusted case entered Agent context")
 	}
 	_ = source
 	b, _ := json.Marshal(map[string]time.Time{"time": base.Add(time.Hour)})

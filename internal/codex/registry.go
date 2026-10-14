@@ -60,8 +60,8 @@ func LoadRegistry(path, artifacts, profiles, script string) (*Registry, error) {
 }
 func (r *Registry) Resolve(ctx context.Context, in esa.AnalyzeRequest) (Registration, error) {
 	var result Registration
-	if !in.ReadOnly || in.Ticket.Private || len(in.Ticket.Versions) != 1 {
-		return result, errors.New("source resolution requires one unambiguous affected release")
+	if !in.ReadOnly || in.Ticket.Private {
+		return result, errors.New("source resolution requires an authorized read-only ticket")
 	}
 	cutoff := in.Ticket.ForwardedAt
 	if in.Contract != nil {
@@ -69,6 +69,12 @@ func (r *Registry) Resolve(ctx context.Context, in esa.AnalyzeRequest) (Registra
 	}
 	if cutoff.IsZero() {
 		return result, errors.New("source resolution requires an observation cutoff")
+	}
+	unavailable := func(reason string) (Registration, error) {
+		return Registration{Packet: Packet{Ticket: in.Ticket, Cutoff: cutoff, Limitations: []string{reason + " No product source or runtime is registered for this task. Request the missing environment/version information; do not invent code locations or claim a reproduction."}}}, nil
+	}
+	if len(in.Ticket.Versions) != 1 {
+		return unavailable("One unambiguous affected release is needed for source access.")
 	}
 	var selected *ReleaseRegistration
 	for i := range r.Releases {
@@ -78,7 +84,7 @@ func (r *Registry) Resolve(ctx context.Context, in esa.AnalyzeRequest) (Registra
 		}
 	}
 	if selected == nil {
-		return result, errors.New("project/release has no eligible source registration; request environment information")
+		return unavailable("Project/release has no time-eligible source registration.")
 	}
 	git := func(args ...string) ([]byte, error) {
 		return exec.CommandContext(ctx, "git", append([]string{"-C", selected.Repository}, args...)...).Output()
@@ -113,7 +119,6 @@ func (r *Registry) Resolve(ctx context.Context, in esa.AnalyzeRequest) (Registra
 		expected.SourceKey = in.Ticket.SourceKey
 		if packet.Commit == commit && !packet.Cutoff.After(cutoff) && Fingerprint(expected) == Fingerprint(in.Ticket) {
 			packet.Ticket = in.Ticket
-			packet.Issues = in.KnownIssues
 			result.Packet = packet
 			if r.EnvironmentScript != "" {
 				result.SetupEnvironment = ManagedEnvironment(r.EnvironmentScript, selected.PacketPath)
@@ -144,7 +149,7 @@ func (r *Registry) Resolve(ctx context.Context, in esa.AnalyzeRequest) (Registra
 	if err = json.Unmarshal(manifestData, &manifest); err != nil || manifest.Commit != commit || len(manifest.Files) == 0 {
 		return result, errors.New("invalid cached source manifest")
 	}
-	result.Packet = Packet{Cutoff: cutoff, Commit: commit, Ticket: in.Ticket, Issues: in.KnownIssues, Limitations: []string{"Only frozen source is registered for this release; no product runtime or causal reproduction is available. Git timestamps and operator release availability are source-selection provenance, not proof of historical system deployment."}}
+	result.Packet = Packet{Cutoff: cutoff, Commit: commit, Ticket: in.Ticket, Limitations: []string{"Only frozen source is registered for this release; no product runtime or causal reproduction is available. Git timestamps and operator release availability are source-selection provenance, not proof of historical system deployment."}}
 	result.SetupEnvironment = func(_ context.Context, dir string) (string, func() error, error) {
 		config := replaytools.Config{Session: in.RunID, SourceDir: filepath.Join(bundle, "source"), Commit: commit, Files: manifest.Files, AuditPath: filepath.Join(dir, "tools.jsonl"), ProfilesRoot: r.ProfilesRoot, AllowedProfiles: []string{"general", "java-debug", "performance", "compatibility", "configuration"}, AvailableCapabilities: []string{"source"}}
 		config.Readiness = map[string]any{"status": "source_only", "runtime_available": false, "source_commit": commit}

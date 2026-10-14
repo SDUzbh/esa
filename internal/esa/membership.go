@@ -15,6 +15,9 @@ func (e *Engine) ReviewMembership(ticketID string, review MembershipReview) (Rec
 		if !ok || t.Private || t.Closed {
 			return ErrNotFound
 		}
+		if s.Runs[s.Latest[ticketID]].IssueID == "" {
+			return fmt.Errorf("%w: complete analysis before reviewing issue membership", ErrConflict)
+		}
 		if s.LatestSnapshot[ticketID] != review.ExpectedSnapshotID {
 			return fmt.Errorf("%w: snapshot changed", ErrConflict)
 		}

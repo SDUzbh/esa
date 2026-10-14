@@ -9,7 +9,9 @@ import (
 
 func runForTicket(run Run, t Ticket) Run {
 	if run.InvestigationID != "" && run.TicketID != t.ID {
-		run.SourceTicketID = run.TicketID
+		if run.SourceTicketID == "" {
+			run.SourceTicketID = run.TicketID
+		}
 		run.TicketID = t.ID
 		run.Input = t
 	}
@@ -83,7 +85,8 @@ func (api *API) solutionHistory(w http.ResponseWriter, r *http.Request) {
 	}
 	rows := []SolutionRevision{}
 	for _, solution := range s.Solutions {
-		if solution.InvestigationID == task.ID && !solution.AvailableAt.After(api.Engine.Now()) {
+		source, exists := s.Tickets[solution.SourceTicketID]
+		if solution.InvestigationID == task.ID && !solution.AvailableAt.After(api.Engine.Now()) && exists && !source.Private && allowed(r, source.ProjectID) && ticketAllowed(r, source.ID) {
 			rows = append(rows, solution)
 		}
 	}
@@ -138,7 +141,10 @@ func (api *API) investigation(w http.ResponseWriter, r *http.Request) {
 	if !source.Private && ticketAllowed(r, source.ID) {
 		result["run"] = visibleRun(r, s, s.Runs[task.RunID])
 		if sol, ok := s.Solutions[task.SolutionID]; ok && !sol.AvailableAt.After(api.Engine.Now()) {
-			result["solution"] = sol
+			evidenceSource, exists := s.Tickets[sol.SourceTicketID]
+			if exists && !evidenceSource.Private && allowed(r, evidenceSource.ProjectID) && ticketAllowed(r, evidenceSource.ID) {
+				result["solution"] = sol
+			}
 		}
 	}
 	writeJSON(w, 200, result)

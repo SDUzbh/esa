@@ -8,7 +8,7 @@ This repository contains ESA code and deployment definitions. Redmine is referen
 
 - Native Redmine ESA pages for ticket lists, filters, Jira JSON/CSV import, manual forwarding and engineer review.
 - Durable, idempotent intake of manually forwarded snapshots with project and issue visibility checks.
-- Trusted case reuse and collection of resolved cases, with human approval and recommendation withdrawal.
+- Routing Agent retrieval from local Issue directories, reusing Agent analyses or engineer solutions without another engineering call.
 - Read-only engineering diagnosis through a Go Codex adapter, with code evidence and advisory token warnings.
 - Optional TF-IDF + Logistic Regression label suggestions, human feedback and independent training/testing; disabled by default.
 - Independent API-based system replay with historical Git repair checks, reusable isolated runtimes and cleanup.
@@ -19,7 +19,7 @@ This repository contains ESA code and deployment definitions. Redmine is referen
 
 Redmine owns source issues and user permissions. The Ruby ESA plugin provides the UI, imports and a durable forwarding outbox stored in PostgreSQL. The Go service polls the outbox and acknowledges events after committing them; the plugin calls its scoped HTTP APIs to display results and submit human reviews.
 
-The Go service handles diagnostic context, trusted case retrieval and asynchronous engineering analysis. It uses atomic JSON by default. Matching tickets share investigations and reviewed solutions. A transactional Redmine PostgreSQL adapter can replace JSON as the single state authority. The Codex adapter resolves registered historical source per task, validates automatic Profile/capability requests and returns read-only findings for review.
+The Go service builds scoped local Issue directories and schedules asynchronous routing/engineering work. It uses atomic JSON by default. Matching tickets share investigations and reviewed solutions. A transactional Redmine PostgreSQL adapter can replace JSON as the single state authority. The Codex Routing Agent searches this directory on demand. Reuse skips engineering; new problems reach an engineering Agent that resolves registered source, plans approved tools and returns read-only findings for review.
 
 The optional classifier runs locally in Go and supplies label suggestions only. Human corrections are exported to the independent `esa-classifier` CLI for training and testing; an operator promotes a tested model and restarts the service. Classification does not control manual forwarding or engineering routing.
 
@@ -29,7 +29,9 @@ flowchart TD
     P --> D[("PostgreSQL: issues, outbox, optional ESA state")]
     E --> S[("Selected adapter: JSON or Redmine API")]
     S -->|State transactions| P
-    E <-->|HTTP diagnosis| A["Engineering provider / Codex adapter"]
+    E <-->|Ticket + Issue directory path| A["Codex adapter: Routing Agent → reuse or engineering Agent"]
+    E --> I[("Local Issue projection: Agent analyzed / engineer resolved")]
+    A -->|On-demand read-only search| I
     E -.->|Optional label suggestions| C["TF-IDF + Logistic Regression"]
     T["Independent system_replay tester"] <-->|Public API events and results| E
     T <-->|Version and repair checks| H["Git history + isolated product runtime"]
@@ -41,9 +43,10 @@ flowchart TD
 
 * Create or import an ordinary Redmine issue and prepare its diagnostic metadata. These actions do not submit it to ESA.
 *  An authorized user selects **Forward to ESA**. The durable outbox sends the snapshot with the human actor and forwarding time.
-*   A forwarded open issue checks applicable trusted cases from the same project. If no case applies, missing context is requested or the ticket joins a matching investigation; otherwise one read-only engineering task is queued. This decision does not depend on a category or Tracker.
-*    An engineer reviews the diagnosis, evidence, concrete code findings, repair recommendations and verification steps. ESA does not modify product source or automatically close the Redmine issue.
-*    Forward a resolved issue to collect a case draft. Engineer approval makes it available for applicable recommendations on already forwarded tickets. Forward subsequent source changes to refresh or withdraw its evidence.
+* Every forwarded open issue enters a shared task, independent of Tracker or metadata completeness. Go exports a historical, project-scoped local Issue directory and sends its path/hash instead of Issue or case bodies. Identical diagnostic inputs share an investigation.
+* The Routing Agent searches and reads the directory. Both `agent_analyzed` proposals and `engineer_resolved` solutions can be reused, with engineer solutions preferred when applicable. Reuse returns the stored solution and skips the engineering Agent and sandbox setup. Otherwise it requests essential information or dispatches new read-only engineering analysis. See [Issue directory and routing](docs/ISSUE_DIRECTORY.md).
+* After an accepted supported result, ESA assigns an existing Issue or creates one from the proposed title. Engineer review updates solution provenance; reuse does not promote an Agent proposal to trusted status. ESA does not modify product source or close Redmine issues.
+* Forward a resolved issue to collect a case draft. Approval places its solution in subsequent eligible directory views. Forward later source changes to withdraw obsolete evidence.
 
 The optional classifier supplies label suggestions alongside this workflow. Human confirmation and feedback training do not control admission, engineering routing or case approval. See [manual forwarding](docs/MANUAL_FORWARDING.md) and [backend workflow](docs/ESA_BACKEND_WORKFLOW.md).
 
@@ -56,7 +59,7 @@ The optional classifier supplies label suggestions alongside this workflow. Huma
 | `cmd/esa-classifier`, `internal/classifier` | Optional local classifier and independent supervised training/testing |
 | `cmd/esa-codex`, `internal/codex` | Read-only engineering provider and historical evidence validation |
 | `internal/capabilities`, `profiles`, `internal/replaytools` | Approved plans, versioned Skills and isolated typed tools |
-| `internal/retrieval` | Eligible-corpus BM25/RRF |
+| `internal/retrieval` | Eligible-corpus BM25 for local Issue search |
 | `system_replay` | Independent Go module for external API replay and subsequent Git repair evaluation |
 | `internal/replay` | Historical ticket snapshots and source exports, with temporal snapshot tests |
 | `deploy`, `scripts`, `docs`, `examples` | Deployment definitions, command wrappers, documentation and synthetic fixtures |
@@ -69,6 +72,7 @@ Build using Go 1.27 or the verified project-local toolchain:
 
 ```sh
 ./scripts/build_esa.sh
+mkdir -p runtime/esa/issues
 DOCKER_CONTEXT=colima-redmine docker-compose -f deploy/redmine/compose.yaml build redmine esa
 DOCKER_CONTEXT=colima-redmine docker-compose -f deploy/redmine/compose.yaml up -d
 ```

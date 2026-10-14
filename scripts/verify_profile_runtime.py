@@ -61,6 +61,16 @@ javac -cp '/input/classes:/input/deps/*' -d /workspace/diagnostics/classes /work
 java -cp '/input/classes:/input/deps/*:/workspace/diagnostics/classes' RuntimeCompileProbe
 ''', 'timeout_seconds': 120})
             assert 'AGENT_COMPILE_RUN=PASS' in compiled['evidence']['lines'], compiled
+            analyzed = tool('run', {'script': '''set -eu
+product=/input/classes/org/apache/kafka/clients/NetworkClient.class
+before=$(sha256sum "$product")
+soot -f jimple -keep-line-number -d /workspace/diagnostics/soot org.apache.kafka.clients.NetworkClient
+test -s /workspace/diagnostics/soot/org.apache.kafka.clients.NetworkClient.jimple
+grep -qF handleCompletedReceives /workspace/diagnostics/soot/org.apache.kafka.clients.NetworkClient.jimple
+test "$before" = "$(sha256sum "$product")"
+printf 'AGENT_SOOT_ANALYSIS=PASS\\n'
+''', 'timeout_seconds': 120})
+            assert 'AGENT_SOOT_ANALYSIS=PASS' in analyzed['evidence']['lines'], analyzed
             saved = json.loads((runtime / 'runtime-owned.json').read_text())
         finally:
             process.stdin.close()
@@ -75,7 +85,7 @@ java -cp '/input/classes:/input/deps/*:/workspace/diagnostics/classes' RuntimeCo
         for kind, key in [('container', 'container'), ('container', 'writer'), ('volume', 'volume')]:
             command = ['volume', 'inspect'] if kind == 'volume' else ['inspect']
             assert subprocess.run(docker + command + [saved[key]], capture_output=True).returncode != 0
-        print(json.dumps({'status': 'passed', 'profile': 'performance', 'checks': ['denial_without_runtime', 'source_without_runtime', 'selected_profile_provisioning', 'registered_baseline_controls', 'agent_tool_compile_and_run', 'owned_cleanup']}))
+        print(json.dumps({'status': 'passed', 'profile': 'performance', 'checks': ['denial_without_runtime', 'source_without_runtime', 'selected_profile_provisioning', 'registered_baseline_controls', 'agent_tool_compile_and_run', 'agent_soot_bytecode_analysis', 'owned_cleanup']}))
 
 if __name__ == '__main__':
     main()

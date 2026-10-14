@@ -102,7 +102,14 @@ func (p *Provider) invoke(ctx context.Context, dir, prompt, sourceKey string, bu
 		}
 		// CLI startup warnings use an error item too. They do not execute a tool;
 		// failures still cannot yield a report without one completed turn.
-		if !allowedItem(ev.Item.Type, ev.Item.Server, ev.Item.Tool, p.ToolsConfig != "") {
+		permitted := allowedItem(ev.Item.Type, ev.Item.Server, ev.Item.Tool, p.ToolsConfig != "")
+		if permitted && ev.Item.Type == "mcp_tool_call" && p.ToolNames != nil {
+			permitted = false
+			for _, name := range p.ToolNames {
+				permitted = permitted || ev.Item.Tool == name
+			}
+		}
+		if !permitted {
 			unexpected = true
 			cancel()
 		}

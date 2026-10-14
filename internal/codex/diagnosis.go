@@ -46,17 +46,6 @@ func (out EngineeringOutput) Report(packet Packet) (esa.Report, error) {
 	if strings.TrimSpace(out.Issue.Title) == "" || strings.TrimSpace(out.Issue.Reason) == "" {
 		return esa.Report{}, errors.New("issue title and reason are required")
 	}
-	if out.Issue.ExistingID != "" {
-		found := false
-		for _, issue := range packet.Issues {
-			if issue.ID == out.Issue.ExistingID {
-				found = true
-			}
-		}
-		if !found {
-			return esa.Report{}, errors.New("issue assignment must refer to a supplied issue in the same category")
-		}
-	}
 	r := esa.Report{Issue: &out.Issue, Findings: out.Findings, Summary: out.Issue.Title, Limitations: out.Limitations}
 	for _, f := range out.Findings {
 		if f.Commit != packet.Commit || f.File == "" || strings.Contains(f.File, ":") || f.StartLine < 1 || f.EndLine < f.StartLine || f.EndLine-f.StartLine >= 200 || strings.TrimSpace(f.Problem) == "" || strings.TrimSpace(f.Solution) == "" || len(f.Evidence) == 0 {

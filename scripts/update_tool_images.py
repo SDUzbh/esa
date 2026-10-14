@@ -18,6 +18,7 @@ import subprocess
 import tarfile
 import tempfile
 from urllib.request import Request, urlopen
+import xml.etree.ElementTree as ET
 
 ROOT = Path(__file__).resolve().parents[1]
 PROFILES = ['general', 'java-debug', 'performance', 'compatibility', 'configuration']
@@ -25,6 +26,7 @@ STATE = ROOT / '.esa/tool-images'
 PACKAGE = re.compile(r'^[a-z0-9][a-z0-9+.-]*(?::[a-z0-9]+)?$')
 VERSION = re.compile(r'^[A-Za-z0-9.+:~_-]+$')
 SEMVER = re.compile(r'^v?(\d+)\.(\d+)(?:\.(\d+))?$')
+SOOT_BASE = 'https://repo.maven.apache.org/maven2/org/soot-oss/soot'
 
 def sha(data):
     return hashlib.sha256(data).hexdigest()
@@ -54,6 +56,8 @@ def configurations(root=ROOT):
         if not packages or any(not PACKAGE.fullmatch(package) for package in packages):
             raise ValueError('Invalid apt package declaration')
         result[profile] = {'config': config, 'packages': packages, 'bytes': path.read_bytes()}
+    if result['java-debug']['config'].get('java_tools', 'soot') != 'org.soot-oss:soot':
+        raise ValueError('Use the official org.soot-oss:soot artifact')
     return result, policy
 
 class Docker:
@@ -139,7 +143,25 @@ def choose_profiler(releases, arch):
         raise RuntimeError('Profiler asset is outside the official repository')
     return {'version': latest['tag_name'], 'published_at': latest['published_at'], 'url': url, 'sha256': checksum.split(':', 1)[1], 'asset': asset['name']}
 
-def profiler_archive(release):
+def choose_soot(versions):
+    stable = [version for version in versions if re.fullmatch(r'\d+\.\d+\.\d+', version)]
+    if not stable:
+        raise RuntimeError('Official stable Soot release unavailable')
+    return max(stable, key=lambda version: tuple(map(int, version.split('.'))))
+
+def resolve_soot():
+    with urlopen(SOOT_BASE + '/maven-metadata.xml', timeout=60) as response:
+        metadata = response.read(1 << 20)
+    version = choose_soot([item.text or '' for item in ET.fromstring(metadata).findall('./versioning/versions/version')])
+    asset = 'soot-' + version + '-jar-with-dependencies.jar'
+    url = SOOT_BASE + '/' + version + '/' + asset
+    with urlopen(url + '.sha256', timeout=60) as response:
+        checksum = response.read(256).decode().strip().lower()
+    if not re.fullmatch(r'[a-f0-9]{64}', checksum):
+        raise RuntimeError('Official Soot artifact lacks a published SHA256')
+    return {'version': version, 'url': url, 'asset': asset, 'sha256': checksum}
+
+def download_artifact(release):
     path = STATE / 'artifacts' / release['asset']
     if path.exists() and sha(path.read_bytes()) == release['sha256']:
         return path
@@ -147,7 +169,7 @@ def profiler_archive(release):
     with urlopen(request, timeout=120) as response:
         data = response.read(32 * 1024 * 1024 + 1)
     if len(data) > 32 * 1024 * 1024 or sha(data) != release['sha256']:
-        raise RuntimeError('Profiler archive exceeds size bound or published SHA256 differs')
+        raise RuntimeError('Tool artifact exceeds size bound or published SHA256 differs')
     atomic(path, data)
     return path
 
@@ -182,6 +204,7 @@ def lock_text(release, inventory, image_id):
     lines += [name + ' = ' + version for name, version in sorted(inventory['packages'].items())]
     lines += ['[commands]'] + [name + ' = ' + path for name, path in sorted(inventory['commands'].items())]
     lines += ['jfr = ' + inventory['jfr'], '[java]', 'target = ' + inventory['target_java'].splitlines()[0], 'tools = ' + inventory['tool_java'].splitlines()[0]]
+    lines += ['[soot]', 'version = ' + release['soot']['version'], 'sha256 = ' + release['soot']['sha256'], 'source = ' + release['soot']['url']]
     return '\n'.join(lines) + '\n'
 
 def update(context, check=False, locked=False):
@@ -202,9 +225,13 @@ def update(context, check=False, locked=False):
         packages = sorted({package for config in configs.values() for package in config['packages']})
         versions = resolve_packages(docker, target, packages)
         profiler = choose_profiler(official_json('https://api.github.com/repos/async-profiler/async-profiler/releases?per_page=100'), arch)
-        release = {'architecture': arch, 'target_image': target, 'tool_jdk_image': tool_jdk, 'packages': versions, 'profiler': profiler}
+        release = {'architecture': arch, 'target_image': target, 'tool_jdk_image': tool_jdk, 'packages': versions, 'profiler': profiler, 'soot': resolve_soot()}
+    if 'soot' not in release:
+        # Initialize the newly declared tool without upgrading the existing stack.
+        print('Registering stable Soot; retaining existing JDK/package/profiler locks.', flush=True)
+        release['soot'] = resolve_soot()
     profile_sources = b''.join((ROOT / 'profiles' / name / filename).read_bytes() for name in PROFILES for filename in ('toolset.txt', 'SKILL.md', 'environment.json', 'tools.json'))
-    source_hash = sha(profile_sources + (ROOT / 'deploy/tools/Dockerfile').read_bytes() + (ROOT / 'scripts/inspect_tools.py').read_bytes() + Path(__file__).read_bytes())
+    source_hash = sha(profile_sources + (ROOT / 'deploy/tools/Dockerfile').read_bytes() + (ROOT / 'deploy/tools/soot').read_bytes() + (ROOT / 'scripts/inspect_tools.py').read_bytes() + Path(__file__).read_bytes())
     fingerprint = sha(json.dumps(release, sort_keys=True).encode() + source_hash.encode())
     unchanged = previous and previous['release_hash'] == fingerprint and previous['docker_context'] == context
     if unchanged:
@@ -214,7 +241,7 @@ def update(context, check=False, locked=False):
             unchanged = info['Config']['Labels'].get('esa.release.hash') == fingerprint
         except (RuntimeError, KeyError):
             unchanged = False
-    print(json.dumps({'status': 'current' if unchanged else 'update_available', 'architecture': arch, 'release_hash': fingerprint, 'async_profiler': release['profiler']['version']}), flush=True)
+    print(json.dumps({'status': 'current' if unchanged else 'update_available', 'architecture': arch, 'release_hash': fingerprint, 'async_profiler': release['profiler']['version'], 'soot': release['soot']['version']}), flush=True)
     if check:
         return
     if unchanged:
@@ -223,12 +250,15 @@ def update(context, check=False, locked=False):
         atomic(ROOT / 'deploy/tools/toolset.release.txt', lock_text(release, inventory, entry['image_id']))
         print('Shared immutable toolkit passed inspection; no rebuild needed.', flush=True)
         return
-    archive = profiler_archive(release['profiler'])
+    archive = download_artifact(release['profiler'])
+    soot = download_artifact(release['soot'])
     STATE.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix='build-', dir=str(STATE)) as temporary:
         directory = Path(temporary)
         shutil.copy(ROOT / 'deploy/tools/Dockerfile', directory / 'Dockerfile')
         shutil.copy(ROOT / 'scripts/inspect_tools.py', directory / 'inspect_tools.py')
+        shutil.copy(ROOT / 'deploy/tools/soot', directory / 'soot')
+        shutil.copy(soot, directory / 'soot.jar')
         atomic(directory / 'packages.txt', '\n'.join(name + '=' + version for name, version in release['packages'].items()) + '\n')
         extract_profiler(archive, directory / 'async-profiler')
         for profile in PROFILES:

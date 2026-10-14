@@ -22,15 +22,15 @@ New/edit hooks, import and metadata saves do not forward issues. Imports create 
 }
 ```
 
-A forwarding without required environment/context is accepted and awaits information; it does not call a provider. An unchanged re-forward uses the cached run. A force flag creates one new run in the same event transaction, not an initial run followed by a second forced run. Replaying that event never spends again.
+A forwarding with incomplete environment/context is accepted and sent to the Agent, which decides whether clarification is needed. An unchanged re-forward uses the cached run. A force flag creates one new run in the same event transaction, not an initial run followed by a second forced run. Replaying that event never spends again.
 
 ## Processing
 
-A private snapshot is restricted. A forwarded closed issue is collected as a case draft. An open forwarded issue checks trusted cases from the same project against symptoms, component, affected version and environment. An applicable case provides recommendations without a model call. Otherwise missing diagnostic information is requested; a complete snapshot queues read-only engineering diagnosis, independent of Tracker or any former category.
+A private snapshot is restricted. A forwarded closed issue is collected as a case draft. Every open forwarded issue enters the Agent path, independent of Tracker or metadata completeness. The service supplies only a project/time-scoped local Issue directory path/hash. Routing Agent searches and reads records on demand; applicable Agent analyses and engineer solutions both skip engineering. A new problem reaches the engineering Agent, while essential missing information is requested without engineering. See [directory operations](ISSUE_DIRECTORY.md). Exact duplicate diagnostic inputs share one investigation.
 
 The Agent contract contains issue assignment, concrete code findings (commit/file/lines/problem/solution/evidence) and limitations. It does not request categories or tags. Reports await human review; missing localization can await more information. Approval does not close the Redmine issue. Token warnings remain advisory.
 
-Trusted case approvals refresh recommendations only for already forwarded tickets. These records describe the last manually forwarded source snapshot. Reopening, editing, closing or changing metadata is not automatically synchronized; forward the updated snapshot to withdraw obsolete case evidence or collect a new case. Normal Redmine visibility continues to restrict page/report access.
+Trusted case approvals become context for subsequent Agent tasks. They can revise an already linked solution within the same scope; they do not automatically match other tickets or replace their investigations. These records describe the last manually forwarded source snapshot. Reopening, editing, closing or changing metadata is not automatically synchronized; forward the updated snapshot to withdraw obsolete case evidence or collect a new case. Normal Redmine visibility continues to restrict page/report access.
 
 ## Upgrade and compatibility
 

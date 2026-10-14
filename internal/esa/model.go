@@ -7,7 +7,8 @@ import (
 	"esa/internal/classifier"
 )
 
-const WorkflowVersion = "5"
+// Cache/task contract revision; old queued contracts require a fresh forwarding.
+const WorkflowVersion = "8"
 
 type Comment struct {
 	ID        string    `json:"id"`
@@ -144,6 +145,15 @@ type Case struct {
 	TrustedAt   time.Time         `json:"trusted_at,omitempty"`
 }
 
+// Historical retrieval audit fields; new tasks use the local Issue directory.
+type RetrievalTrace struct {
+	Version    string  `json:"version"`
+	CorpusHash string  `json:"corpus_hash"`
+	BM25Rank   int     `json:"bm25_rank"`
+	SignalRank int     `json:"signal_rank"`
+	RRFScore   float64 `json:"rrf_score"`
+}
+
 type Match struct {
 	Retrieval   *RetrievalTrace `json:"retrieval,omitempty"`
 	Categories  []string        `json:"categories,omitempty"`
@@ -185,6 +195,7 @@ type IssueAssignment struct {
 	Reason     string `json:"reason"`
 }
 type Report struct {
+	Routing             *RoutingResult       `json:"routing,omitempty"`
 	Envelope            *ReportEnvelope      `json:"assessment,omitempty"`
 	Plan                *AnalysisPlan        `json:"plan,omitempty"`
 	AgentClassification *Classification      `json:"agent_classification,omitempty"`

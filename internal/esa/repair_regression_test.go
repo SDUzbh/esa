@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-func TestLaterCaseReviewRefreshesWithoutNewAnalysis(t *testing.T) {
+func TestLaterCaseReviewDoesNotRefreshOrLeakFutureContext(t *testing.T) {
 	e := testEngine(t)
 	initial := receive(t, e, "initial", fixture(e, "open"))
 	before := e.Store.Snapshot()
@@ -24,23 +24,30 @@ func TestLaterCaseReviewRefreshesWithoutNewAnalysis(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := e.Store.Snapshot()
-	recommendation := s.Runs[s.Latest["open"]]
-	if recommendation.Route != "case_reuse" || !recommendation.ObservationCutoff.Equal(later) || recommendation.Report.Usage.Calls != 0 {
-		t.Fatalf("later approved case was not published at its availability: %+v", recommendation)
+	if s.Latest["open"] != initialRun.ID || s.Runs[initialRun.ID].State != "queued" || len(s.Runs) != len(before.Runs) {
+		t.Fatal("case approval replaced the investigation")
 	}
-	if hash(s.Snapshots[snapshot.ID]) != hash(snapshot) || !s.Runs[initialRun.ID].ObservationCutoff.Equal(initialRun.ObservationCutoff) || len(s.Runs[initialRun.ID].Matches) != 0 {
-		t.Fatal("later review rewrote original input or supplied future case knowledge")
-	}
-	if len(s.Investigations) != 1 || s.Investigations[initialRun.InvestigationID].State != "superseded" || s.Runs[initialRun.ID].State != "superseded" {
-		t.Fatal("queued investigation and run state diverged after recommendation")
+	if hash(s.Snapshots[snapshot.ID]) != hash(snapshot) || !s.Runs[initialRun.ID].ObservationCutoff.Equal(initialRun.ObservationCutoff) {
+		t.Fatal("review rewrote frozen inputs")
 	}
 	calls := 0
-	if _, err := e.ProcessOne(context.Background(), analyzerFunc(func(context.Context, AnalyzeRequest) (Report, error) {
+	if _, err := e.ProcessOne(context.Background(), analyzerFunc(func(_ context.Context, in AnalyzeRequest) (Report, error) {
 		calls++
+		if len(inputIssueRecords(t, e, in)) != 0 {
+			t.Fatal("future case leaked", inputIssueRecords(t, e, in))
+		}
 		return diagnosticReport(), nil
-	})); err != nil || calls != 0 {
-		t.Fatal("review triggered extra engineering work", calls, err)
+	})); err != nil || calls != 1 {
+		t.Fatal(calls, err)
 	}
+	query := fixture(e, "later-query")
+	query.Description += " distinct input"
+	next := receive(t, e, "later-forward", query)
+	laterState := e.Store.Snapshot()
+	if len(issueRecords(laterState, laterState.Investigations[laterState.Runs[next.RunID].InvestigationID], query)) < 1 {
+		t.Fatal("new forwarding omitted visible case context")
+	}
+
 }
 
 func TestClosingOnlyMemberSupersedesUnstartedInvestigation(t *testing.T) {
@@ -59,7 +66,7 @@ func TestClosingOnlyMemberSupersedesUnstartedInvestigation(t *testing.T) {
 	}
 }
 
-func TestReviewDuringAnalysisKeepsSpendWithoutReplacingTrustedAdvice(t *testing.T) {
+func TestCaseReviewDuringAnalysisDoesNotReplaceAgentResult(t *testing.T) {
 	e := testEngine(t)
 	open := fixture(e, "open")
 	r := receive(t, e, "open", open)
@@ -74,7 +81,7 @@ func TestReviewDuringAnalysisKeepsSpendWithoutReplacingTrustedAdvice(t *testing.
 	}
 	s := e.Store.Snapshot()
 	run := s.Runs[r.RunID]
-	if run.State != "superseded" || run.Report.Usage.InputTokens != 20 || len(s.Solutions) != 0 || s.Runs[s.Latest[open.ID]].Route != "case_reuse" {
+	if run.State != "awaiting_review" || run.Report.Usage.InputTokens != 20 || len(s.Solutions) != 1 || s.Latest[open.ID] != r.RunID {
 		t.Fatal("late proposal overwrote advice or lost usage", run)
 	}
 }
@@ -148,7 +155,7 @@ func TestAgentAssignmentAndMemberCasePublishOneFamily(t *testing.T) {
 	initial := e.Store.Snapshot().Runs[receipt.RunID]
 	if _, err := e.ProcessOne(context.Background(), analyzerFunc(func(_ context.Context, input AnalyzeRequest) (Report, error) {
 		found := false
-		for _, issue := range input.KnownIssues {
+		for _, issue := range inputIssueRecords(t, e, input) {
 			found = found || issue.ID == firstRun.IssueID
 		}
 		if !found {
@@ -163,7 +170,7 @@ func TestAgentAssignmentAndMemberCasePublishOneFamily(t *testing.T) {
 	s := e.Store.Snapshot()
 	run := s.Runs[receipt.RunID]
 	task := s.Investigations[run.InvestigationID]
-	if run.IssueID != firstRun.IssueID || task.Contract.IssueID != initial.IssueID || hash(run.Input) != hash(initial.Input) {
+	if len(s.Issues) != 1 || initial.IssueID != "" || run.IssueID != firstRun.IssueID || task.Contract.IssueID != initial.IssueID || hash(run.Input) != hash(initial.Input) {
 		t.Fatal("assignment rewrote frozen input or failed to update membership")
 	}
 	second.Closed = true

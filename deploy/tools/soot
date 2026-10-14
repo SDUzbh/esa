@@ -1,0 +1,9 @@
+#!/bin/sh
+# Inspect registered product bytecode using the analysis JVM and target libraries.
+set -eu
+classpath=/input/classes
+for jar in /input/deps/*.jar /opt/java/openjdk/jre/lib/*.jar /opt/java/openjdk/jre/lib/ext/*.jar; do
+    if [ -f "$jar" ]; then classpath="$classpath:$jar"; fi
+done
+exec /opt/esa/tool-jdk/bin/java -Xmx1024m -cp /opt/esa/soot/soot.jar soot.Main \
+    -src-prec only-class -cp "$classpath" "$@"

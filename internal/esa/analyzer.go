@@ -10,19 +10,14 @@ import (
 	"time"
 )
 
-type IssueBrief struct {
-	ID         string   `json:"id"`
-	Title      string   `json:"title"`
-	TicketKeys []string `json:"ticket_keys"`
-}
 type AnalyzeRequest struct {
-	Contract    *TaskContract `json:"task_contract,omitempty"`
-	KnownIssues []IssueBrief  `json:"known_issues,omitempty"`
-	RunID       string        `json:"run_id"`
-	Ticket      Ticket        `json:"ticket"`
-	Cases       []Case        `json:"cases"`
-	Budget      Budget        `json:"budget"`
-	ReadOnly    bool          `json:"read_only"`
+	Contract           *TaskContract `json:"task_contract,omitempty"`
+	IssueDirectory     string        `json:"issue_directory,omitempty"`
+	IssueDirectoryHash string        `json:"issue_directory_hash,omitempty"`
+	RunID              string        `json:"run_id"`
+	Ticket             Ticket        `json:"ticket"`
+	Budget             Budget        `json:"budget"`
+	ReadOnly           bool          `json:"read_only"`
 }
 
 type Analyzer interface {

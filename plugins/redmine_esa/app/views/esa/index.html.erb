@@ -6,7 +6,7 @@
 <fieldset><legend>Filters</legend>
 <p><%= label_tag :q, 'Search' %> <%= text_field_tag :q, @query['q'], placeholder: 'Issue key or subject' %>
 <%= label_tag :project_id, 'Project' %> <%= select_tag :project_id, options_for_select([['All authorized projects', '']] + @projects.map { |p| [p.name, p.id] }, @query['project_id']) %></p>
-<p><% { 'route' => ['', 'case_reuse', 'request_information', 'engineering_analysis', 'case_collection'], 'esa_state' => ['', 'queued', 'awaiting_information', 'awaiting_configuration', 'running', 'awaiting_review', 'completed', 'failed', 'draft', 'trusted', 'invalidated', 'rejected', 'archived', 'duplicate'], 'source' => ['', 'redmine', 'manual_upload'] }.each do |name, options| %>
+<p><% { 'route' => ['', 'issue_reuse', 'engineering_analysis', 'case_collection', 'manual_forward'], 'esa_state' => ['', 'queued', 'awaiting_information', 'awaiting_configuration', 'running', 'awaiting_review', 'completed', 'failed', 'draft', 'trusted', 'invalidated', 'rejected', 'archived', 'duplicate'], 'source' => ['', 'redmine', 'manual_upload'] }.each do |name, options| %>
 <%= label_tag name, esa_label(name) %> <%= select_tag name, options_for_select(options.map { |v| [v.blank? ? 'Any' : esa_label(v), v] }, @query[name]) %>
 <% end %></p>
 <p><% %w[tracker status assignee].each do |name| %><%= label_tag name, esa_label(name) %> <%= text_field_tag name, @query[name], size: 16 %> <% end %></p>

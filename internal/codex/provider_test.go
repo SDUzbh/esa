@@ -42,7 +42,7 @@ func TestProviderCachesOneInvocationAndRejectsChangedInput(t *testing.T) {
 	p := Provider{CLI: script, RunsDir: filepath.Join(dir, "runs"), Packet: Packet{Commit: "old", Cutoff: time.Now(), Ticket: ticket, Documents: []Document{{Source: "git", Prefix: "old:file.java:", First: 10, Lines: []string{"complete(response);"}}}}}
 	in := esa.AnalyzeRequest{RunID: "run_abc123", Ticket: ticket, ReadOnly: true, Budget: esa.Budget{MaxCalls: 1, MaxInputTokens: 10000, MaxOutputTokens: 1000, TimeoutSeconds: 10}}
 	for i := 0; i < 2; i++ {
-		report, err := p.Analyze(context.Background(), in)
+		report, err := p.analyzeEngineering(context.Background(), in)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -55,13 +55,13 @@ func TestProviderCachesOneInvocationAndRejectsChangedInput(t *testing.T) {
 		t.Fatal("duplicate run spent a second invocation")
 	}
 	in.Ticket.Description = "Changed"
-	if _, err := p.Analyze(context.Background(), in); err == nil {
+	if _, err := p.analyzeEngineering(context.Background(), in); err == nil {
 		t.Fatal("changed diagnostic input accepted")
 	}
 	in.Ticket = ticket
 	in.RunID = "run_interrupted"
 	os.Mkdir(filepath.Join(p.RunsDir, in.RunID), 0700)
-	if _, err := p.Analyze(context.Background(), in); err == nil {
+	if _, err := p.analyzeEngineering(context.Background(), in); err == nil {
 		t.Fatal("interrupted attempt was retried automatically")
 	}
 	t.Run("advisory tokens do not cancel", func(t *testing.T) {
@@ -70,7 +70,7 @@ func TestProviderCachesOneInvocationAndRejectsChangedInput(t *testing.T) {
 		warn.Budget.MaxInputTokens = 1
 		warn.Budget.MaxOutputTokens = 1
 		warn.Budget.WarnTotalTokens = 1
-		report, err := p.Analyze(context.Background(), warn)
+		report, err := p.analyzeEngineering(context.Background(), warn)
 		if err != nil || len(report.Alerts) != 3 || report.Usage.InputTokens != 12 {
 			t.Fatalf("warning rejected report: %+v %v", report, err)
 		}
@@ -86,7 +86,7 @@ func TestProviderCachesOneInvocationAndRejectsChangedInput(t *testing.T) {
 		}
 		p.CLI = toolScript
 		in.RunID = "run_tool_event"
-		if _, err := p.Analyze(context.Background(), in); err == nil {
+		if _, err := p.analyzeEngineering(context.Background(), in); err == nil {
 			t.Fatal("tool execution accepted")
 		}
 		auditData, err := os.ReadFile(filepath.Join(p.RunsDir, in.RunID, "audit.json"))

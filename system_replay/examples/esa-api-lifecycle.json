@@ -181,12 +181,12 @@
             {
               "path": "/state",
               "op": "eq",
-              "value": "completed"
+              "value": "awaiting_configuration"
             },
             {
               "path": "/route",
               "op": "eq",
-              "value": "case_reuse"
+              "value": "engineering_analysis"
             },
             {
               "path": "/raw/ticket/latest_run/report/usage/calls",
@@ -194,7 +194,7 @@
               "value": 0
             }
           ],
-          "id": "case-reuse-idempotency",
+          "id": "agent-context-idempotency",
           "request": {
             "method": "POST",
             "path": "/v1/events",
@@ -237,12 +237,12 @@
             {
               "path": "/state",
               "op": "eq",
-              "value": "completed"
+              "value": "awaiting_configuration"
             },
             {
               "path": "/route",
               "op": "eq",
-              "value": "case_reuse"
+              "value": "engineering_analysis"
             },
             {
               "path": "/raw/ticket/latest_run/report/usage/calls",
@@ -250,7 +250,7 @@
               "value": 0
             }
           ],
-          "id": "case-reuse-idempotency",
+          "id": "agent-context-idempotency",
           "receipt_expect": [
             {
               "path": "/status",
@@ -305,12 +305,12 @@
             {
               "path": "/state",
               "op": "eq",
-              "value": "completed"
+              "value": "awaiting_configuration"
             },
             {
               "path": "/route",
               "op": "eq",
-              "value": "case_reuse"
+              "value": "engineering_analysis"
             },
             {
               "path": "/raw/ticket/latest_run/report/usage/calls",
@@ -358,7 +358,7 @@
             {
               "path": "/state",
               "op": "eq",
-              "value": "invalidated"
+              "value": "awaiting_configuration"
             }
           ]
         },

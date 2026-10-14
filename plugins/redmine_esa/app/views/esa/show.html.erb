@@ -4,7 +4,7 @@
 <% run = @row['latest_run']; record = @row['case'] %>
 <% task = @row['investigation']; solution = @row['solution']; engineering_issue = @row['engineering_issue'] %>
 <% if task %><div class="box"><h3>Shared engineering investigation</h3>
-<p><strong>Engineering issue:</strong> <%= engineering_issue && engineering_issue['id'] %> · <strong>Investigation:</strong> <%= esa_label(task['state']) %></p>
+<p><strong>Engineering issue:</strong> <%= engineering_issue ? engineering_issue['id'] : 'Unassigned until analysis completes' %> · <strong>Investigation:</strong> <%= esa_label(task['state']) %></p>
 <p><%= link_to 'Engineering issue list', esa_engineering_issues_path %></p>
 <p>Tickets share an investigation when diagnostic content, affected versions, components and environment match. Membership remains tentative until reviewed.</p>
 <% if solution %><p><strong>Solution:</strong> Revision <%= solution['revision'] %> · <%= esa_label(solution['state']) %> · <%= solution['origin'] %></p>
@@ -15,6 +15,10 @@
 <div class="box"><p><strong>ESA state:</strong> <%= esa_label(esa_row_state(@row)) %></p>
 <p><strong>Intake:</strong> <%= @row.dig('ticket', 'forwarded_by').present? ? "Forwarded by #{@row.dig('ticket', 'forwarded_by')}" : 'Not forwarded to ESA' %></p>
 <% if run && !@issue.closed? %><p><strong>Route:</strong> <%= esa_label(run['route']) %></p>
+<% routing = run.dig('report', 'routing') %>
+<% if routing %><p><strong>Routing decision:</strong> <%= esa_label(routing['action']) %> · <%= routing['reason'] %></p>
+<% if routing['action'] == 'reuse' %><p>Existing solution reused. The engineering Agent was not invoked.</p><% end %>
+<p><strong>Routing calls:</strong> <%= routing.dig('usage', 'calls') || 0 %> · <strong>Engineering calls:</strong> <%= [run.dig('report', 'usage', 'calls').to_i - routing.dig('usage', 'calls').to_i, 0].max %></p><% end %>
 <p><%= run.dig('report', 'summary') %></p>
 <% Array(run.dig('report', 'alerts')).each do |alert| %><p class="warning"><strong>Analysis warning:</strong> <%= alert['message'] %></p><% end %>
 <% Array(run.dig('report', 'environment_requests')).each do |request| %><div class="box"><h3>Environment change requested</h3><p><%= request['reason'] %></p><p><strong>Proposed change:</strong> <%= request['proposed_change'] %></p><p><strong>Validation:</strong> <%= request['validation'] %></p><p>Pending engineer review.</p></div><% end %>
@@ -62,7 +66,7 @@
 <% { 'resolution_reason' => 'reason', 'cause' => 'cause', 'solution' => 'solution', 'validation' => 'validation' }.each do |name, field| %><p><%= label_tag name, esa_label(name) %><%= text_area_tag name, @metadata.dig('resolution', field), rows: 3, cols: 75 %></p><% end %>
 </div><%= submit_tag 'Save metadata locally' %><% end %><% end %>
 <% if User.current.allowed_to?(:review_esa, @issue.project) %>
-<% if task && !@issue.closed? %><h3>Review issue membership</h3><%= form_tag esa_review_membership_path(@issue) do %>
+<% if task && engineering_issue && !@issue.closed? %><h3>Review issue membership</h3><%= form_tag esa_review_membership_path(@issue) do %>
 <%= hidden_field_tag :snapshot_id, @row['snapshot_id'] %>
 <p><%= label_tag :engineering_issue_id, 'Engineering issue ID' %> <%= text_field_tag :engineering_issue_id, '', size: 50 %> Leave blank to split into a new issue.</p>
 <p><%= label_tag :membership_reason, 'Reason and contradictory evidence' %> <%= text_field_tag :membership_reason, '', size: 65, required: true %></p>

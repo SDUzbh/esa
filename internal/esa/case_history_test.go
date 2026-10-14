@@ -1,9 +1,7 @@
 package esa_test
 
 import (
-	"encoding/json"
 	"esa/internal/esa"
-	"os"
 	"testing"
 	"time"
 )
@@ -32,32 +30,5 @@ func TestFutureKnowledgeExcludedAndWithdrawalVersioned(t *testing.T) {
 	}
 	if len(esa.CasesAt(history, withdrawn)) != 0 {
 		t.Fatal("withdrawn case still active")
-	}
-	b, err := os.ReadFile("../../config/rules.json")
-	if err != nil {
-		t.Fatal(err)
-	}
-	var cfg esa.Config
-	if err := json.Unmarshal(b, &cfg); err != nil {
-		t.Fatal(err)
-	}
-	store, err := esa.OpenStore("")
-	if err != nil {
-		t.Fatal(err)
-	}
-	engine, err := esa.NewEngine(store, cfg)
-	if err != nil {
-		t.Fatal(err)
-	}
-	ticket := esa.Ticket{ID: "new", ProjectID: "1", Subject: "NullPointerException", Description: "Consumer partition assignment", Components: []string{"consumer"}, Versions: []string{"3.7.0"}, Environment: map[string]string{"jdk": "17"}}
-	ticket.ForwardedBy = "fixture-human"
-	ticket.ForwardedAt = before
-	_, route, _, _ := engine.Decide(ticket, history, before.Add(time.Minute))
-	if route == "case_reuse" {
-		t.Fatal("workflow used future solution")
-	}
-	_, route, _, _ = engine.Decide(ticket, history, approved)
-	if route != "case_reuse" {
-		t.Fatal("workflow did not use visible trusted case")
 	}
 }

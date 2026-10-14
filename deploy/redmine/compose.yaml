@@ -63,6 +63,7 @@ services:
       ESA_ANALYZER_TOKEN: ${ESA_API_TOKEN:?Set ESA_API_TOKEN in .env}
     volumes:
       - esa_state:/var/lib/esa
+      - ${ESA_ISSUES_DIRECTORY:-../../runtime/esa/issues}:/var/lib/esa/issues
     healthcheck:
       test: ["CMD", "/esa", "-healthcheck"]
       interval: 10s

@@ -3,7 +3,7 @@
 [images]
 target = eclipse-temurin@sha256:55cdca1740b7bcfc1dc207744bd280e1ff2b7829475185745e1b5d19c3e42f97
 tool_jdk = eclipse-temurin@sha256:b468c3fc688b14450571494f588bd939378e7fd542ed5a73f8efc13f17872a87
-image = sha256:61dc0d1383190e29e3a1b0d87f2fecede84a301c22986fc4ebe17627dda88a34
+image = sha256:ec16a4f9c99d85ea0c8cf52bfe7825c31e052dd6b600af8fa177d7bab2d3578d
 [upstream]
 async_profiler = v4.5
 async_profiler_sha256 = 64c41d1465d60097439c50d7e924b4946f1f62b1cbd21ce5b034fad09c0d6979
@@ -251,6 +251,7 @@ python3 = /usr/bin/python3
 readelf = /usr/bin/readelf
 rg = /usr/bin/rg
 sha256sum = /usr/bin/sha256sum
+soot = /usr/local/bin/soot
 ss = /usr/bin/ss
 strace = /usr/bin/strace
 tcpdump = /usr/bin/tcpdump
@@ -261,3 +262,7 @@ jfr = /opt/esa/tool-jdk/bin/jfr
 [java]
 target = openjdk version "1.8.0_504"
 tools = openjdk version "21.0.12.1" 2026-08-18 LTS
+[soot]
+version = 4.7.1
+sha256 = 7389c0e6324445af4a5eee6d8b7cd7c73c3daf1cc7effab8dc5570f0953a6079
+source = https://repo.maven.apache.org/maven2/org/soot-oss/soot/4.7.1/soot-4.7.1-jar-with-dependencies.jar

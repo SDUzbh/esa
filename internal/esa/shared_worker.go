@@ -3,6 +3,8 @@ package esa
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -34,12 +36,15 @@ func (e *Engine) recoverInvestigations(s *State) error {
 	return nil
 }
 
-func validateReport(report Report, input AnalyzeRequest) error {
+func validateReport(report Report, input AnalyzeRequest, records []IssueRecord) error {
 	if len(report.Findings) > 50 || len(report.Evidence) > 100 || len(report.Summary) > 16384 {
 		return fmt.Errorf("provider report exceeds bounded finding/evidence policy")
 	}
 	if strings.TrimSpace(report.Summary) == "" || len(report.Evidence) == 0 && (len(report.Findings) > 0 || len(report.Limitations) == 0) {
 		return fmt.Errorf("provider must return a summary and evidence, or explicit limitations")
+	}
+	if (len(report.Findings) > 0 || len(report.Evidence) > 0) && (report.Issue == nil || strings.TrimSpace(report.Issue.Title) == "" || strings.TrimSpace(report.Issue.Reason) == "") {
+		return fmt.Errorf("supported analysis requires an Agent issue proposal with title and reason")
 	}
 	for _, ev := range report.Evidence {
 		if ev.Source == "" || ev.Reference == "" || strings.TrimSpace(ev.Quote) == "" {
@@ -48,16 +53,30 @@ func validateReport(report Report, input AnalyzeRequest) error {
 	}
 	if report.Issue != nil && report.Issue.ExistingID != "" {
 		found := false
-		for _, issue := range input.KnownIssues {
-			if issue.ID == report.Issue.ExistingID {
-				found = true
-			}
+		for _, record := range records {
+			found = found || record.IssueID == report.Issue.ExistingID
 		}
 		if !found {
-			return fmt.Errorf("issue assignment is outside the supplied registry")
+			return fmt.Errorf("issue assignment is outside the supplied directory")
 		}
 	}
-	if report.Usage.Calls < 0 || report.Usage.Calls > input.Budget.MaxCalls || report.Usage.InputTokens < 0 || report.Usage.OutputTokens < 0 {
+	maxCalls := input.Budget.MaxCalls
+	if report.Routing != nil {
+		maxCalls++
+		if report.Routing.Action != "reuse" && report.Routing.Action != "analyze" && report.Routing.Action != "request_information" {
+			return fmt.Errorf("invalid routing action")
+		}
+		if report.Routing.Action != "analyze" && (report.Usage.Calls > 1 || len(report.Findings) > 0) {
+			return fmt.Errorf("reuse/clarification cannot invoke engineering or claim new findings")
+		}
+		if report.Routing.Action == "request_information" && len(report.Evidence) > 0 {
+			return fmt.Errorf("clarification cannot publish a solution")
+		}
+		if report.Routing.Usage.Calls != 1 {
+			return fmt.Errorf("invalid routing usage")
+		}
+	}
+	if report.Usage.Calls < 0 || report.Usage.Calls > maxCalls || report.Usage.InputTokens < 0 || report.Usage.OutputTokens < 0 {
 		return fmt.Errorf("invalid reported usage")
 	}
 	for _, finding := range report.Findings {
@@ -163,27 +182,54 @@ func (e *Engine) ProcessOne(ctx context.Context, analyzer Analyzer) (bool, error
 	}()
 	input := AnalyzeRequest{RunID: run.ID, Ticket: run.Input, Budget: e.Config.Budget, ReadOnly: true, Contract: &task.Contract}
 	s := e.Store.Snapshot()
-	input.KnownIssues = issueCandidates(s, task, run.Input)
-	for _, match := range run.Matches {
-		for _, c := range CasesAt(eligibleCaseHistory(s, run.Input), task.Contract.ObservationCutoff) {
-			if c.ID == match.CaseID && c.Version == match.CaseVersion {
-				input.Cases = append(input.Cases, c)
-			}
+	records := issueRecords(s, task, run.Input)
+	root := e.IssueDirectory
+	var callErr error
+	if root == "" {
+		root, callErr = os.MkdirTemp("", "esa-issue-view-")
+		if callErr == nil {
+			defer os.RemoveAll(root)
 		}
 	}
-	report, callErr := analyzer.Analyze(callCtx, input)
+	if callErr == nil {
+		root, callErr = filepath.Abs(root)
+	}
+	if callErr == nil {
+		input.IssueDirectory, input.IssueDirectoryHash, callErr = ExportIssueDirectory(root, run.ProjectID, task.Contract.ObservationCutoff, records)
+	}
+	var report Report
+	invoked := callErr == nil
+	if invoked {
+		report, callErr = analyzer.Analyze(callCtx, input)
+	}
+	if callErr == nil && report.Routing != nil && report.Routing.Action == "reuse" {
+		directory, err := OpenIssueDirectory(root, input.IssueDirectory, input.IssueDirectoryHash)
+		var record IssueRecord
+		if err == nil {
+			record, err = directory.ReadRecord(report.Routing.RecordPath, report.Routing.RecordHash)
+		}
+		if err != nil {
+			callErr = err
+		} else {
+			usage, alerts := report.Usage, report.Alerts
+			report = ReusedIssueReport(record, *report.Routing)
+			report.Usage, report.Alerts = usage, alerts
+		}
+	}
 	if callCtx.Err() != nil && callErr == nil {
 		callErr = callCtx.Err()
 	}
 	close(done)
 	<-heartbeatDone
 	if callErr == nil {
-		callErr = validateReport(report, input)
+		callErr = validateReport(report, input, records)
 	}
 	report.AgentClassification = nil
 	report.Envelope = reportEnvelope(task, e.Now(), time.Since(started).Milliseconds())
 	report.Envelope.ProviderInputHash = hash(input)
-	report.Usage.Calls = 1
+	if invoked && report.Usage.Calls < 1 {
+		report.Usage.Calls = 1
+	}
 	AddAlerts(&report, TokenAlerts(report.Usage, e.Config.Budget)...)
 	if !report.Usage.TokensReported {
 		report.Limitations = append(report.Limitations, "Provider usage is unknown; it must not be interpreted as zero.")
@@ -202,17 +248,31 @@ func (e *Engine) ProcessOne(ctx context.Context, analyzer Analyzer) (bool, error
 			current.State = "failed"
 			r.Error = callErr.Error()
 		} else {
-			applyIssueAssignment(s, &current, report, input.KnownIssues)
-			r.IssueID = current.IssueID
-			r.Report.Envelope.IssueID = current.IssueID
 			current.State = "agent_proposed"
 			r.Error = ""
 			if len(report.Findings) == 0 && len(report.Evidence) == 0 {
 				current.State = "awaiting_information"
 			}
 			if current.State == "agent_proposed" {
+				if err := e.applyIssueAssignment(s, &current, report, records); err != nil {
+					current.State, r.Error = "failed", err.Error()
+				}
+			}
+			r.IssueID = current.IssueID
+			r.Report.Envelope.IssueID = current.IssueID
+			if current.State == "agent_proposed" {
 				group := s.Groups[current.GroupID]
-				solution := SolutionRevision{ID: randomID("solution_"), IssueID: current.IssueID, InvestigationID: current.ID, ProjectID: current.ProjectID, ScopeHash: group.ScopeHash, SourceTicketID: run.TicketID, Origin: "agent", State: "proposed", Revision: 1, RunID: run.ID, AvailableAt: e.Now(), RecordedAt: time.Now().UTC()}
+				sourceID := run.TicketID
+				if report.Routing != nil && report.Routing.Action == "reuse" {
+					r.Route = "issue_reuse"
+					for _, record := range records {
+						if recordPath(record) == report.Routing.RecordPath {
+							sourceID, r.SourceTicketID = record.SourceTicketID, record.SourceTicketID
+						}
+					}
+				}
+
+				solution := SolutionRevision{ID: randomID("solution_"), IssueID: current.IssueID, InvestigationID: current.ID, ProjectID: current.ProjectID, ScopeHash: group.ScopeHash, SourceTicketID: sourceID, Origin: "agent", State: "proposed", Revision: 1, RunID: run.ID, AvailableAt: e.Now(), RecordedAt: time.Now().UTC()}
 				s.Solutions[solution.ID] = solution
 				current.SolutionID = solution.ID
 			}

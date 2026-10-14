@@ -8,6 +8,8 @@ Upload accepts UTF-8 JSON/CSV, previews rows and creates Redmine issues while pr
 
 The detail shows intake provenance, processing state, missing information, recommendations, concrete code findings, evidence, usage, advisory alerts and review controls. A forwarded closed issue becomes a case draft. Case/report approval does not close the Redmine issue.
 
+Every forwarded open issue goes to Routing Agent, which retrieves local Issue records and decides whether to reuse an Agent analysis or engineer solution, request information, or invoke engineering. Reuse invokes no engineering Agent. A new investigation shows **Unassigned until analysis completes**. Intake does not create an Engineering Issue. After the Agent reuses an existing conclusion or completes supported analysis, the service assigns an existing Issue or creates one from its proposed title. Membership review controls appear once an Issue has been assigned.
+
 View ESA, Submit ESA and Review ESA permissions remain required; import also requires Add issues. Issue visibility can be narrower than project visibility, and private issues are excluded from shared pages. The service token never enters browser requests. The prototype limits authorized scopes to 2,000 visible ESA issues.
 
 The forwarding-column migration is required for the new outbox. Old automatic events remain stored but are not delivered. See [manual forwarding](MANUAL_FORWARDING.md).

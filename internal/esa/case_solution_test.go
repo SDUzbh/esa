@@ -3,46 +3,8 @@ package esa
 import (
 	"context"
 	"testing"
-	"time"
 )
 
-func TestSharedInvestigationsRetrievalStatisticsExcludeFutureCorpus(t *testing.T) {
-	e := sharedInvestigationEngine(t)
-	_, receipt := resolved(t, e)
-	c, err := e.ReviewCase(receipt.CaseID, Review{Action: "approve", Reviewer: "engineer"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	q := fixture(e, "query")
-	cutoff := e.Now()
-	before := MatchCases(q, CasesAt([]Case{c}, cutoff))
-	if len(before) != 1 || before[0].Retrieval == nil {
-		t.Fatal("missing eligible retrieval trace")
-	}
-	future := c
-	future.ID = "future"
-	future.CreatedAt = cutoff.Add(time.Hour)
-	future.UpdatedAt = future.CreatedAt
-	future.TrustedAt = future.CreatedAt
-	future.Summary = q.Description
-	after := MatchCases(q, CasesAt([]Case{c, future}, cutoff))
-	if hash(before) != hash(after) {
-		t.Fatal("future documents changed earlier ranking or corpus statistics")
-	}
-	other := c
-	other.ID = "other-project"
-	other.ProjectID = "2"
-	other.Summary = q.Description
-	if hash(MatchCases(q, []Case{c, other})) != hash(before) {
-		t.Fatal("other-project corpus changed scores")
-	}
-	unknown := c
-	unknown.ID = "unknown"
-	unknown.CreatedAt = time.Time{}
-	if hash(MatchCases(q, []Case{c, unknown})) != hash(before) {
-		t.Fatal("unknown provenance entered strict corpus")
-	}
-}
 func TestSharedInvestigationsReviewedCaseSupersedesPendingAndSplitPreservesInputs(t *testing.T) {
 	e := sharedInvestigationEngine(t)
 	q := fixture(e, "lead")

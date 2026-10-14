@@ -26,6 +26,10 @@ type Document struct {
 	Lines  []string `json:"lines"`
 }
 type Config struct {
+	IssuesRoot            string                 `json:"issues_root,omitempty"`
+	IssueDirectory        string                 `json:"issue_directory,omitempty"`
+	IssueDirectoryHash    string                 `json:"issue_directory_hash,omitempty"`
+	IssuesOnly            bool                   `json:"issues_only,omitempty"`
 	Runtime               *RuntimeSetup          `json:"runtime_setup,omitempty"`
 	DockerContext         string                 `json:"docker_context"`
 	Container             string                 `json:"container"`
@@ -58,6 +62,13 @@ func Load(path string) (Config, error) {
 		return c, err
 	}
 	if err = json.Unmarshal(b, &c); err != nil {
+		return c, err
+	}
+	if c.IssuesOnly {
+		if c.Session == "" || !filepath.IsAbs(c.AuditPath) {
+			return c, errors.New("invalid routing tool registration")
+		}
+		_, err := esa.OpenIssueDirectory(c.IssuesRoot, c.IssueDirectory, c.IssueDirectoryHash)
 		return c, err
 	}
 	if c.Container == "" && c.Runtime == nil && !(c.ProfilesRoot != "" && len(c.AvailableCapabilities) == 1 && c.AvailableCapabilities[0] == "source") || c.Session == "" || c.Commit == "" || len(c.Files) == 0 || !filepath.IsAbs(c.SourceDir) || !filepath.IsAbs(c.AuditPath) {
@@ -173,6 +184,12 @@ func (s *Server) owned(ctx context.Context) error {
 	return nil
 }
 func (s *Server) Call(ctx context.Context, name string, args json.RawMessage) (map[string]any, error) {
+	if name == "issue_search" || name == "issue_read" {
+		return s.issueCall(name, args)
+	}
+	if s.Config.IssuesOnly {
+		return nil, errors.New("Routing Agent cannot access source, runtime or installation tools")
+	}
 	if name == "source_search" || name == "capability_request" || name == "tool_install" {
 		return s.extendedCall(ctx, name, args)
 	}
@@ -341,7 +358,13 @@ func (s *Server) Serve(ctx context.Context, in io.Reader, out io.Writer) (result
 		case "ping":
 			result = map[string]any{}
 		case "tools/list":
-			result = map[string]any{"tools": tools(s.Config.ProfilesRoot != "")}
+			available := tools(s.Config.ProfilesRoot != "")
+			if s.Config.IssuesOnly {
+				available = routingTools()
+			} else if s.Config.IssueDirectory != "" {
+				available = append(available, routingTools()...)
+			}
+			result = map[string]any{"tools": available}
 		case "tools/call":
 			var p struct {
 				Name      string          `json:"name"`

@@ -44,7 +44,7 @@ Semantic evaluation is optional and cannot override the behavior gate. It requir
 
 | Manifest | Actual coverage | Model calls by default |
 | --- | --- | --- |
-| `esa-api-lifecycle.json` | Manually forwarded lifecycle events: collect/approve/reuse cases, duplicate and stale events, reopen withdrawal, manual support requests, denied project submission | 0 |
+| `esa-api-lifecycle.json` | Manually forwarded lifecycle events: collect/approve cases without bypassing the Agent path, duplicate and stale events, reopening, manual support requests, denied project submission | 0 |
 
 Both examples start a separate backend on port 18090 with a new state file and disable Redmine synchronization. The Kafka fixture compiles unmodified historical clients and uses the shipped MockClient to inject a disconnected response. It is a client-code replay, not a full broker cluster or Kafka Connect deployment.
 
@@ -54,4 +54,4 @@ The backend HTTP adapter does not cover Redmine browser actions or its outbox. U
 
 Current ESA intake requires explicit `forwarded_by` and `forwarded_at`. External fixtures declare the manual action; the tester does not infer it. Classification and label learning are removed from the active application. See [manual forwarding](MANUAL_FORWARDING.md).
 
-`esa-api-forwarding.json` verifies explicit actor/time requirements, rejection of automatic intake, missing-context handling, category-independent diagnosis and removal of the label endpoint. `esa-api-kafka.json` explicitly forwards the historical ticket and expects an unconfigured provider while independently verifying product repair behavior.
+`esa-api-forwarding.json` verifies explicit actor/time requirements, rejection of automatic intake, Agent admission with missing context, category-independent diagnosis and removal of the label endpoint. `esa-api-kafka.json` explicitly forwards the historical ticket and expects an unconfigured provider while independently verifying product repair behavior.

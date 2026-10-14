@@ -8,7 +8,7 @@ import tempfile
 import unittest
 
 from tool_images import selection
-from update_tool_images import choose_profiler, configurations, extract_profiler
+from update_tool_images import choose_profiler, choose_soot, configurations, extract_profiler
 from replay_session import baseline_status
 
 def release(tag, **changes):
@@ -32,6 +32,11 @@ class ToolImageTests(unittest.TestCase):
         del value['assets'][0]['digest']
         with self.assertRaises(RuntimeError):
             choose_profiler([value], 'arm64')
+
+    def test_soot_uses_numeric_stable_releases(self):
+        self.assertEqual(choose_soot(['4.7.1', '4.10.0', '5.0.0-SNAPSHOT', '5.0.0-RC1']), '4.10.0')
+        with self.assertRaises(RuntimeError):
+            choose_soot(['5.0.0-SNAPSHOT'])
 
     def test_context_cannot_reuse_another_docker_registry(self):
         with tempfile.TemporaryDirectory() as temporary:

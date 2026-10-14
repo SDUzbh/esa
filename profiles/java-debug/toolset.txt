@@ -9,4 +9,6 @@ async_profiler_repository = async-profiler/async-profiler
 [apt]
 packages = gdb strace lsof procps binutils
 [commands]
-primary = java javac jdb jcmd jstack jmap javap jdeps gdb strace lsof
+primary = java javac jdb jcmd jstack jmap javap jdeps gdb strace lsof soot
+[java_tools]
+soot = org.soot-oss:soot

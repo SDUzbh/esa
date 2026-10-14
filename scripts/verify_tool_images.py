@@ -18,6 +18,7 @@ def main():
         assert image['image_id'] == shared_image, 'Profiles must share one verified toolkit'
     inventory = inspect_image(docker, shared_image)
     assert inventory['commands']['asprof'] and inventory['commands']['jdb']
+    assert inventory['commands']['soot'] and 'Soot version' in inventory['soot']
     assert 'version "1.8.' in inventory['target_java']
     assert 'version "21.' in inventory['tool_java']
     with tempfile.TemporaryDirectory(prefix='esa-preset-test-') as temporary:

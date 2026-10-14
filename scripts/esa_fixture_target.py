@@ -42,7 +42,7 @@ def main():
                 calls.append({'run_id': packet['run_id'], 'snapshot_id': packet['task_contract']['snapshot_id'], 'cutoff': packet['task_contract']['observation_cutoff']})
                 (directory / 'provider-calls.json').write_text(json.dumps(calls))
             evidence = {'source': 'git', 'reference': 'fixture:Example.java:10', 'quote': 'assignment.size()'}
-            result = {'summary': 'Fixture empty assignment hypothesis', 'issue': {'existing_id': packet['known_issues'][0]['id'], 'title': 'Fixture assignment', 'reason': 'Deterministic test input'},
+            result = {'summary': 'Fixture empty assignment hypothesis', 'issue': {'existing_id': '', 'title': 'Fixture assignment', 'reason': 'Deterministic test input'},
                       'findings': [{'commit': 'fixture', 'file': 'Example.java', 'start_line': 10, 'end_line': 10, 'problem': 'Assignment may be absent', 'solution': 'Guard assignment before use', 'evidence': [evidence]}],
                       'evidence': [evidence], 'recommendations': ['Guard assignment'], 'verification_steps': ['Exercise empty assignment'], 'limitations': ['Synthetic provider; no causal or source mapping validation'],
                       'usage': {'calls': 1, 'input_tokens': 20, 'output_tokens': 10, 'tokens_reported': True}}

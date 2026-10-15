@@ -37,6 +37,9 @@ def main():
             assert environment.run('cat /input/classes/control.txt').stdout == 'baseline'
             analyzed = environment.run('''set -eu
 before=$(sha256sum /input/classes/Example.class)
+soot -f jimple -keep-line-number -d /workspace/soot-default Example
+test -s /workspace/soot-default/Example.jimple
+grep -q 'helper' /workspace/soot-default/Example.jimple
 sootup jimple Example helper > /workspace/example.jimple
 sootup cfg Example helper > /workspace/example.cfg
 grep -q 'return' /workspace/example.jimple
@@ -76,7 +79,7 @@ JAVA
             args = ['volume', 'inspect', resource] if kind == 'volume' else ['inspect', resource]
             checked = subprocess.run(docker.command + args, capture_output=True, timeout=15)
             assert checked.returncode != 0, 'Owned resource survived cleanup: ' + resource
-    print(json.dumps({'status': 'passed', 'toolkit_images': 1, 'profiles': 5, 'checks': ['installed_versions', 'separate_target_tool_jvms', 'offline_sandbox', 'readonly_product_source', 'sootup_jimple_cfg_and_callgraph_sdk', 'frozen_baseline_and_delta', 'owned_resource_cleanup']}))
+    print(json.dumps({'status': 'passed', 'toolkit_images': 1, 'profiles': 5, 'checks': ['installed_versions', 'separate_target_tool_jvms', 'offline_sandbox', 'readonly_product_source', 'soot_default_frozen_classpath', 'sootup_jimple_cfg_and_callgraph_sdk', 'frozen_baseline_and_delta', 'owned_resource_cleanup']}))
 
 if __name__ == '__main__':
     main()

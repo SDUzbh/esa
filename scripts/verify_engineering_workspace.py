@@ -56,11 +56,23 @@ javac -d /workspace/classes /input/source/WorkspaceExample.java
 test "$(java -cp /workspace/classes WorkspaceExample hello)" = 5
 if java -cp /workspace/classes WorkspaceExample > /workspace/failure.log 2>&1; then exit 92; fi
 grep -q ArrayIndexOutOfBoundsException /workspace/failure.log
+# The generic workspace deliberately has no /input/classes. All Soot aliases
+# must accept one complete scratch classpath, including paths containing spaces.
+cp -R /workspace/classes '/workspace/classes with spaces'
+for option in -cp -soot-class-path -soot-classpath; do
+    output="/workspace/soot-$option"
+    soot "$option" '/workspace/classes with spaces:/opt/java/openjdk/jre/lib/rt.jar' -f jimple -keep-line-number -d "$output" WorkspaceExample
+    test -s "$output/WorkspaceExample.jimple"
+    grep -q 'length' "$output/WorkspaceExample.jimple"
+done
+# Soot may return zero for an option error, so inspect its diagnostic.
+soot -cp >/workspace/invalid-soot.log 2>&1 || :
+grep -qF 'No value given for option -cp' /workspace/invalid-soot.log
 sootup cfg WorkspaceExample main --classpath /workspace/classes:/opt/java/openjdk/jre/lib/rt.jar > /workspace/graph.txt
 grep -q -- '->' /workspace/graph.txt
-printf 'WORKSPACE_COMPILE_RUN_SOOTUP=PASS\n'
+printf 'WORKSPACE_COMPILE_RUN_SOOT_SOOTUP=PASS\n'
 ''', 'timeout_seconds': 120})
-            assert any(line['text'] == 'WORKSPACE_COMPILE_RUN_SOOTUP=PASS' for line in result['evidence']['lines']), result
+            assert any(line['text'] == 'WORKSPACE_COMPILE_RUN_SOOT_SOOTUP=PASS' for line in result['evidence']['lines']), result
             assert hashes[code.name] == hashlib.sha256(code.read_bytes()).hexdigest()
             saved = json.loads((runtime / 'runtime-owned.json').read_text())
         finally:
@@ -77,7 +89,7 @@ printf 'WORKSPACE_COMPILE_RUN_SOOTUP=PASS\n'
             command = ['volume', 'inspect'] if kind == 'volume' else ['inspect']
             assert subprocess.run(docker + command + [saved[key]], capture_output=True).returncode != 0
         assert json.loads((runtime / 'environment-cleanup.json').read_text())['state'] == 'completed'
-        print(json.dumps({'status': 'passed', 'checks': ['no_prior_evidence_or_reproducer', 'lazy_runtime', 'numbered_evidence_ids', 'unchanged_source_compilation', 'success_failure_controls', 'sootup_cfg', 'read_only_source', 'owned_cleanup']}))
+        print(json.dumps({'status': 'passed', 'checks': ['no_prior_evidence_or_reproducer', 'lazy_runtime', 'numbered_evidence_ids', 'unchanged_source_compilation', 'success_failure_controls', 'soot_scratch_classpath_aliases_and_spaces', 'soot_missing_classpath_diagnostic', 'sootup_cfg', 'read_only_source', 'owned_cleanup']}))
 
 
 if __name__ == '__main__':

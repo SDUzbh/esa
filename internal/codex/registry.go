@@ -63,6 +63,36 @@ func LoadRegistry(path, artifacts, profiles, script string) (*Registry, error) {
 	return r, nil
 }
 
+func requiredRelease(ticket esa.Ticket) string {
+	if len(ticket.Versions) != 1 || strings.TrimSpace(ticket.Versions[0]) == "" {
+		return "Provide one unambiguous affected release."
+	}
+	return ""
+}
+
+// CheckRelease gates engineering handoff without exporting source or starting tools.
+func (r *Registry) CheckRelease(in esa.AnalyzeRequest) string {
+	_, reason := r.release(in)
+	return reason
+}
+
+func (r *Registry) release(in esa.AnalyzeRequest) (*ReleaseRegistration, string) {
+	if reason := requiredRelease(in.Ticket); reason != "" {
+		return nil, reason
+	}
+	cutoff := in.Ticket.ForwardedAt
+	if in.Contract != nil {
+		cutoff = in.Contract.ObservationCutoff
+	}
+	for i := range r.Releases {
+		release := &r.Releases[i]
+		if release.ProjectID == in.Ticket.ProjectID && release.Version == in.Ticket.Versions[0] && !release.AvailableAt.After(cutoff) {
+			return release, ""
+		}
+	}
+	return nil, "Invalid or nonexistent version."
+}
+
 // Resolve selects one time-eligible release and checks author/committer timestamps.
 // Known releases export frozen source; managed mode registers lazy generic runtime setup.
 // A scenario packet additionally needs matching commit, cutoff and diagnostic fingerprint.
@@ -82,18 +112,9 @@ func (r *Registry) Resolve(ctx context.Context, in esa.AnalyzeRequest) (Registra
 	unavailable := func(reason string) (Registration, error) {
 		return Registration{Packet: Packet{Ticket: in.Ticket, Cutoff: cutoff, Limitations: []string{reason + " No product source or runtime is registered for this task. Request the missing environment/version information; do not invent code locations or claim a reproduction."}}}, nil
 	}
-	if len(in.Ticket.Versions) != 1 {
-		return unavailable("One unambiguous affected release is needed for source access.")
-	}
-	var selected *ReleaseRegistration
-	for i := range r.Releases {
-		release := &r.Releases[i]
-		if release.ProjectID == in.Ticket.ProjectID && release.Version == in.Ticket.Versions[0] && !release.AvailableAt.After(cutoff) {
-			selected = release
-		}
-	}
-	if selected == nil {
-		return unavailable("Project/release has no time-eligible source registration.")
+	selected, reason := r.release(in)
+	if reason != "" {
+		return unavailable(reason)
 	}
 	git := func(args ...string) ([]byte, error) {
 		return exec.CommandContext(ctx, "git", append([]string{"-C", selected.Repository}, args...)...).Output()

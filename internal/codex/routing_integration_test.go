@@ -19,6 +19,75 @@ func (f applicationAnalyzer) Analyze(ctx context.Context, in esa.AnalyzeRequest)
 	return f(ctx, in)
 }
 
+func TestBlockedEngineeringHandoffAwaitsInformationOverHTTP(t *testing.T) {
+	for _, versions := range [][]string{nil, {"unknown"}} {
+		t.Run(strings.Join(versions, ","), func(t *testing.T) {
+			provider, in, sourceCalls := routingFixture(t, "new")
+			provider.CheckRelease = (&Registry{}).CheckRelease
+			raw, err := os.ReadFile("../../config/rules.json")
+			if err != nil {
+				t.Fatal(err)
+			}
+			var config esa.Config
+			if err = json.Unmarshal(raw, &config); err != nil {
+				t.Fatal(err)
+			}
+			store, err := esa.OpenStore("")
+			if err != nil {
+				t.Fatal(err)
+			}
+			engine, err := esa.NewEngine(store, config)
+			if err != nil {
+				t.Fatal(err)
+			}
+			engine.IssueDirectory = provider.IssuesRoot
+			engine.Now = func() time.Time { return in.Contract.ObservationCutoff }
+			ticket := in.Ticket
+			ticket.Versions = versions
+			ticket.CreatedAt, ticket.UpdatedAt = engine.Now(), engine.Now()
+			receipt, err := engine.Receive(esa.Event{ID: "handoff", Origin: "fixture", ForwardedBy: "human", ForwardedAt: engine.Now(), Ticket: ticket})
+			if err != nil {
+				t.Fatal(err)
+			}
+			var stages []string
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				var request esa.AnalyzeRequest
+				if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+					http.Error(w, err.Error(), 400)
+					return
+				}
+				stages = append(stages, request.Stage)
+				report, err := provider.Analyze(r.Context(), request)
+				if err != nil {
+					http.Error(w, err.Error(), 422)
+					return
+				}
+				_ = json.NewEncoder(w).Encode(report)
+			}))
+			defer server.Close()
+			analyzer := esa.HTTPPipelineAnalyzer{HTTPAnalyzer: esa.HTTPAnalyzer{URL: server.URL, Client: server.Client()}}
+			if worked, err := engine.ProcessOne(context.Background(), analyzer); err != nil || !worked {
+				t.Fatal("handoff processing failed", worked, err)
+			}
+			state := store.Snapshot()
+			run := state.Runs[receipt.RunID]
+			want := "Provide one unambiguous affected release."
+			if len(versions) > 0 {
+				want = "Invalid or nonexistent version."
+			}
+			if run.State != "awaiting_information" || run.Error != "" || run.Report.Usage.Calls != 1 || run.Report.Routing == nil || run.Report.Routing.Action != "request_information" || *sourceCalls != 0 || len(state.Issues) != 0 || len(state.Solutions) != 0 || len(stages) != 1 || stages[0] != "route" {
+				t.Fatal("handoff gate failed to stop the application pipeline", run, stages, *sourceCalls)
+			}
+			if run.Report.Routing.Reason != want || len(run.Report.Limitations) != 1 || run.Report.Limitations[0] != want {
+				t.Fatal("handoff reason was lost in application persistence", run.Report)
+			}
+			if worked, err := engine.ProcessOne(context.Background(), analyzer); err != nil || worked {
+				t.Fatal("blocked handoff was automatically retried", worked, err)
+			}
+		})
+	}
+}
+
 func TestNativeRoutingReusesAuthoritativeIssueOverHTTP(t *testing.T) {
 	for _, kind := range []string{"agent", "engineer"} {
 		t.Run(kind, func(t *testing.T) {

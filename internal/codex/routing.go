@@ -160,6 +160,18 @@ func (p *Provider) Analyze(ctx context.Context, in esa.AnalyzeRequest) (esa.Repo
 		if routing.RecordPath != "" || routing.RecordHash != "" {
 			return result, errors.New("new analysis cannot claim a reused solution")
 		}
+		// Gate the handoff before claiming work or invoking engineering. The raw
+		// model decision remains in routing/answer.json for the invocation audit.
+		reason := requiredRelease(in.Ticket)
+		if reason == "" && p.CheckRelease != nil {
+			reason = p.CheckRelease(engineeringInput(in))
+		}
+		if reason != "" {
+			routing.Action, routing.Reason = "request_information", reason
+			result.Summary = "Additional ticket information required"
+			result.Limitations = []string{reason}
+			break
+		}
 		if stage == "route" {
 			result.Summary = "Ticket routed for engineering analysis"
 			result.Limitations = []string{"Engineering analysis has not started."}
@@ -248,7 +260,7 @@ func validRunID(id string) bool {
 	return strings.HasPrefix(id, "run_") && !strings.ContainsAny(id, "/\\.")
 }
 func (p *Provider) child() *Provider {
-	return &Provider{CLI: p.CLI, Model: p.Model, Effort: p.Effort, RunsDir: p.RunsDir, ToolsConfig: p.ToolsConfig, ToolCommand: p.ToolCommand, ProfilesRoot: p.ProfilesRoot, Resolve: p.Resolve, ToolCatalog: p.ToolCatalog, SetupEnvironment: p.SetupEnvironment, Packet: p.Packet, IssuesRoot: p.IssuesRoot, Slots: p.Slots}
+	return &Provider{CLI: p.CLI, Model: p.Model, Effort: p.Effort, RunsDir: p.RunsDir, ToolsConfig: p.ToolsConfig, ToolCommand: p.ToolCommand, ProfilesRoot: p.ProfilesRoot, CheckRelease: p.CheckRelease, Resolve: p.Resolve, ToolCatalog: p.ToolCatalog, SetupEnvironment: p.SetupEnvironment, Packet: p.Packet, IssuesRoot: p.IssuesRoot, Slots: p.Slots}
 }
 func combineUsage(a, b esa.Usage) esa.Usage {
 	return esa.Usage{Calls: a.Calls + b.Calls, InputTokens: a.InputTokens + b.InputTokens, CachedInputTokens: a.CachedInputTokens + b.CachedInputTokens, OutputTokens: a.OutputTokens + b.OutputTokens, TokensReported: (a.Calls == 0 || a.TokensReported) && (b.Calls == 0 || b.TokensReported)}

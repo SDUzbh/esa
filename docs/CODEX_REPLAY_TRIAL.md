@@ -12,7 +12,7 @@ The selected public Bug is **KAFKA-2880**, reported on **2015-11-24T00:13:27.387
 
 ## Current provider versus this fixture
 
-The normal `-registry` provider resolves time-eligible source per project/release and can provision a generic workspace without prior evidence. It does not require this ticket. An optional registry `packet_path` selects the specialized fixture only when commit, cutoff and diagnostic fingerprint match; otherwise a known release uses the generic source path. Unknown/ambiguous releases receive context-only analysis.
+The normal `-registry` provider resolves time-eligible source per project/release and can provision a generic workspace without prior evidence. It does not require this ticket. An optional registry `packet_path` selects the specialized fixture only when commit, cutoff and diagnostic fingerprint match; otherwise a known release uses the generic source path. Before a new analysis enters Engineering, missing or ambiguous releases request clarification; an unmatched source registration reports **Invalid or nonexistent version**. Both enter **Awaiting information** without an engineering call.
 
 The alternative `-evidence` mode registers one immutable packet and checks its ticket fingerprint. `scripts/manage_codex_provider.py` manages only its hardcoded invocation for `.esa/replays/KAFKA-2880/trial-1/evidence.json`. It is not a general provider supervisor and does not control registry-based processes. Do not start it on a port already occupied by another provider.
 

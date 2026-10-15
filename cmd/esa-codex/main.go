@@ -179,6 +179,7 @@ func run() error {
 			return err
 		}
 		provider.Resolve = registry.Resolve
+		provider.CheckRelease = registry.CheckRelease
 	}
 	if *reviewFile != "" {
 		if *toolsConfig != "" {

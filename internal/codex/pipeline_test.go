@@ -2,6 +2,7 @@ package codex
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -12,6 +13,58 @@ import (
 
 	"esa/internal/esa"
 )
+
+func TestEngineeringHandoffChecksReleaseBeforeSourceOrModel(t *testing.T) {
+	for _, stage := range []string{"", "route"} {
+		for _, test := range []struct {
+			name     string
+			versions []string
+			project  string
+			future   bool
+			want     string
+		}{
+			{name: "missing", want: "Provide one unambiguous affected release."},
+			{name: "multiple", versions: []string{"1", "2"}, want: "Provide one unambiguous affected release."},
+			{name: "blank", versions: []string{" "}, want: "Provide one unambiguous affected release."},
+			{name: "unknown", versions: []string{"unknown"}, want: "Invalid or nonexistent version."},
+			{name: "wrong_project", versions: []string{"1"}, project: "other", want: "Invalid or nonexistent version."},
+			{name: "future", versions: []string{"1"}, future: true, want: "Invalid or nonexistent version."},
+		} {
+			t.Run(stage+"/"+test.name, func(t *testing.T) {
+				p, in, sourceCalls := routingFixture(t, "new")
+				in.Stage, in.Ticket.Versions = stage, test.versions
+				release := ReleaseRegistration{ProjectID: in.Ticket.ProjectID, Version: "1", AvailableAt: in.Contract.ObservationCutoff}
+				if test.project != "" {
+					release.ProjectID = test.project
+				}
+				if test.future {
+					release.AvailableAt = release.AvailableAt.Add(time.Second)
+				}
+				p.CheckRelease = (&Registry{Releases: []ReleaseRegistration{release}}).CheckRelease
+				for attempt := 0; attempt < 2; attempt++ {
+					report, err := p.Analyze(context.Background(), in)
+					if err != nil || report.Routing == nil || report.Routing.Action != "request_information" || report.Routing.Reason != test.want || len(report.Limitations) != 1 || report.Limitations[0] != test.want || report.Usage.Calls != 1 || report.Usage.InputTokens != 12 || report.Usage.CachedInputTokens != 8 || *sourceCalls != 0 || report.Issue != nil || report.IssueRequest != nil || report.AssignmentRouting != nil || len(report.Findings) != 0 || len(report.Evidence) != 0 {
+						t.Fatal("blocked handoff spent on engineering or lost its reason/usage", report, err, *sourceCalls)
+					}
+				}
+				for _, path := range []string{"engineering", "engineering-attempt", "assignment-attempt"} {
+					if _, err := os.Stat(filepath.Join(p.RunsDir, in.RunID, path)); !os.IsNotExist(err) {
+						t.Fatal("blocked handoff prepared engineering or assignment", path, err)
+					}
+				}
+				data, err := os.ReadFile(filepath.Join(p.RunsDir, in.RunID, "routing", "answer.json"))
+				var original esa.RoutingResult
+				if err != nil || json.Unmarshal(data, &original) != nil || original.Action != "analyze" {
+					t.Fatal("handoff gate overwrote the raw model decision", string(data), err)
+				}
+				in.Stage = "engineer"
+				if _, err := p.Analyze(context.Background(), in); err == nil || *sourceCalls != 0 {
+					t.Fatal("explicit engineering stage bypassed the gate", err, *sourceCalls)
+				}
+			})
+		}
+	}
+}
 
 func TestNativePipelineReturnsNonEngineeringRequestWithoutSourceOrEngineer(t *testing.T) {
 	p, in, sourceCalls := routingFixture(t, "return_to_support")
@@ -28,10 +81,27 @@ func TestNativePipelineReturnsNonEngineeringRequestWithoutSourceOrEngineer(t *te
 	}
 }
 
+func TestNonAnalysisRoutesSkipReleaseCheck(t *testing.T) {
+	for _, decision := range []string{"return_to_support", "request_information", "reuse_agent", "reuse_engineer"} {
+		t.Run(decision, func(t *testing.T) {
+			p, in, sourceCalls := routingFixture(t, decision)
+			in.Stage = "route"
+			p.CheckRelease = func(esa.AnalyzeRequest) string {
+				t.Fatal("non-analysis route checked engineering admission")
+				return ""
+			}
+			if report, err := p.Analyze(context.Background(), in); err != nil || report.Usage.Calls != 1 || *sourceCalls != 0 {
+				t.Fatal("non-analysis route entered engineering", report, err, *sourceCalls)
+			}
+		})
+	}
+}
+
 func TestNativePipelineRoutesAndProcessesGroupingRequest(t *testing.T) {
 	for _, decision := range []string{"new", "assign_existing", "assignment_info", "assignment_unread", "assignment_no_request"} {
 		t.Run(decision, func(t *testing.T) {
 			p, in, sourceCalls := routingFixture(t, decision)
+			p.CheckRelease = (&Registry{Releases: []ReleaseRegistration{{ProjectID: in.Ticket.ProjectID, Version: "1", AvailableAt: in.Contract.ObservationCutoff}}}).CheckRelease
 			in.Stage = "route"
 			routed, err := p.Analyze(context.Background(), in)
 			if err != nil || routed.Routing == nil || routed.Routing.Action != "analyze" || routed.Usage.Calls != 1 || *sourceCalls != 0 {
@@ -74,6 +144,10 @@ func TestNativePipelineJoinRequiresReadAndCannotReusePendingAsSolution(t *testin
 		t.Run(decision, func(t *testing.T) {
 			p, in, sourceCalls := routingFixture(t, decision)
 			record := esa.IssueRecord{ID: "investigation_lead", InvestigationID: "investigation_lead", ProjectID: in.Ticket.ProjectID, Kind: "investigating", ScopeHash: "scope", Title: "Pending assignment crash", SourceTicketID: "lead", AvailableAt: in.Contract.ObservationCutoff}
+			p.CheckRelease = func(esa.AnalyzeRequest) string {
+				t.Fatal("joining checked engineering admission")
+				return ""
+			}
 			var err error
 			in.IssueDirectory, in.IssueDirectoryHash, err = esa.ExportIssueDirectory(p.IssuesRoot, in.Ticket.ProjectID, in.Contract.ObservationCutoff, []esa.IssueRecord{record})
 			if err != nil {

@@ -51,7 +51,7 @@ This is a **transactional adapter prototype**: HTTP CAS writes whole state (64 M
 
 ## Source registry, Profiles and tools
 
-Copy `config/releases.example.json` to a private runtime file; provide actual local repositories, release refs and verified availability times. The sample date is illustrative, not release evidence. Source access requires one affected release and checks registration availability plus author/committer timestamps against the cutoff. An unknown or ambiguous release yields a context-only packet: the Agent may judge existing Issues or request information, but receives no product source/runtime and cannot fabricate findings. It downloads no repository.
+Copy `config/releases.example.json` to a private runtime file; provide actual local repositories, release refs and verified availability times. The sample date is illustrative, not release evidence. After Routing chooses `analyze`, a deterministic handoff check requires one nonblank, unambiguous affected release and a matching project/release registration available by the cutoff. Missing or ambiguous releases return **Provide one unambiguous affected release**; unmatched registrations return **Invalid or nonexistent version**. The effective route becomes `request_information`, and ESA enters **Awaiting information** without invoking Engineering, exporting source, claiming engineering capacity or creating a sandbox. Reuse, join and customer-support returns bypass this check. A precompiled environment or reproducer is not required. Once admitted, source resolution also checks author/committer timestamps against the cutoff. It downloads no repository.
 
 ```sh
 bin/esa-codex -registry runtime/releases.json -profiles profiles \

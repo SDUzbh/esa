@@ -42,6 +42,7 @@ type Provider struct {
 	CLI, Model, Effort, RunsDir string
 	ToolsConfig, ToolCommand    string
 	ProfilesRoot                string
+	CheckRelease                func(esa.AnalyzeRequest) string
 	Resolve                     func(context.Context, esa.AnalyzeRequest) (Registration, error)
 	Slots                       chan struct{}
 	ToolCatalog                 map[string]replaytools.ToolPackage

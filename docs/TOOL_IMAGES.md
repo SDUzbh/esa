@@ -23,6 +23,22 @@ soot -f jimple -keep-line-number -d /workspace/diagnostics/soot org.apache.kafka
 
 Output stays in scratch. Do not replace product classes or run generated analysis as the product.
 
+For a generic workspace, compile unchanged source into scratch and pass a complete
+classpath using `-cp` (also `-soot-class-path` or `-soot-classpath`). An explicit
+classpath replaces the launcher's default; target JDK libraries and required
+dependencies must be included. Quote the entire value when paths contain spaces:
+
+```sh
+soot -cp '/workspace/classes:/opt/java/openjdk/jre/lib/rt.jar' \
+  -f jimple -keep-line-number -d /workspace/diagnostics/soot org.example.ClassName
+```
+
+The launcher adds the default classpath only when no classpath option is supplied.
+Malformed or repeated explicit options remain Soot errors. Soot can return zero
+for argument errors; check diagnostics and the expected output files. Rebuild/activate the
+toolkit with `python3 scripts/update_tool_images.py --locked` after launcher changes;
+new task environments use the newly registered immutable image.
+
 [SootUp](https://github.com/soot-oss/SootUp) is installed alongside classic Soot. Its Java bytecode frontend, core/interceptor dependencies and callgraph SDK are in `/opt/esa/sootup/lib/*`. The ESA `sootup` launcher uses the separate analysis JVM with a 1 GiB heap and requires no per-ticket dependency download or build:
 
 ```sh
@@ -85,6 +101,6 @@ python3 scripts/verify_tool_images.py
 
 The first command checks release filtering, checksum requirements, archive bounds and Docker-context isolation without network/Docker. The second verifies the shared real image for all Profiles, generates Jimple/CFG from frozen fixture bytecode, compiles and runs a custom SootUp CHA analysis offline, checks product source/class immutability and confirms removal of the runtime/writer/data volume. It uses no engineering model calls.
 
-`python3 -B scripts/verify_engineering_workspace.py` tests the generic workspace through the MCP gateway: no supplied reproducer, lazy setup, unchanged-source compilation, a synthetic success/failure control, evidence IDs, SootUp CFG and cleanup. It uses no model calls.
+`python3 -B scripts/verify_engineering_workspace.py` tests the generic workspace through the MCP gateway: no supplied reproducer, lazy setup, unchanged-source compilation, a synthetic success/failure control, evidence IDs, classic Soot classpath aliases/paths with spaces/missing-value diagnostics, SootUp CFG and cleanup. It uses no model calls. `verify_tool_images.py` also checks classic Soot's default frozen-class path.
 
 `python3 -B scripts/verify_profile_runtime.py --evidence /absolute/registered/evidence.json` also compiles and runs an auxiliary Java program, then uses the Agent tool gateway to generate Jimple with Soot and Jimple/CFG with SootUp from the frozen Kafka `NetworkClient` class, and checks that its bytecode remains unchanged.

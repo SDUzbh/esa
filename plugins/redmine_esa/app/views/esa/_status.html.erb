@@ -1,0 +1,16 @@
+<div class="box">
+  <p><strong>ESA state:</strong> <%= esa_label(@presentation.state) %>
+  <% if @presentation.stage.present? %> · <strong>Stage:</strong> <%= esa_label(@presentation.stage) %><% end %></p>
+  <% if @row.dig('ticket', 'forwarded_by').present? %><p>Forwarded by <%= @row.dig('ticket', 'forwarded_by') %></p><% end %>
+  <% if @presentation.active? %><p>Processing your forwarded snapshot. You can continue editing metadata below.</p><% end %>
+  <% if @presentation.report_available? %>
+    <p><%= link_to 'View ESA report', esa_report_path(@issue), class: 'icon icon-file' %>
+    <% if User.current.allowed_to?(:submit_esa, @issue.project) && @presentation.suggestion.any? %>
+      <button type="button" data-esa-fill>Fill metadata from ESA</button>
+    <% end %></p>
+  <% end %>
+  <% run = @row['latest_run'] %>
+  <% if @presentation.state == 'failed' %><p class="warning">Analysis could not finish. Open the report for details.</p><% end %>
+  <% if @presentation.state == 'awaiting_information' %><p class="warning">More information is needed. Open the report for the requested details.</p><% end %>
+  <% if run && Array(run.dig('report', 'alerts')).any? %><p>Analysis has <%= Array(run.dig('report', 'alerts')).length %> advisory notice(s). See the report.</p><% end %>
+</div>

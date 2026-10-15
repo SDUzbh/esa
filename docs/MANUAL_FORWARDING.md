@@ -24,6 +24,10 @@ New/edit hooks, import and metadata saves do not forward issues. Imports create 
 
 A forwarding with incomplete environment/context is accepted and sent to the Agent, which decides whether clarification is needed. An unchanged re-forward uses the cached run. A force flag creates one new run in the same event transaction, not an initial run followed by a second forced run. Replaying that event never spends again.
 
+## Status, reports and metadata
+
+The ticket page updates ESA state automatically without replacing the editable form. Open **View ESA report** for full analysis and engineer review. **Fill metadata from ESA** populates resolution fields from the current eligible result; it does not save, forward, approve or close anything. Agent suggestions retain their unverified status and validation steps remain proposals. Review the values and explicitly choose **Save metadata locally**. Use **Undo fill** to restore the previous form values. Components, affected versions and environment remain the operator's supplied context.
+
 ## Processing
 
 A private snapshot is restricted. A forwarded closed issue is collected as a case draft. Every open forwarded issue enters the Agent path, independent of Tracker or metadata completeness. The service supplies only a project/time-scoped local Issue directory path/hash. Routing Agent searches and reads records on demand; applicable Agent analyses and engineer solutions both skip engineering. A new problem reaches the engineering Agent for diagnosis only; its grouping request returns to Routing Agent for an existing/new Issue decision. Essential missing information can be requested without engineering. See [directory operations](ISSUE_DIRECTORY.md). Exact duplicate diagnostic inputs share one investigation.

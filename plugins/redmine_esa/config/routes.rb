@@ -4,6 +4,9 @@ get 'esa/upload', to: 'esa#upload', as: :esa_upload
 post 'esa/preview', to: 'esa#preview', as: :esa_preview
 post 'esa/import/:id', to: 'esa#import', as: :esa_import
 get 'esa/tickets/:id', to: 'esa#show', as: :esa_ticket
+get 'esa/tickets/:id/status', to: 'esa#status', as: :esa_ticket_status
+get 'esa/tickets/:id/report', to: 'esa#report', as: :esa_report
+get 'esa/tickets/:id/metadata_suggestion', to: 'esa#metadata_suggestion', as: :esa_metadata_suggestion
 post 'esa/tickets/:id/forward', to: 'esa#forward', as: :esa_forward
 post 'esa/tickets/:id/metadata', to: 'esa#metadata', as: :esa_metadata
 post 'esa/tickets/:id/review_case', to: 'esa#review_case', as: :esa_review_case

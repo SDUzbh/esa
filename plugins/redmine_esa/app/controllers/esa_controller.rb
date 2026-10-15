@@ -1,7 +1,7 @@
 class EsaController < ApplicationController
   before_action :require_login
   before_action :load_scope
-  before_action :load_issue, only: [:show, :forward, :metadata, :review_case, :review_investigation, :review_membership, :classifier_predict, :classifier_feedback]
+  before_action :load_issue, only: [:show, :status, :report, :metadata_suggestion, :forward, :metadata, :review_case, :review_investigation, :review_membership, :classifier_predict, :classifier_feedback]
   rescue_from Esa::Error, with: :service_error
 
   def index
@@ -14,13 +14,26 @@ class EsaController < ApplicationController
   end
 
   def show
-    @result = @client.request(:get, "/v1/tickets/redmine:#{@issue.id}")
-    @row = @result['ticket']
+    load_result
     @metadata = Esa::Payload.ticket(@issue)
-  rescue Esa::NotFound
-    @metadata = Esa::Payload.ticket(@issue)
-    @row = { 'ticket' => @metadata }
-    @result = { 'ticket' => @row, 'history' => [] }
+  end
+
+  def report
+    load_result
+    response.headers['Cache-Control'] = 'no-store'
+  end
+
+  def status
+    load_result
+    response.headers['Cache-Control'] = 'no-store'
+    render json: { html: render_to_string(partial: 'status', formats: [:html]), active: @presentation.active? }
+  end
+
+  def metadata_suggestion
+    return unless require_permission(:submit_esa)
+    load_result
+    response.headers['Cache-Control'] = 'no-store'
+    render json: { values: @presentation.suggestion, source: @presentation.suggestion_source }
   end
 
   def upload
@@ -155,6 +168,17 @@ class EsaController < ApplicationController
 
   private
 
+  def load_result
+    @result = begin
+      @client.request(:get, "/v1/tickets/redmine:#{@issue.id}")
+    rescue Esa::NotFound
+      { 'ticket' => { 'ticket' => { 'closed' => @issue.closed? } }, 'history' => [] }
+    end
+    @row = @result.fetch('ticket')
+    pending = EsaEvent.where(issue_id: @issue.id, acknowledged_at: nil).where.not(forwarded_at: nil).exists?
+    @presentation = Esa::Presentation.new(@row, pending: pending)
+  end
+
   def load_scope
     @projects = Project.visible(User.current).to_a.select { |p| p.module_enabled?(:esa) && User.current.allowed_to?(:view_esa, p) }
     # Issue visibility can be narrower than project visibility.
@@ -182,6 +206,10 @@ class EsaController < ApplicationController
 
   def service_error(error)
     @esa_error = error.message
-    render :error, status: :unprocessable_entity
+    if request.format.json?
+      render json: { error: @esa_error }, status: :unprocessable_entity
+    else
+      render :error, status: :unprocessable_entity
+    end
   end
 end

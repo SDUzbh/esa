@@ -1,6 +1,7 @@
 require 'redmine'
 require_relative 'lib/esa/client'
 require_relative 'lib/esa/payload'
+require_relative 'lib/esa/presentation'
 require_relative 'lib/esa/hooks'
 
 Redmine::Plugin.register :redmine_esa do
@@ -10,8 +11,8 @@ Redmine::Plugin.register :redmine_esa do
   version '0.1.0'
   requires_redmine version_or_higher: '7.0.0'
   project_module :esa do
-    permission :view_esa, { esa: [:index, :show, :engineering_issues] }, read: true
-    permission :submit_esa, { esa: [:upload, :preview, :import, :forward, :metadata, :classifier_predict] }
+    permission :view_esa, { esa: [:index, :show, :status, :report, :engineering_issues] }, read: true
+    permission :submit_esa, { esa: [:upload, :preview, :import, :forward, :metadata, :metadata_suggestion, :classifier_predict] }
     permission :review_esa, { esa: [:review_case, :review_investigation, :review_membership, :classifier_feedback] }
   end
   menu :top_menu, :esa, { controller: 'esa', action: 'index' }, caption: 'ESA', if: Proc.new { User.current.logged? }

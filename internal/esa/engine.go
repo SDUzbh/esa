@@ -19,6 +19,8 @@ var ErrInvalid = errors.New("invalid request")
 var ErrNotFound = errors.New("not found")
 var ErrConflict = errors.New("conflict")
 
+// Engine coordinates one business workflow over the selected authoritative Store.
+// Provider calls run outside state transactions; mutations use validated snapshots.
 type Engine struct {
 	IssueDirectory string
 	Store          *Store
@@ -29,6 +31,8 @@ type Engine struct {
 	clock          atomic.Int64
 }
 
+// NewEngine validates budgets, worker limits and optional project models.
+// It initializes replay time only when explicitly configured and enforces Issue retention.
 func NewEngine(store *Store, config Config) (*Engine, error) {
 	if config.Version == "" || config.Budget.MaxCalls < 0 || config.Budget.MaxCalls > 1 || config.Budget.TimeoutSeconds < 1 || config.Budget.MaxInputTokens < 1 || config.Budget.MaxOutputTokens < 1 || !config.Budget.validWeights() {
 		return nil, fmt.Errorf("%w: invalid workflow configuration or budget", ErrInvalid)
@@ -185,6 +189,9 @@ func diagnosticHash(t Ticket) string {
 	}{t.Subject, t.Description, t.Tracker, unique(t.Components), unique(t.Versions), unique(t.ErrorCodes), comments, t.Environment})
 }
 
+// Receive validates manual forwarding, timestamps and event idempotency before persistence.
+// Private tickets remain restricted; closed tickets collect cases; open tickets queue/share work.
+// A rejected or stale event cannot overwrite a newer accepted diagnostic snapshot.
 func (e *Engine) Receive(event Event) (Receipt, error) {
 	t := event.Ticket
 	if strings.TrimSpace(event.ID) == "" || strings.TrimSpace(t.ID) == "" || strings.TrimSpace(t.ProjectID) == "" || strings.TrimSpace(t.Subject) == "" {
@@ -330,6 +337,8 @@ type Review struct {
 	Resolution *Resolution `json:"resolution,omitempty"`
 }
 
+// ReviewCase publishes a reviewed case revision and reconciles linked solution trust.
+// It does not automatically route unrelated open tickets or close Redmine issues.
 func (e *Engine) ReviewCase(id string, review Review) (Case, error) {
 	var result Case
 	err := e.update(func(s *State) error {
@@ -407,6 +416,8 @@ func (e *Engine) ReviewCase(id string, review Review) (Case, error) {
 	return result, err
 }
 
+// AnalyzeTicket explicitly retries the current forwarded snapshot for a named actor.
+// Unchanged input may reuse a run; force requests a new diagnosis.
 func (e *Engine) AnalyzeTicket(id string, force bool, actor string) (Receipt, error) {
 	ticket, ok := e.Store.Snapshot().Tickets[id]
 	if !ok || ticket.ForwardedBy == "" {

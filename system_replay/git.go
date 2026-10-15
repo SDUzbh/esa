@@ -115,6 +115,9 @@ func pullRequests(message string) []string {
 	sort.Strings(out)
 	return out
 }
+
+// Trace follows first-parent mainline repair candidates after the initial observation.
+// Merged branch references land at their mainline merge; unmerged work is excluded.
 func (g Git) Trace(issue Issue, baseline, mainline, cutoff, until string, count int) (Trace, error) {
 	return (&historyReader{g, map[string]string{}}).Trace(issue, baseline, mainline, cutoff, until, count)
 }

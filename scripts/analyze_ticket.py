@@ -57,6 +57,7 @@ def request(base, path, token="", project="", body=None):
 
 
 def collect_stage_logs(provider, token, run_id, stage, label, output, cursors):
+    """Append complete API log events and advance byte cursors without inventing absent stages."""
     key = (run_id, stage)
     offset = cursors.get(key, 0)
     while True:
@@ -93,6 +94,10 @@ def collect_logs(provider, token, run_id, output, cursors, errors):
 
 
 def main(argv=None):
+    """Forward one explicit ticket through the real pipeline and retain private API results.
+
+    A locally started target is owned and stopped on exit. An attached service is
+    neither reconfigured nor stopped; log failures do not retry Agent analysis."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("ticket", type=Path, help="ESA Ticket JSON, or an Event JSON containing ticket")
     parser.add_argument("--routing-provider", default="http://127.0.0.1:8091", help="Provider base URL; Routing Agent decides whether engineering is needed")

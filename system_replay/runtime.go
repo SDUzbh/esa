@@ -15,6 +15,7 @@ import (
 	"time"
 )
 
+// Runtime serializes JSON-line calls to the separately owned product environment driver.
 type Runtime struct {
 	mu      sync.Mutex
 	cmd     *exec.Cmd

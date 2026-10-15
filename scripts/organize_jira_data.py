@@ -12,6 +12,7 @@ from jira_dataset import created_path, dataset_writer, issue_files
 
 
 def plan_layout(root):
+    """Validate every export and destination before proposing any relocation."""
     if not (root / "raw").is_dir():
         raise ValueError("Dataset must contain a raw directory: " + str(root))
     entries = []
@@ -51,6 +52,7 @@ def write_manifest(path, value):
 
 
 def apply_layout(root):
+    """Record a manifest, relocate unchanged bytes and verify destination hashes."""
     with dataset_writer(root):
         entries = plan_layout(root)  # Validate the entire batch before moving anything.
         result = summary(entries)

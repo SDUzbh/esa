@@ -58,6 +58,9 @@ func EngineeringSchema() []byte {
 	b, _ := json.Marshal(schema)
 	return b
 }
+
+// Report resolves inspected evidence IDs into canonical commit/file/line findings.
+// Unknown IDs, non-Git endpoints and incompatible ranges fail instead of trusting model coordinates.
 func (out EngineeringOutput) Report(packet Packet) (esa.Report, error) {
 	if strings.TrimSpace(out.IssueRequest.Title) == "" || strings.TrimSpace(out.IssueRequest.Reason) == "" {
 		return esa.Report{}, errors.New("issue request title and reason are required")

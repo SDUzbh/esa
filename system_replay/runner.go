@@ -13,6 +13,7 @@ import (
 	"time"
 )
 
+// Options distinguishes real system replay from planning/tracking and explicit attach mode.
 type Options struct {
 	PlanOnly, Pipeline, Attach, TrackOnly bool
 	Order                                 string
@@ -34,6 +35,11 @@ func versionLess(a, b string) bool {
 	}
 	return a < b
 }
+
+// Run observes an opaque public target, freezes predictions, then follows later Git repairs.
+// Historical ordering overrides version-based environment reuse. Owned resources are cleaned
+// on success, failure or cancellation; attached target processes are never stopped.
+// The returned error includes failed assertions, persistence and cleanup failures.
 func Run(ctx context.Context, path, output string, options Options) (summary Summary, err error) {
 	m, e := load(path)
 	if e != nil {

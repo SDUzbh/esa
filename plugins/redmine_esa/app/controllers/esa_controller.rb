@@ -1,3 +1,4 @@
+# Browser boundary: derive user visibility before sending scoped service requests.
 class EsaController < ApplicationController
   before_action :require_login
   before_action :load_scope
@@ -23,12 +24,14 @@ class EsaController < ApplicationController
     response.headers['Cache-Control'] = 'no-store'
   end
 
+  # Poll a read-only fragment without replacing unsaved metadata form values.
   def status
     load_result
     response.headers['Cache-Control'] = 'no-store'
     render json: { html: render_to_string(partial: 'status', formats: [:html]), active: @presentation.active? }
   end
 
+  # Return eligible suggestions; this action never saves, forwards or approves.
   def metadata_suggestion
     return unless require_permission(:submit_esa)
     load_result
@@ -86,6 +89,7 @@ class EsaController < ApplicationController
     raise Esa::Error, "Import was rolled back: #{e.message}"
   end
 
+  # Capture current input in the durable outbox with the authenticated human actor.
   def forward
     return unless require_permission(:submit_esa)
     EsaEvent.forward(@issue, User.current, force: params[:force] == '1')
@@ -110,6 +114,7 @@ class EsaController < ApplicationController
     redirect_to esa_ticket_path(@issue)
   end
 
+  # Update one local record; earlier forwarded snapshots remain immutable.
   def metadata
     return unless require_permission(:submit_esa)
     data = Esa::Payload.ticket(@issue)

@@ -19,6 +19,8 @@ import (
 
 // IssueRecord is a read-only projection, never a second state authority.
 // Separate scope records prevent a repair for one environment hiding another.
+// IssueRecord is a project/time-scoped retrieval projection, including source provenance.
+// Investigating records coordinate work and must never be reused as completed solutions.
 type IssueRecord struct {
 	InvestigationID   string            `json:"investigation_id,omitempty"`
 	ID                string            `json:"id"`
@@ -199,6 +201,8 @@ func issueRecordHash(r IssueRecord) string {
 
 // ExportIssueDirectory publishes a content-addressed, project/cutoff-scoped view.
 // Only its relative path and manifest hash travel to the provider.
+// ExportIssueDirectory atomically publishes a content-addressed frozen retrieval view.
+// Returns its root-relative path and manifest hash; callers select eligible records first.
 func ExportIssueDirectory(root, project string, cutoff time.Time, records []IssueRecord) (string, string, error) {
 	key := hash(struct {
 		Project string
@@ -327,6 +331,7 @@ type IssueDirectory struct {
 	Manifest             IssueManifest
 }
 
+// OpenIssueDirectory confines a relative view to its configured root and verifies its manifest.
 func OpenIssueDirectory(root, relative, digest string) (IssueDirectory, error) {
 	d := IssueDirectory{Root: root, Relative: relative, Hash: digest}
 	if root == "" || !filepath.IsAbs(root) || relative == "" || path.IsAbs(relative) || path.Clean(relative) != relative || strings.Contains(relative, "\\") || relative == ".." || strings.HasPrefix(relative, "../") || len(digest) != 64 {
@@ -385,6 +390,8 @@ func (d IssueDirectory) readFile(name, expected string) ([]byte, error) {
 	}
 	return data, nil
 }
+
+// ReadRecord verifies the selected relative path and content hash before decoding knowledge.
 func (d IssueDirectory) ReadRecord(name, digest string) (IssueRecord, error) {
 	var r IssueRecord
 	expected, ok := d.Manifest.Files[name]
@@ -403,6 +410,9 @@ func (d IssueDirectory) ReadRecord(name, digest string) (IssueRecord, error) {
 	}
 	return r, nil
 }
+
+// Search paginates lexical retrieval over one frozen view.
+// Hits identify candidates; relevance alone is never an applicability or trust decision.
 func (d *IssueDirectory) Search(query, kind string, offset, limit int) ([]IssueIndexEntry, int, error) {
 	if offset < 0 || limit < 1 || limit > 20 || (kind != "" && !validIssueRecordKind(kind)) || len(query) > 1000 {
 		return nil, 0, errors.New("choose a kind, bounded query and 1..20 results")

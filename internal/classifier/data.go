@@ -15,6 +15,8 @@ import (
 	"unicode"
 )
 
+// Example contains a complete human-reviewed label set and review provenance.
+// GroupID isolates related tickets across training and evaluation.
 type Example struct {
 	ID         string    `json:"id"`
 	GroupID    string    `json:"group_id,omitempty"`
@@ -115,8 +117,9 @@ func sortedKeys[V any](m map[string]V) []string {
 	return x
 }
 
-// MergeFeedback replaces the previous human label set for a ticket with its
-// newest correction at the cutoff. Future reviews are never included.
+// MergeFeedback selects the newest human correction per ticket at the cutoff.
+// It preserves grouping and rejects conflicting simultaneous reviews.
+// Future reviews never enter the merged training set.
 func MergeFeedback(base, feedback []Example, cutoff time.Time) ([]Example, error) {
 	if cutoff.IsZero() {
 		return nil, fmt.Errorf("a training cutoff is required")

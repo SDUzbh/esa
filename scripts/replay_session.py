@@ -7,6 +7,7 @@ import sys
 from replay_environment import Environment, ROOT, dependencies, write_json, remove_owned
 
 def baseline_status(exit_code, output):
+    """Separate compilation/control readiness from the registered failure or healthy outcome."""
     compiled = 'CLIENT_MODULE_COMPILATION=PASS' in output
     control = 'SUCCESSFUL_METADATA_CONTROL=PASS' in output
     scenario = 'unassessed'
@@ -21,6 +22,10 @@ def baseline_status(exit_code, output):
 
 
 def main():
+    """Register frozen source and lazily provision one owned environment.
+
+    Workspace mode supplies no build or reproducer. Scenario mode compiles the
+    registered baseline. Closing stdin exits the context and removes owned resources."""
     parser = argparse.ArgumentParser()
     parser.add_argument('--evidence')
     parser.add_argument('--cleanup-owned', action='store_true')

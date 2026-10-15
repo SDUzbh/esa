@@ -5,6 +5,7 @@ import (
 	"time"
 )
 
+// IssueLimit caps live Engineering Issues across all projects, not tickets or audit records.
 const IssueLimit = 100
 
 // Every business mutation enforces retention in the same CAS transaction.
@@ -43,6 +44,8 @@ func touchTicketIssue(s *State, id string, at time.Time) {
 	touchIssue(s, s.Runs[s.Latest[id]].IssueID, at)
 }
 
+// maintainIssues removes empty Issues, then evicts by durable least-recent access.
+// It detaches current associations while preserving immutable snapshots and reports.
 func maintainIssues(s *State, at time.Time) bool {
 	if len(s.Issues) == 0 {
 		return false

@@ -18,6 +18,8 @@ import (
 
 // Handler is an operator-only API. Raw events may contain private ticket/code
 // content; the service credential must never be exposed to a browser.
+// Handler serves authenticated stage requests and bounded raw event-log pages.
+// Logs are operator data, not browser-accessible synthesized reasoning traces.
 func (p *Provider) Handler(token string) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {

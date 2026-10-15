@@ -103,6 +103,9 @@ func linear(l LabelModel, x []feature) float64 {
 	}
 	return z
 }
+
+// Predict suggests independent labels using the frozen vocabulary and thresholds.
+// No-known-feature input abstains; suggestions never authorize intake or engineering.
 func (m *Model) Predict(text string) Prediction {
 	p := Prediction{ModelVersion: m.Version, TextHash: TextHash(text), Labels: []string{}, Scores: []Score{}, Status: "suggested"}
 	x := m.vector(text)
@@ -128,6 +131,8 @@ func (m *Model) Labels() []string {
 }
 func (m *Model) contentVersion() string { copy := *m; copy.Version = ""; return digest(copy) }
 
+// Train fits project-local TF-IDF and independent binary logistic models from reviewed examples.
+// Vocabulary fitting uses only the supplied training set; context cancellation stops training.
 func Train(ctx context.Context, examples []Example, o Options) (*Model, error) {
 	if err := o.validate(); err != nil {
 		return nil, err
@@ -311,7 +316,8 @@ func Load(path string) (*Model, error) {
 	return &m, m.Validate()
 }
 
-// Save creates a new candidate artifact. Promotion is a separate operator action.
+// Save validates and atomically publishes a candidate model to a new private file.
+// Existing active models are not overwritten or promoted automatically.
 func (m *Model) Save(path string) error {
 	if err := m.Validate(); err != nil {
 		return err

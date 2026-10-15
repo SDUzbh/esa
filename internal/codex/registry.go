@@ -22,6 +22,9 @@ type Registration struct {
 	ToolsConfig      string
 	SetupEnvironment func(context.Context, string) (string, func() error, error)
 }
+
+// ReleaseRegistration binds one project/version to operator-owned local source.
+// AvailableAt is registration provenance; Git dates alone do not prove customer deployment.
 type ReleaseRegistration struct {
 	ProjectID   string    `json:"project_id"`
 	Version     string    `json:"version"`
@@ -39,6 +42,7 @@ type Registry struct {
 	mu                sync.Mutex
 }
 
+// LoadRegistry validates unique project/version registrations and approved source scopes.
 func LoadRegistry(path, artifacts, profiles, script string) (*Registry, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -58,6 +62,11 @@ func LoadRegistry(path, artifacts, profiles, script string) (*Registry, error) {
 	}
 	return r, nil
 }
+
+// Resolve selects one time-eligible release and checks author/committer timestamps.
+// Known releases export frozen source; managed mode registers lazy generic runtime setup.
+// A scenario packet additionally needs matching commit, cutoff and diagnostic fingerprint.
+// Unknown or ambiguous releases receive context-only input, never invented source.
 func (r *Registry) Resolve(ctx context.Context, in esa.AnalyzeRequest) (Registration, error) {
 	var result Registration
 	if !in.ReadOnly || in.Ticket.Private {

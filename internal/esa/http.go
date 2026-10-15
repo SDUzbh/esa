@@ -13,6 +13,8 @@ import (
 	"time"
 )
 
+// API exposes the business boundary to trusted integrations with explicit project scopes.
+// The Redmine plugin adds user/issue authorization before using the service credential.
 type API struct {
 	Engine *Engine
 	Token  string
@@ -102,6 +104,8 @@ func visibleRun(r *http.Request, s State, run Run) Run {
 	return run
 }
 
+// Handler authenticates non-health requests and refreshes authoritative state.
+// Project scope is mandatory; optional ticket scopes narrow visible source evidence.
 func (api *API) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {

@@ -30,6 +30,12 @@ public final class SootUp {
         return String.join(File.pathSeparator, paths);
     }
 
+    /**
+     * Emit Jimple or normal/exceptional CFG edges using the separate analysis JVM.
+     * Static output is diagnostic evidence, not an execution trace or source-line proof.
+     * @param args mode, class, optional method filter and complete classpath override
+     * @throws Exception when input classes, dependencies or command arguments are invalid
+     */
     public static void main(String[] args) throws Exception {
         if (args.length == 1 && args[0].equals("--version")) {
             System.out.println("SootUp " + Files.readString(Path.of("/opt/esa/sootup/version.txt")).trim());

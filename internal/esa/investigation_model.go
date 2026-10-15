@@ -15,6 +15,8 @@ type ReplayConfig struct {
 	Projects    []string
 }
 
+// TicketSnapshot pins diagnostic input and its effective, available and recorded times.
+// Cutoff stays fixed even when processing or review happens later.
 type TicketSnapshot struct {
 	ID          string    `json:"id"`
 	Hash        string    `json:"hash"`
@@ -25,6 +27,9 @@ type TicketSnapshot struct {
 	RecordedAt  time.Time `json:"recorded_at"`
 	Cutoff      time.Time `json:"observation_cutoff"`
 }
+
+// EngineeringIssue groups diagnosed problems independently of Redmine ticket identity.
+// AccessOrder supplies durable LRU ordering when replay timestamps are equal.
 type EngineeringIssue struct {
 	LastAccessedAt      time.Time `json:"last_accessed_at,omitempty"`
 	AccessOrder         uint64    `json:"access_order,omitempty"`
@@ -48,6 +53,9 @@ type IssueTicketLink struct {
 	Basis           string    `json:"basis"`
 	AvailableAt     time.Time `json:"available_at"`
 }
+
+// MembershipReview uses expected snapshot/link IDs to reject stale human edits.
+// Changing membership does not forward a ticket or start another analysis.
 type MembershipReview struct {
 	ExpectedMembershipID string `json:"expected_membership_id"`
 	ExpectedSnapshotID   string `json:"expected_snapshot_id"`
@@ -64,6 +72,9 @@ type InvestigationGroup struct {
 	CurrentTaskID string    `json:"current_task_id"`
 	CreatedAt     time.Time `json:"created_at"`
 }
+
+// TaskContract fixes objective, input hash, cutoff and read-only completion criteria.
+// Later solution knowledge cannot rewrite this initial analysis contract.
 type TaskContract struct {
 	StoredFields       JSONFields `json:"-"`
 	Objective          string     `json:"objective"`
@@ -74,6 +85,9 @@ type TaskContract struct {
 	CompletionCriteria []string   `json:"completion_criteria"`
 	ReadOnly           bool       `json:"read_only"`
 }
+
+// Investigation owns execution status, lease and fencing epoch for shared work.
+// Phase distinguishes routing, capacity waiting, engineering and assignment.
 type Investigation struct {
 	JoinedInvestigationID string               `json:"joined_investigation_id,omitempty"`
 	Phase                 string               `json:"phase,omitempty"`
@@ -95,6 +109,9 @@ type Investigation struct {
 	UpdatedAt             time.Time            `json:"updated_at"`
 	ElapsedMS             int64                `json:"elapsed_ms"`
 }
+
+// SolutionRevision is an immutable proposal or reviewed solution within one scope.
+// Superseding publishes another revision instead of editing the original report.
 type SolutionRevision struct {
 	StoredFields    JSONFields `json:"-"`
 	ID              string     `json:"id"`

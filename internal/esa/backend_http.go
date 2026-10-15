@@ -15,6 +15,8 @@ import (
 
 var errStateCAS = errors.New("authoritative state revision conflict")
 
+// HTTPStateBackend uses Redmine's transactional whole-state CAS authority.
+// Unavailability fails closed; it never switches to a local JSON replica.
 type HTTPStateBackend struct {
 	URL, Token string
 	Client     *http.Client
@@ -78,6 +80,7 @@ func (b HTTPStateBackend) Load() (State, uint64, error) {
 	packet, err := b.request(http.MethodGet, nil)
 	return packet.State, packet.Revision, err
 }
+// LoadIfChanged uses revision ETags to avoid downloading unchanged state frames.
 func (b HTTPStateBackend) LoadIfChanged(known uint64) (State, uint64, bool, error) {
 	packet, err := b.request(http.MethodGet, nil, known)
 	if err == nil && packet.State.SchemaVersion != 0 {
@@ -85,6 +88,7 @@ func (b HTTPStateBackend) LoadIfChanged(known uint64) (State, uint64, bool, erro
 	}
 	return packet.State, packet.Revision, packet.Revision != known, err
 }
+// Commit publishes only against the expected revision; conflicts require a fresh read.
 func (b HTTPStateBackend) Commit(state State, revision uint64) (uint64, error) {
 	packet, err := b.request(http.MethodPut, map[string]any{"expected_revision": revision, "state": state})
 	return packet.Revision, err

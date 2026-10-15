@@ -14,6 +14,7 @@ This repository contains ESA application code, its Redmine plugin, replay orches
 | Go | Go 1.27+ | ESA backend and local commands; standard library only |
 | Python | Python 3.9+ | Replay/download/verification scripts; standard library only |
 | Codex CLI | Separately installed and authenticated CLI | Optional diagnosis provider; credentials are never included |
+| Doxygen | Separately installed; validated with 1.18.0 | Optional code-reference generation; see [documentation build](DOXYGEN.md) |
 
 Redmine core source is referenced through its upstream Docker image instead of copied or tracked as a Git submodule. Its source is available through the [Redmine download page](https://www.redmine.org/projects/redmine/wiki/Download) and the linked [GitHub mirror](https://github.com/redmine/redmine); the [official Docker image](https://hub.docker.com/_/redmine) supplies the deployed application. ESA does not patch Redmine core. Only `plugins/redmine_esa` is maintained here.
 

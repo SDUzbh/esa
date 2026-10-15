@@ -8,6 +8,8 @@ import (
 	"time"
 )
 
+// prepareRuntime lazily provisions a granted Profile and verifies source/readiness identity.
+// A generic workspace starts uncompiled; registered scenarios may provide a baseline.
 func (s *Server) prepareRuntime(ctx context.Context, profile string) error {
 	setup := s.Config.Runtime
 	if setup == nil {

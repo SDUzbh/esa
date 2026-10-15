@@ -33,6 +33,9 @@ type Packet struct {
 	Documents   []Document `json:"documents"`
 	Limitations []string   `json:"limitations"`
 }
+
+// Provider owns bounded Codex invocations, per-run audits and registered tool access.
+// Native host tools are disabled; remote HTTP providers require their own isolation policy.
 type Provider struct {
 	IssuesRoot                  string
 	ToolNames                   []string
@@ -71,6 +74,8 @@ func Fingerprint(t esa.Ticket) string {
 	return hex.EncodeToString(h[:])
 }
 
+// ValidateEvidence checks exact supplied source/log references and quotations.
+// Passing validates citation provenance, not root cause or repair correctness.
 func ValidateEvidence(r esa.Report, p Packet) error {
 	if r.Summary == "" || len(r.RootCauseCandidates) == 0 || len(r.Evidence) == 0 || len(r.Recommendations) == 0 || len(r.VerificationSteps) == 0 {
 		return errors.New("diagnosis is missing required report content")
@@ -97,6 +102,7 @@ func ValidateEvidence(r esa.Report, p Packet) error {
 
 // CLIArgs keeps tools, user instructions, MCPs, plugins and persisted history out
 // of the diagnostic session. Login remains in the user's existing CLI auth store.
+// CLIArgs constructs an isolated invocation without inherited tools, hooks or session reuse.
 func CLIArgs(model, effort, dir string) []string {
 	args := []string{"--no-daemon", "-a", "never", "exec", "--ignore-user-config", "--ignore-rules", "--ephemeral", "--skip-git-repo-check", "--sandbox", "read-only", "--color", "never", "--json", "-C", dir, "--output-schema", filepath.Join(dir, "schema.json"), "-o", filepath.Join(dir, "answer.json"), "-c", "web_search=\"disabled\"", "-c", "project_doc_max_bytes=0", "-c", "model_instructions_file=" + strconv.Quote(filepath.Join(dir, "instructions.txt"))}
 	for _, feature := range []string{"shell_tool", "unified_exec", "apps", "plugins", "hooks", "browser_use", "browser_use_external", "computer_use", "multi_agent", "code_mode", "code_mode_host", "view_image", "workspace_dependencies", "skill_search", "goals", "sleep_tool"} {

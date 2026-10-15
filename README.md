@@ -225,8 +225,13 @@ Original Jira export revisions are retained: organization preserves bytes, and i
 
 ## Documentation
 
+Build the English code reference with `./scripts/build_docs.sh` and open
+`.tools/doxygen/html/index.html`. See [Doxygen and comment conventions](docs/DOXYGEN.md)
+for dependencies, language coverage and output cleanup.
+
 | Topic | Entry point |
 | --- | --- |
+| Generated code reference and comment conventions | [Doxygen](docs/DOXYGEN.md) |
 | Fresh checkout and Redmine start/stop | [Dependencies](docs/DEPENDENCIES.md), [local deployment](deploy/redmine/README.md) |
 | Support and engineer UI | [Manual forwarding](docs/MANUAL_FORWARDING.md), [frontend](docs/ESA_PLUGIN_FRONTEND.md) |
 | Service, provider, storage, logs and limits | [Operations](docs/ESA_OPERATIONS.md), [backend/API workflow](docs/ESA_BACKEND_WORKFLOW.md) |

@@ -116,6 +116,7 @@ def pages(client, path, item_key, page_size=100):
 
 
 def download_one(client, key):
+    """Fetch one issue with complete comments and auditable changelog metadata."""
     safe = quote(key, safe="")
     issue = client.get(f"/rest/api/2/issue/{safe}", {"expand": "changelog"})
     comments = pages(client, f"/rest/api/2/issue/{safe}/comment", "comments")
@@ -223,6 +224,10 @@ def main():
 
 
 def download(args):
+    """Run resumable/incremental export under the shared dataset writer lock.
+
+    Refresh uses remote update times and archives replaced bytes; it does not
+    reconstruct historical snapshots or mirror remote deletions."""
     client = Client(args.base_url, args.delay, args.retries)
     raw, index = args.output / "raw", args.output / "index"
     existing = {path.stem: path for path in issue_files(raw)}

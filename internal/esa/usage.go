@@ -22,7 +22,8 @@ func (b Budget) validWeights() bool {
 	return true
 }
 
-// Token thresholds are advisory. They never invalidate a useful diagnosis.
+// TokenAlerts compares weighted usage without changing diagnosis or execution state.
+// Cached input receives its own weight; missing usage is unknown, never zero.
 func TokenAlerts(u Usage, b Budget) []Alert {
 	if !u.TokensReported {
 		return []Alert{{Code: "token_usage_unknown", Message: "Provider token usage is unavailable; consumption is unknown, not zero."}}
@@ -63,8 +64,8 @@ func AddAlerts(report *Report, alerts ...Alert) {
 	}
 }
 
-// Refresh aggregate warnings after each stage, rather than retaining the first
-// stage's lower counts under a deduplicated alert code. Stage audits are intact.
+// UpdateTokenAlerts refreshes aggregate warnings after each stage instead of
+// retaining lower first-stage counts. Raw usage and stage audits remain intact.
 func UpdateTokenAlerts(report *Report, budget Budget) {
 	kept := report.Alerts[:0]
 	for _, alert := range report.Alerts {

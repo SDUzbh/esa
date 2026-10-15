@@ -10,6 +10,8 @@ import (
 	"time"
 )
 
+// AnalyzeRequest carries frozen input, budget, contract and an Issue-directory path/hash.
+// It deliberately carries no inline archive or caller-selected Issue assignment.
 type AnalyzeRequest struct {
 	Stage              string        `json:"stage,omitempty"`
 	Contract           *TaskContract `json:"task_contract,omitempty"`
@@ -21,6 +23,8 @@ type AnalyzeRequest struct {
 	ReadOnly           bool          `json:"read_only"`
 }
 
+// Analyzer accepts a read-only contract and returns a report with measured usage.
+// Implementations must retain incurred usage even when returning an error.
 type Analyzer interface {
 	Analyze(context.Context, AnalyzeRequest) (Report, error)
 }
@@ -39,8 +43,8 @@ func (a HTTPPipelineAnalyzer) AnalyzeStage(ctx context.Context, input AnalyzeReq
 	return a.Analyze(ctx, input)
 }
 
-// HTTPAnalyzer delegates engineering analysis to a configured read-only provider.
-// Providers enforce source immutability; token thresholds generate warnings.
+// HTTPAnalyzer calls an operator-configured provider; it cannot sandbox a remote service.
+// Providers enforce source immutability; token thresholds remain advisory.
 type HTTPAnalyzer struct {
 	URL, Token string
 	Client     *http.Client

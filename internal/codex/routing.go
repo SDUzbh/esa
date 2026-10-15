@@ -13,8 +13,9 @@ import (
 	"esa/internal/replaytools"
 )
 
-// Analyze is the application workflow: local-directory routing first. Standalone
-// evidence trials without a Task Contract exercise only the engineering adapter.
+// Analyze dispatches the read-only workflow, preserving stage audits and usage.
+// Reuse and support returns skip engineering; new findings return to Routing for assignment.
+// Standalone evidence trials without a Task Contract exercise engineering only.
 func (p *Provider) Analyze(ctx context.Context, in esa.AnalyzeRequest) (esa.Report, error) {
 	if in.Stage != "" && in.Contract == nil {
 		return esa.Report{}, errors.New("pipeline stages require a Task Contract")

@@ -11,6 +11,8 @@ import (
 )
 
 // SyncRedmine drains the plugin's durable outbox and acknowledges only committed events.
+// SyncRedmine polls the manual-forwarding outbox and acknowledges only committed events.
+// An acknowledgement failure leaves delivery retryable through event idempotency.
 func (e *Engine) SyncRedmine(ctx context.Context, baseURL, token string, client *http.Client) error {
 	if baseURL == "" {
 		return nil

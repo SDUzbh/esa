@@ -1,0 +1,32 @@
+/**
+@page redmine_plugin Redmine plugin boundaries
+
+The plugin is Ruby on Rails integration; Doxygen does not natively parse Ruby.
+This page maps its boundaries without claiming generated Ruby API coverage.
+
+@section redmine_entry Entry and authorization
+`plugins/redmine_esa/config/routes.rb` declares browser and service routes.
+`init.rb` declares View ESA, Submit ESA and Review ESA permissions.
+`app/controllers/esa_controller.rb` derives visible project/ticket scopes from
+the logged-in user, excludes private issues and calls ESA from the server.
+Browser requests never receive the ESA service token.
+
+@section redmine_forward Forwarding and local metadata
+`lib/esa/payload.rb` builds the issue snapshot. A human forwarding action creates
+an `EsaEvent` durable outbox entry with actor/time; the Go service acknowledges it
+after persistence. Creation, editing, import and metadata saves do not forward.
+`EsaTicketSource` stores one local metadata record per issue. Saving updates that
+record; each forwarding captures a separate immutable input.
+
+@section redmine_ui Status, report and form filling
+`lib/esa/presentation.rb` is the read-only UI projection. The ticket page uses
+`assets/javascripts/ticket.js` to poll status without replacing unsaved form
+values. Extensionless status/suggestion URLs use the Redmine session and an
+Accept JSON header. A separate report page contains findings and review forms.
+Filling metadata is reversible and does not save, forward or approve anything.
+
+@section redmine_storage State authority
+`app/controllers/esa_state_controller.rb` and `EsaBackendState` implement the
+optional authenticated transactional CAS authority. JSON and Redmine state are
+alternative adapters; neither is a replica fallback for the other.
+*/

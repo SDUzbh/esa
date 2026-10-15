@@ -10,6 +10,7 @@ import (
 // Cache/task contract revision; old queued contracts require a fresh forwarding.
 const WorkflowVersion = "10"
 
+// Comment retains source timestamps so historical snapshots can reject future discussion.
 type Comment struct {
 	ID        string    `json:"id"`
 	Body      string    `json:"body"`
@@ -17,6 +18,8 @@ type Comment struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
+// Resolution separates cause, proposed/applied correction and validation text.
+// A populated value does not itself establish engineering approval.
 type Resolution struct {
 	Reason      string `json:"reason"`
 	Cause       string `json:"cause"`
@@ -25,6 +28,8 @@ type Resolution struct {
 	DuplicateOf string `json:"duplicate_of,omitempty"`
 }
 
+// Ticket is the diagnostic snapshot accepted by ESA, not a live Redmine object.
+// ForwardedAt defines the available knowledge cutoff; labels never gate intake.
 type Ticket struct {
 	StoredFields JSONFields        `json:"-"`
 	ForwardedBy  string            `json:"forwarded_by,omitempty"`
@@ -51,6 +56,8 @@ type Ticket struct {
 	Resolution   Resolution        `json:"resolution"`
 }
 
+// Event asserts an explicit human forwarding action and carries its frozen ticket.
+// Its ID is idempotent only when content and force semantics are unchanged.
 type Event struct {
 	ForwardedBy string          `json:"forwarded_by"`
 	ForwardedAt time.Time       `json:"forwarded_at"`
@@ -94,6 +101,8 @@ type ClassifierFeedback struct {
 	Example      classifier.Example `json:"example"`
 }
 
+// Budget separates enforced call/deadline limits from advisory token thresholds.
+// MaxCalls applies per stage; cached input is a subset of input, not extra usage.
 type Budget struct {
 	MaxCalls        int           `json:"max_calls"`
 	MaxInputTokens  int           `json:"max_input_tokens"`
@@ -121,6 +130,8 @@ func (w *TokenWeights) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+// Case is a revisioned resolution collected from a forwarded closed ticket.
+// Draft collection and trusted engineer review are separate transitions.
 type Case struct {
 	SolutionID   string            `json:"solution_id,omitempty"`
 	StoredFields JSONFields        `json:"-"`
@@ -145,6 +156,7 @@ type Case struct {
 	TrustedAt    time.Time         `json:"trusted_at,omitempty"`
 }
 
+// Usage retains raw provider counts. TokensReported=false means unknown, not zero.
 type Usage struct {
 	Calls             int  `json:"calls"`
 	InputTokens       int  `json:"input_tokens"`
@@ -153,6 +165,7 @@ type Usage struct {
 	TokensReported    bool `json:"tokens_reported"`
 }
 
+// Evidence binds an exact quote to a source reference; it does not prove causality.
 type Evidence struct {
 	Source    string `json:"source"`
 	Reference string `json:"reference"`
@@ -180,6 +193,9 @@ type IssueRequest struct {
 	Title  string `json:"title"`
 	Reason string `json:"reason"`
 }
+
+// Report combines immutable diagnosis, routing provenance, usage and limitations.
+// Engineering requests grouping; only Routing supplies the accepted Issue decision.
 type Report struct {
 	IssueRequest        *IssueRequest        `json:"issue_request,omitempty"`
 	AssignmentRouting   *RoutingResult       `json:"assignment_routing,omitempty"`
@@ -206,6 +222,8 @@ type Alert struct {
 	Message string `json:"message"`
 }
 
+// EnvironmentRequest proposes an operator-reviewed environment correction.
+// Recording it grants no permission to patch the product or apply the change.
 type EnvironmentRequest struct {
 	Reason         string `json:"reason"`
 	ProposedChange string `json:"proposed_change"`
@@ -213,6 +231,7 @@ type EnvironmentRequest struct {
 	State          string `json:"state"`
 }
 
+// Run records one analysis attempt against immutable input and shared investigation state.
 type Run struct {
 	StoredFields       JSONFields `json:"-"`
 	SourceTicketID     string     `json:"source_ticket_id,omitempty"`
@@ -244,6 +263,8 @@ type Receipt struct {
 	Action   string `json:"action"`
 }
 
+// State is the persistence frame for business data and immutable audit history.
+// Generated Issue-directory files are projections, never a second authority.
 type State struct {
 	IssueAccessSequence   uint64                          `json:"issue_access_sequence,omitempty"`
 	StoredFields          JSONFields                      `json:"-"`

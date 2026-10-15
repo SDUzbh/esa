@@ -29,6 +29,9 @@ type change struct {
 
 // JiraAt accepts the preserved downloader envelope, never a current CSV snapshot.
 // Edited comment bodies cannot be recovered and are excluded rather than leaked.
+// JiraAt reconstructs a historical diagnostic ticket from complete Jira history.
+// It excludes later comments, unavailable earlier edited bodies and resolution/fix evidence.
+// Ambiguous or incomplete history returns an error instead of inventing past values.
 func JiraAt(raw []byte, project string, at time.Time) (esa.Ticket, Audit, error) {
 	audit := Audit{Cutoff: at, RewoundFields: []string{}, Limitations: []string{
 		"The export has no independent initial field snapshot; completeness relies on its changelog metadata.",

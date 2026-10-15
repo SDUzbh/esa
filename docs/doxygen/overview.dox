@@ -1,0 +1,43 @@
+/**
+@mainpage ESA code reference
+
+ESA accepts manually forwarded snapshots and provides read-only engineering
+advice. All code comments and generated documentation use English.
+
+@section reference_map Code map
+
+| Directory | Responsibility |
+| --- | --- |
+| `internal/esa` | Intake, snapshots, state transactions, shared investigations and review |
+| `internal/codex` | Routing/engineering/assignment provider, source selection and citation validation |
+| `internal/replaytools` | Capability-gated source/runtime tools, evidence IDs and cleanup |
+| `internal/capabilities` | Operator-approved Profile and Skill contracts |
+| `internal/replay` | Historical Jira reconstruction and frozen Git export |
+| `internal/classifier` | Optional human-supervised label suggestions |
+| `internal/retrieval` | Lexical Issue-directory search |
+| `internal/codexreview` | Separate retrospective semantic-review contract |
+| `system_replay` | Independent public-API tester and later Git repair checks |
+| `scripts` | Operator commands, dataset handling and environment lifecycle |
+
+Go files appear under Related Pages with AST-derived declarations, original Go
+signatures, source locations and adjacent comments. Function bodies are omitted.
+This is not a C++ translation or a Go type/call-graph analyzer. Python and Java
+use Doxygen's native parsers. Ruby integration is described in @ref redmine_plugin;
+Ruby and browser JavaScript symbols are not automatically indexed.
+
+@section workflow_contracts Workflow contracts
+
+Manual forwarding freezes input and cutoff. Routing reads a scoped local Issue
+directory, reuses existing advice, joins work in progress, asks for information,
+returns a support request, or requests engineering. At most three engineering
+tasks run concurrently. Engineering reports evidence and a grouping request;
+Routing makes the final Issue assignment. Review does not close Redmine issues.
+
+Source/runtime tools require operator registration and granted capabilities.
+Frozen inputs remain read-only; unchanged-source builds and diagnostic helpers
+use scratch. Citation provenance, symptom reproduction and causal correctness
+are separate checks. Cleanup owns only task-created resources.
+
+The independent replay tester freezes initial public results before inspecting
+future Git history. It does not substitute its own routing or engineering logic.
+*/

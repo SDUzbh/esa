@@ -127,6 +127,10 @@ func validateReport(report Report, input AnalyzeRequest, records []IssueRecord) 
 	return nil
 }
 
+// ProcessOne claims at most one eligible shared task and executes its provider stages.
+// It maintains a lease heartbeat and rejects results from superseded owners/epochs.
+// Returns whether work was selected plus an error; no configured provider means no model call.
+// Usage and alerts remain auditable even when report validation fails.
 func (e *Engine) ProcessOne(ctx context.Context, analyzer Analyzer) (bool, error) {
 	if !e.Store.needsWork(e.Now(), analyzer != nil && e.Config.Budget.MaxCalls > 0) {
 		return false, nil

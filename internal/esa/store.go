@@ -11,6 +11,8 @@ import (
 	"time"
 )
 
+// Store serializes detached-state transactions over JSON or one authoritative backend.
+// Network analysis and other irreversible side effects must stay outside Update callbacks.
 type Store struct {
 	mu       sync.RWMutex
 	path     string
@@ -53,6 +55,7 @@ func (s *Store) refreshLocked() error {
 	return nil
 }
 
+// OpenBackendStore loads and validates the remote authority without a JSON fallback.
 func OpenBackendStore(backend StateBackend) (*Store, error) {
 	state, revision, err := backend.Load()
 	if err != nil {
@@ -78,6 +81,8 @@ func (s *Store) Refresh() error {
 	return s.refreshLocked()
 }
 
+// OpenStore opens a JSON state frame; an empty path selects an in-memory store.
+// The service launcher, not this function, takes the cross-process writer lock.
 func OpenStore(path string) (*Store, error) {
 	s := &Store{path: path, state: State{SchemaVersion: 1, Tickets: map[string]Ticket{}, Events: map[string]Event{}, Receipts: map[string]Receipt{}, Runs: map[string]Run{}, Latest: map[string]string{}, Cases: map[string]Case{}}}
 	if path == "" {
@@ -100,6 +105,8 @@ func OpenStore(path string) (*Store, error) {
 }
 
 // Update commits a detached state atomically. Failed writes never alter memory.
+// Update callbacks may run again after a remote CAS conflict.
+// Keep callbacks repeatable and free of provider calls or external side effects.
 func (s *Store) Update(fn func(*State) error) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -191,6 +198,7 @@ func (s *Store) updateLocked(fn func(*State) error) error {
 	return nil
 }
 
+// Snapshot returns a detached copy so callers cannot mutate authoritative state.
 func (s *Store) Snapshot() State {
 	s.mu.RLock()
 	defer s.mu.RUnlock()

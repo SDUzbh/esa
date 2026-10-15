@@ -25,6 +25,9 @@ type Document struct {
 	First  int      `json:"first_line"`
 	Lines  []string `json:"lines"`
 }
+
+// Config is an operator-owned registration of frozen source, scope and available tools.
+// Ticket text cannot grant capabilities or introduce arbitrary host paths.
 type Config struct {
 	IssueContext          string                 `json:"issue_context,omitempty"`
 	IssuesRoot            string                 `json:"issues_root,omitempty"`
@@ -109,6 +112,8 @@ func ReadAudit(path string) ([]Document, []esa.EnvironmentRequest, error) {
 	return docs, requests, scanner.Err()
 }
 
+// Server exposes the permitted MCP surface and records evidence-producing tool calls.
+// Routing-only sessions cannot access engineering source/runtime tools, and vice versa.
 type Server struct {
 	issueDirectory *esa.IssueDirectory
 	Config         Config
@@ -116,6 +121,8 @@ type Server struct {
 	cleanup        func() error
 }
 
+// RuntimeSetup registers the operator helper and its owned task directory.
+// Workspace selects an empty build environment rather than a supplied scenario.
 type RuntimeSetup struct {
 	Script    string `json:"script"`
 	Evidence  string `json:"evidence"`
@@ -186,6 +193,9 @@ func (s *Server) owned(ctx context.Context) error {
 	}
 	return nil
 }
+
+// Call checks the session role and capability policy before invoking a named tool.
+// Results and inspected documents enter the audit used by report validation.
 func (s *Server) Call(ctx context.Context, name string, args json.RawMessage) (map[string]any, error) {
 	if name == "issue_search" || name == "issue_read" || name == "issue_context" {
 		if !s.Config.IssuesOnly {
@@ -335,6 +345,8 @@ func tools(extended bool) []map[string]any {
 }
 
 // Serve uses MCP's newline-delimited stdio transport. Diagnostics never go to stdout.
+// Serve handles MCP JSON-RPC over stdio and cleans owned runtime resources on exit.
+// Protocol output must stay on stdout; diagnostics belong on stderr.
 func (s *Server) Serve(ctx context.Context, in io.Reader, out io.Writer) (resultErr error) {
 	defer func() {
 		if s.cleanup != nil {

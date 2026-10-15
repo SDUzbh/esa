@@ -8,6 +8,7 @@ import (
 	"time"
 )
 
+// EngineeringConcurrency is the global hard limit reserved transactionally across workers.
 const EngineeringConcurrency = 3
 
 var errEngineeringCapacity = errors.New("engineering capacity is occupied")
@@ -31,6 +32,9 @@ func ownsInvestigation(current, claimed Investigation) bool {
 	return activeInvestigation(current) && current.Owner == claimed.Owner && current.Epoch == claimed.Epoch
 }
 
+// pipeline runs route, optional engineering, then assignment under the task deadline.
+// It persists an investigating claim before releasing the project routing gate.
+// Engineering capacity is released before assignment; Routing cannot rewrite findings.
 func (e *Engine) pipeline(ctx context.Context, provider PipelineAnalyzer, input AnalyzeRequest, task Investigation) (Report, error) {
 	routed, err := provider.AnalyzeStage(ctx, input, "route")
 	if err != nil {

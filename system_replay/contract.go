@@ -88,6 +88,9 @@ type Evaluator struct {
 	TokenEnv string  `json:"token_env,omitempty"`
 	Request  Request `json:"request"`
 }
+
+// Manifest configures public requests, external assertions and optional runtime/evaluator inputs.
+// Commands are trusted operator configuration, never generated from ticket text.
 type Manifest struct {
 	Evaluator        *Evaluator `json:"evaluator,omitempty"`
 	Schema           int        `json:"schema_version"`
@@ -118,6 +121,8 @@ type HTTPRecord struct {
 	Status int    `json:"status"`
 	Body   any    `json:"body"`
 }
+
+// Observation stores properties extracted from a public response, not tester-generated decisions.
 type Observation struct {
 	RunID    string         `json:"run_id,omitempty"`
 	State    string         `json:"state"`
@@ -149,6 +154,9 @@ type RuntimeRecord struct {
 	Healthy      []Check        `json:"healthy"`
 	ScenarioHash string         `json:"scenario_sha256"`
 }
+
+// Repair records before/after behavior gates and optional independent semantic assessment.
+// Patch overlap alone does not establish a correct initial diagnosis.
 type Repair struct {
 	SemanticAssessment any              `json:"semantic_assessment,omitempty"`
 	Candidate          Candidate        `json:"candidate"`

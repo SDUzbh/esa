@@ -6,7 +6,7 @@ from pathlib import Path
 import shutil
 import subprocess
 
-COMMANDS = ['java', 'javac', 'jdb', 'jcmd', 'jstack', 'jmap', 'javap', 'jdeps', 'python3', 'rg', 'jq', 'git', 'curl', 'gdb', 'strace', 'lsof', 'ip', 'ss', 'dig', 'tcpdump', 'file', 'readelf', 'objdump', 'unzip', 'sha256sum', 'asprof', 'vmstat', 'pidstat', 'iostat', 'time', 'nc', 'diff', 'soot']
+COMMANDS = ['java', 'javac', 'jdb', 'jcmd', 'jstack', 'jmap', 'javap', 'jdeps', 'python3', 'rg', 'jq', 'git', 'curl', 'gdb', 'strace', 'lsof', 'ip', 'ss', 'dig', 'tcpdump', 'file', 'readelf', 'objdump', 'unzip', 'sha256sum', 'asprof', 'vmstat', 'pidstat', 'iostat', 'time', 'nc', 'diff', 'soot', 'sootup']
 
 def inspect():
     packages = subprocess.run(['dpkg-query', '-W', '-f=${Package}\t${Version}\n'], capture_output=True, text=True, check=True)
@@ -21,6 +21,8 @@ def inspect():
     inventory['async_profiler'] = (profiler.stdout + profiler.stderr).strip()
     soot = subprocess.run(['soot', '-version'], capture_output=True, text=True, check=True, timeout=30)
     inventory['soot'] = (soot.stdout + soot.stderr).strip()
+    sootup = subprocess.run(['sootup', '--version'], capture_output=True, text=True, check=True, timeout=30)
+    inventory['sootup'] = sootup.stdout.strip()
     return inventory
 
 def main():

@@ -1,0 +1,11 @@
+<project xmlns="http://maven.apache.org/POM/4.0.0">
+  <modelVersion>4.0.0</modelVersion>
+  <groupId>esa.tools</groupId>
+  <artifactId>sootup-tools</artifactId>
+  <version>1</version>
+  <properties><sootup.version>3.0.1</sootup.version></properties>
+  <dependencies>
+    <dependency><groupId>org.soot-oss</groupId><artifactId>sootup.java.bytecode.frontend</artifactId><version>${sootup.version}</version></dependency>
+    <dependency><groupId>org.soot-oss</groupId><artifactId>sootup.callgraph</artifactId><version>${sootup.version}</version></dependency>
+  </dependencies>
+</project>

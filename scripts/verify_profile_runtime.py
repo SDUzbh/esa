@@ -71,6 +71,17 @@ test "$before" = "$(sha256sum "$product")"
 printf 'AGENT_SOOT_ANALYSIS=PASS\\n'
 ''', 'timeout_seconds': 120})
             assert 'AGENT_SOOT_ANALYSIS=PASS' in analyzed['evidence']['lines'], analyzed
+            sootup = tool('run', {'script': '''set -eu
+product=/input/classes/org/apache/kafka/clients/NetworkClient.class
+before=$(sha256sum "$product")
+sootup jimple org.apache.kafka.clients.NetworkClient handleCompletedReceives > /workspace/diagnostics/network-client.jimple
+sootup cfg org.apache.kafka.clients.NetworkClient handleCompletedReceives > /workspace/diagnostics/network-client.cfg
+grep -qF handleCompletedReceives /workspace/diagnostics/network-client.jimple
+grep -q -- '->' /workspace/diagnostics/network-client.cfg
+test "$before" = "$(sha256sum "$product")"
+printf 'AGENT_SOOTUP_ANALYSIS=PASS\\n'
+''', 'timeout_seconds': 120})
+            assert 'AGENT_SOOTUP_ANALYSIS=PASS' in sootup['evidence']['lines'], sootup
             saved = json.loads((runtime / 'runtime-owned.json').read_text())
         finally:
             process.stdin.close()
@@ -85,7 +96,7 @@ printf 'AGENT_SOOT_ANALYSIS=PASS\\n'
         for kind, key in [('container', 'container'), ('container', 'writer'), ('volume', 'volume')]:
             command = ['volume', 'inspect'] if kind == 'volume' else ['inspect']
             assert subprocess.run(docker + command + [saved[key]], capture_output=True).returncode != 0
-        print(json.dumps({'status': 'passed', 'profile': 'performance', 'checks': ['denial_without_runtime', 'source_without_runtime', 'selected_profile_provisioning', 'registered_baseline_controls', 'agent_tool_compile_and_run', 'agent_soot_bytecode_analysis', 'owned_cleanup']}))
+        print(json.dumps({'status': 'passed', 'profile': 'performance', 'checks': ['denial_without_runtime', 'source_without_runtime', 'selected_profile_provisioning', 'registered_baseline_controls', 'agent_tool_compile_and_run', 'agent_soot_bytecode_analysis', 'agent_sootup_jimple_cfg', 'owned_cleanup']}))
 
 if __name__ == '__main__':
     main()

@@ -13,11 +13,14 @@ import json
 import os
 from pathlib import Path
 import re
+import secrets
 import shutil
 import subprocess
 import tarfile
 import tempfile
+import time
 from urllib.request import Request, urlopen
+from urllib.error import HTTPError, URLError
 import xml.etree.ElementTree as ET
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -27,6 +30,24 @@ PACKAGE = re.compile(r'^[a-z0-9][a-z0-9+.-]*(?::[a-z0-9]+)?$')
 VERSION = re.compile(r'^[A-Za-z0-9.+:~_-]+$')
 SEMVER = re.compile(r'^v?(\d+)\.(\d+)(?:\.(\d+))?$')
 SOOT_BASE = 'https://repo.maven.apache.org/maven2/org/soot-oss/soot'
+CENTRAL = 'https://repo.maven.apache.org/maven2/'
+
+def release_bytes(url, limit):
+    for attempt in range(4):
+        try:
+            with urlopen(url, timeout=60) as response:
+                data = response.read(limit + 1)
+            if len(data) > limit:
+                raise ValueError('Official tool response exceeds size bound')
+            return data
+        except HTTPError as error:
+            if error.code not in (429, 500, 502, 503, 504) or attempt == 3:
+                raise
+        except (URLError, TimeoutError, ConnectionError):
+            if attempt == 3:
+                raise
+        print('Retrying official tool download: ' + url, flush=True)
+        time.sleep(2 ** attempt)
 
 def sha(data):
     return hashlib.sha256(data).hexdigest()
@@ -58,6 +79,8 @@ def configurations(root=ROOT):
         result[profile] = {'config': config, 'packages': packages, 'bytes': path.read_bytes()}
     if result['java-debug']['config'].get('java_tools', 'soot') != 'org.soot-oss:soot':
         raise ValueError('Use the official org.soot-oss:soot artifact')
+    if result['java-debug']['config'].get('java_tools', 'sootup') != 'org.soot-oss:sootup.java.bytecode.frontend org.soot-oss:sootup.callgraph':
+        raise ValueError('Use the official SootUp bytecode/callgraph modules')
     return result, policy
 
 class Docker:
@@ -161,6 +184,76 @@ def resolve_soot():
         raise RuntimeError('Official Soot artifact lacks a published SHA256')
     return {'version': version, 'url': url, 'asset': asset, 'sha256': checksum}
 
+def maven_artifacts(text):
+    artifacts = []
+    for line in text.splitlines():
+        parts = line.strip().split()
+        if not parts or ':jar:' not in parts[0]:
+            continue
+        coordinates = parts[0].split(':')
+        if len(coordinates) not in (5, 6) or coordinates[2] != 'jar':
+            raise ValueError('Unexpected Maven dependency coordinate')
+        group, artifact = coordinates[:2]
+        version = coordinates[-2]
+        classifier = '-' + coordinates[3] if len(coordinates) == 6 else ''
+        if any(not re.fullmatch(r'[A-Za-z0-9_.-]+', value) or '..' in value for value in [group, artifact, version, classifier or 'none']):
+            raise ValueError('Invalid Maven dependency coordinate')
+        filename = artifact + '-' + version + classifier + '.jar'
+        artifacts.append({'asset': group + '.' + filename,
+                          'url': CENTRAL + group.replace('.', '/') + '/' + artifact + '/' + version + '/' + filename})
+    if not artifacts or len({a['asset'] for a in artifacts}) != len(artifacts):
+        raise ValueError('Maven dependency list is empty or ambiguous')
+    return sorted(artifacts, key=lambda a: a['asset'])
+
+def resolve_sootup(docker):
+    metadata = release_bytes(CENTRAL + 'org/soot-oss/sootup.java.bytecode.frontend/maven-metadata.xml', 1 << 20)
+    version = choose_soot([item.text or '' for item in ET.fromstring(metadata).findall('./versioning/versions/version')])
+    cache = STATE / ('sootup-' + version + '-' + sha((ROOT / 'deploy/tools/sootup/pom.xml').read_bytes())[:16] + '.json')
+    if cache.exists():
+        saved = json.loads(cache.read_text())
+        if all((STATE / 'artifacts' / a['asset']).exists() and sha((STATE / 'artifacts' / a['asset']).read_bytes()) == a['sha256'] for a in saved['artifacts']):
+            return saved
+    builder = docker.pull('maven:3.9-eclipse-temurin-21')
+    print('Resolving SootUp ' + version + ' runtime dependencies in a disposable Maven container...', flush=True)
+    name = 'esa-sootup-resolve-' + secrets.token_hex(6)
+    # The build resolver has no host mounts. Its mirror confines dependencies and
+    # build plugins to Central; the final engineering environment remains offline.
+    script = '''set -eu
+mkdir -p /tmp/project /out/lib
+cat > /tmp/project/pom.xml
+printf '%s' '<settings><mirrors><mirror><id>central-only</id><mirrorOf>*</mirrorOf><url>https://repo.maven.apache.org/maven2</url></mirror></mirrors></settings>' > /tmp/settings.xml
+cd /tmp/project
+mvn -B -ntp -s /tmp/settings.xml -Dsootup.version="$1" org.apache.maven.plugins:maven-dependency-plugin:3.8.1:copy-dependencies -DincludeScope=runtime -Dmdep.prependGroupId=true -DoutputDirectory=/out/lib >&2
+mvn -B -ntp -s /tmp/settings.xml -Dsootup.version="$1" org.apache.maven.plugins:maven-dependency-plugin:3.8.1:list -DincludeScope=runtime -DoutputFile=/out/dependencies.txt >&2
+'''
+    STATE.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix='sootup-', dir=str(STATE)) as temporary:
+        directory = Path(temporary)
+        try:
+            docker.run(['run', '--name', name, '-i', '--memory', '1g', '--cpus', '2', '--pids-limit', '256', '--entrypoint', 'sh', builder, '-c', script, 'resolver', version], timeout=900, input=(ROOT / 'deploy/tools/sootup/pom.xml').read_text())
+            docker.run(['cp', name + ':/out/.', str(directory)])
+        finally:
+            docker.run(['rm', '-f', name])
+        artifacts = maven_artifacts((directory / 'dependencies.txt').read_text())
+        for artifact in artifacts:
+            data = (directory / 'lib' / artifact['asset']).read_bytes()
+            # Some official artifacts publish only SHA1. Verify the strongest
+            # published checksum, then retain a SHA256 for all future rebuilds.
+            for algorithm in ['sha256', 'sha1']:
+                try:
+                    checksum = release_bytes(artifact['url'] + '.' + algorithm, 256).decode().strip().lower()
+                    break
+                except HTTPError as error:
+                    if error.code != 404 or algorithm == 'sha1':
+                        raise
+            if not re.fullmatch('[a-f0-9]{' + str(hashlib.new(algorithm).digest_size * 2) + '}', checksum) or hashlib.new(algorithm, data).hexdigest() != checksum:
+                raise ValueError('Published Maven checksum differs: ' + artifact['asset'])
+            artifact.update(sha256=sha(data), upstream_checksum={'algorithm': algorithm, 'value': checksum})
+            atomic(STATE / 'artifacts' / artifact['asset'], data)
+    release = {'version': version, 'builder_image': builder, 'artifacts': artifacts}
+    atomic(cache, json.dumps(release, indent=2) + '\n')
+    return release
+
 def download_artifact(release):
     path = STATE / 'artifacts' / release['asset']
     if path.exists() and sha(path.read_bytes()) == release['sha256']:
@@ -205,6 +298,8 @@ def lock_text(release, inventory, image_id):
     lines += ['[commands]'] + [name + ' = ' + path for name, path in sorted(inventory['commands'].items())]
     lines += ['jfr = ' + inventory['jfr'], '[java]', 'target = ' + inventory['target_java'].splitlines()[0], 'tools = ' + inventory['tool_java'].splitlines()[0]]
     lines += ['[soot]', 'version = ' + release['soot']['version'], 'sha256 = ' + release['soot']['sha256'], 'source = ' + release['soot']['url']]
+    lines += ['[sootup]', 'version = ' + release['sootup']['version'], 'builder_image = ' + release['sootup']['builder_image']]
+    lines += [artifact['asset'] + ' = ' + artifact['sha256'] for artifact in release['sootup']['artifacts']]
     return '\n'.join(lines) + '\n'
 
 def update(context, check=False, locked=False):
@@ -225,13 +320,17 @@ def update(context, check=False, locked=False):
         packages = sorted({package for config in configs.values() for package in config['packages']})
         versions = resolve_packages(docker, target, packages)
         profiler = choose_profiler(official_json('https://api.github.com/repos/async-profiler/async-profiler/releases?per_page=100'), arch)
-        release = {'architecture': arch, 'target_image': target, 'tool_jdk_image': tool_jdk, 'packages': versions, 'profiler': profiler, 'soot': resolve_soot()}
+        release = {'architecture': arch, 'target_image': target, 'tool_jdk_image': tool_jdk, 'packages': versions, 'profiler': profiler, 'soot': resolve_soot(), 'sootup': resolve_sootup(docker)}
     if 'soot' not in release:
         # Initialize the newly declared tool without upgrading the existing stack.
         print('Registering stable Soot; retaining existing JDK/package/profiler locks.', flush=True)
         release['soot'] = resolve_soot()
+    if 'sootup' not in release:
+        print('Registering stable SootUp; retaining existing JDK/package/profiler/Soot locks.', flush=True)
+        release['sootup'] = resolve_sootup(docker)
     profile_sources = b''.join((ROOT / 'profiles' / name / filename).read_bytes() for name in PROFILES for filename in ('toolset.txt', 'SKILL.md', 'environment.json', 'tools.json'))
-    source_hash = sha(profile_sources + (ROOT / 'deploy/tools/Dockerfile').read_bytes() + (ROOT / 'deploy/tools/soot').read_bytes() + (ROOT / 'scripts/inspect_tools.py').read_bytes() + Path(__file__).read_bytes())
+    sootup_sources = b''.join(path.read_bytes() for path in sorted((ROOT / 'deploy/tools/sootup').iterdir()))
+    source_hash = sha(profile_sources + sootup_sources + (ROOT / 'deploy/tools/Dockerfile').read_bytes() + (ROOT / 'deploy/tools/soot').read_bytes() + (ROOT / 'scripts/inspect_tools.py').read_bytes() + Path(__file__).read_bytes())
     fingerprint = sha(json.dumps(release, sort_keys=True).encode() + source_hash.encode())
     unchanged = previous and previous['release_hash'] == fingerprint and previous['docker_context'] == context
     if unchanged:
@@ -241,7 +340,7 @@ def update(context, check=False, locked=False):
             unchanged = info['Config']['Labels'].get('esa.release.hash') == fingerprint
         except (RuntimeError, KeyError):
             unchanged = False
-    print(json.dumps({'status': 'current' if unchanged else 'update_available', 'architecture': arch, 'release_hash': fingerprint, 'async_profiler': release['profiler']['version'], 'soot': release['soot']['version']}), flush=True)
+    print(json.dumps({'status': 'current' if unchanged else 'update_available', 'architecture': arch, 'release_hash': fingerprint, 'async_profiler': release['profiler']['version'], 'soot': release['soot']['version'], 'sootup': release['sootup']['version']}), flush=True)
     if check:
         return
     if unchanged:
@@ -259,6 +358,12 @@ def update(context, check=False, locked=False):
         shutil.copy(ROOT / 'scripts/inspect_tools.py', directory / 'inspect_tools.py')
         shutil.copy(ROOT / 'deploy/tools/soot', directory / 'soot')
         shutil.copy(soot, directory / 'soot.jar')
+        shutil.copytree(ROOT / 'deploy/tools/sootup', directory / 'sootup')
+        atomic(directory / 'sootup/version.txt', release['sootup']['version'] + '\n')
+        for artifact in release['sootup']['artifacts']:
+            path = download_artifact(artifact)
+            (directory / 'sootup/lib').mkdir(exist_ok=True)
+            shutil.copy(path, directory / 'sootup/lib' / artifact['asset'])
         atomic(directory / 'packages.txt', '\n'.join(name + '=' + version for name, version in release['packages'].items()) + '\n')
         extract_profiler(archive, directory / 'async-profiler')
         for profile in PROFILES:

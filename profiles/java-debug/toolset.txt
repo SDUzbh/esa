@@ -9,6 +9,7 @@ async_profiler_repository = async-profiler/async-profiler
 [apt]
 packages = gdb strace lsof procps binutils
 [commands]
-primary = java javac jdb jcmd jstack jmap javap jdeps gdb strace lsof soot
+primary = java javac jdb jcmd jstack jmap javap jdeps gdb strace lsof soot sootup
 [java_tools]
 soot = org.soot-oss:soot
+sootup = org.soot-oss:sootup.java.bytecode.frontend org.soot-oss:sootup.callgraph

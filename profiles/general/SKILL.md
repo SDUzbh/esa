@@ -12,4 +12,4 @@ Reuse inspected source and validated observations for unchanged inputs. A rerun 
 
 The preset image provides the tool collection in `toolset.txt`. Use the host-supplied readiness inventory for exact installed versions and paths. Target Java remains under `/opt/java/openjdk`; modern JFR/analysis tools use `/opt/esa/tool-jdk` explicitly. Do not substitute the tool JVM for the registered product runtime. Kernel restrictions may limit native sampling or tracing even when a tool is installed.
 
-For Java bytecode inspection, the shared image includes `soot`. Select `java-debug` for its procedure. Use existing `run` after a runtime grant, keep generated analysis under `/workspace`, and never load analysis output in place of the registered product classes.
+For Java bytecode inspection, the shared image includes `soot` and `sootup`, plus the offline SootUp bytecode/callgraph SDK. Select `java-debug` for the procedures. Use existing `run` after a runtime grant, keep generated analysis under `/workspace`, and never load analysis output in place of the registered product classes.

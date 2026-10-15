@@ -6,9 +6,11 @@ from pathlib import Path
 import tarfile
 import tempfile
 import unittest
+from unittest.mock import patch
+from urllib.error import HTTPError, URLError
 
 from tool_images import selection
-from update_tool_images import choose_profiler, choose_soot, configurations, extract_profiler
+from update_tool_images import choose_profiler, choose_soot, configurations, extract_profiler, maven_artifacts, release_bytes
 from replay_session import baseline_status
 
 def release(tag, **changes):
@@ -37,6 +39,27 @@ class ToolImageTests(unittest.TestCase):
         self.assertEqual(choose_soot(['4.7.1', '4.10.0', '5.0.0-SNAPSHOT', '5.0.0-RC1']), '4.10.0')
         with self.assertRaises(RuntimeError):
             choose_soot(['5.0.0-SNAPSHOT'])
+
+    def test_sootup_uses_central_coordinates_and_unambiguous_artifact_names(self):
+        artifacts = maven_artifacts('''The following files have been resolved:
+   org.soot-oss:sootup.core:jar:3.0.1:compile -- module sootup.core
+   example.library:helpers:jar:linux:1.0.0:runtime
+''')
+        self.assertEqual(artifacts[1]['asset'], 'org.soot-oss.sootup.core-3.0.1.jar')
+        self.assertEqual(artifacts[1]['url'], 'https://repo.maven.apache.org/maven2/org/soot-oss/sootup.core/3.0.1/sootup.core-3.0.1.jar')
+        self.assertEqual(artifacts[0]['asset'], 'example.library.helpers-1.0.0-linux.jar')
+        for invalid in ['', 'evil/../../path:artifact:jar:1:runtime', 'g:a:jar:1:runtime\ng:a:jar:1:runtime']:
+            with self.assertRaises(ValueError):
+                maven_artifacts(invalid)
+
+    def test_official_download_retries_network_errors_but_not_missing_checksums(self):
+        with patch('update_tool_images.urlopen', side_effect=[URLError('transient'), io.BytesIO(b'checksum')]) as request, patch('update_tool_images.time.sleep'):
+            self.assertEqual(release_bytes('https://example.invalid/file', 256), b'checksum')
+            self.assertEqual(request.call_count, 2)
+        with patch('update_tool_images.urlopen', side_effect=HTTPError('url', 404, 'not found', None, None)) as request:
+            with self.assertRaises(HTTPError):
+                release_bytes('https://example.invalid/checksum', 256)
+            request.assert_called_once()
 
     def test_context_cannot_reuse_another_docker_registry(self):
         with tempfile.TemporaryDirectory() as temporary:

@@ -13,7 +13,7 @@ This repository contains ESA code and deployment definitions. Redmine is referen
 - Optional TF-IDF + Logistic Regression label suggestions, human feedback and independent training/testing; disabled by default.
 - Independent API-based system replay with historical Git repair checks, reusable isolated runtimes and cleanup.
 - Shared investigations, immutable snapshots/solution revisions, automatic capability planning, versioned Profiles and sandbox-local tools. See [ESA operations](docs/ESA_OPERATIONS.md).
-- A shared preinstalled tool image with stable-release checks and per-Profile TXT configuration. See [tool environment](docs/TOOL_IMAGES.md).
+- A shared preinstalled tool image with Soot/SootUp bytecode analysis, stable-release checks and per-Profile TXT configuration. See [tool environment](docs/TOOL_IMAGES.md).
 
 ## Architecture
 

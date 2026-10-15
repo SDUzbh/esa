@@ -1,0 +1,5 @@
+#!/bin/sh
+# The analysis JVM/classpath is separate from the frozen product runtime.
+set -eu
+exec /opt/esa/tool-jdk/bin/java -Xmx1024m \
+    -cp '/opt/esa/sootup/classes:/opt/esa/sootup/lib/*' esa.tools.SootUp "$@"

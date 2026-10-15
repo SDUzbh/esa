@@ -1,39 +1,28 @@
-# Codex historical replay trial
+# Historical fixed-packet Codex trial
 
-This document describes the focused application-provider trial, not the current external system tester. Its retained reports are historical artifacts. For current replay and evaluation, use [external system replay](TICKET_BACKTEST.md).
-
-This trial connects the installed, already authenticated Codex CLI through a Go HTTP adapter. ESA owns the asynchronous worker. In the current provider, Engineering Agent returns specific code findings and a grouping request; Routing Agent supplies the final Issue assignment. Existing display fields are derived for engineer review. Ruby remains the Redmine integration layer. No Kafka or original Jira files are edited.
+This document describes the specialized KAFKA-2880 fixture and its retained experiments. It is not the normal provider setup or the external tester. Use [ESA operations](ESA_OPERATIONS.md#source-registry-profiles-and-tools) for registry-based diagnosis and [external system replay](TICKET_BACKTEST.md) for independent evaluation.
 
 ## Selected issue and scope
 
-The selected public Bug is **KAFKA-2880**, reported on **2015-11-24T00:13:27.387Z**: a consumer metadata lookup throws a NullPointerException when the broker cannot be reached. The affected version is **0.9.0.0**. The replay snapshot uses commit `fc7243c2af4b2b4affcdf14d80826986fe6d4ce8`, authored and committed before the cutoff.
+The selected public Bug is **KAFKA-2880**, reported on **2015-11-24T00:13:27.387Z**: a consumer metadata lookup throws a NullPointerException when the broker cannot be reached. The affected version is **0.9.0.0**. The snapshot uses commit `fc7243c2af4b2b4affcdf14d80826986fe6d4ce8`, authored and committed before the cutoff.
 
-`cmd/esa-replay` rewinds available diagnostic field changes, excludes later comments and comments edited after the cutoff, clears resolution evidence, and exports a source snapshot using Git archive. The snapshot contains no `.git` directory, future commits, fix versions, issue links, attachments or post-cutoff discussion. It records raw and source-file hashes. The original description supplies the no-broker startup scenario; no customer OS/JDK is invented.
+`cmd/esa-replay` reconstructs available historical diagnostic fields, excludes later comments and unavailable earlier edited bodies, clears resolution evidence, and exports source with Git archive. The export has no `.git`, future commits, fix versions, issue links, attachments or post-cutoff discussion. It retains raw/source hashes. Without an independently captured initial description, reconstruction depends on complete changelog metadata and available old values; ambiguous histories fail instead of inventing values.
 
-The test compiles all historical clients Java sources plus the historical shipped MockClient in a pinned Java 8 image. It exercises actual Fetcher, ConsumerNetworkClient and MetadataResponse classes. A successful metadata response is the control; a disconnected ClientResponse with an absent response body is the failure scenario. The container has no network, a read-only root filesystem, bounded temporary storage, memory/CPU/process limits, and no added capabilities.
+`scripts/replay_trial.py prepare` compiles historical clients plus the shipped MockClient in Java 8. A successful metadata response is the control; a disconnected ClientResponse with an absent body is the failure scenario. It captures runtime logs and selected source windows in `evidence.json`. Those windows and the reproducer are supplied by the operator, not discovered by the Agent. This is a deterministic client request replay, not a complete broker cluster or Kafka Connect deployment.
 
-This is a deterministic client request replay. It does not start a broker cluster or the complete Kafka Connect distributed process. The original frozen trial used source windows selected by the test operator. New managed sessions can search the registered historical source and rerun the fixture through restricted tools; their results are audited separately from the original report.
+## Current provider versus this fixture
 
-## Provider
+The normal `-registry` provider resolves time-eligible source per project/release and can provision a generic workspace without prior evidence. It does not require this ticket. An optional registry `packet_path` selects the specialized fixture only when commit, cutoff and diagnostic fingerprint match; otherwise a known release uses the generic source path. Unknown/ambiguous releases receive context-only analysis.
 
-`cmd/esa-codex` listens on host loopback port 8091. Colima containers can reach it through `host.lima.internal`. It authenticates requests with the existing backend service token, accepts only the registered project/ticket diagnostic fingerprint, and invokes the installed Codex CLI without inheriting user MCPs, plugins, hooks, user instructions or previous sessions. Only the operator-registered replay MCP is enabled. Model and reasoning preferences are read from the user's existing local configuration. A Redmine CRLF conversion is normalized for fingerprinting without changing preserved raw text.
+The alternative `-evidence` mode registers one immutable packet and checks its ticket fingerprint. `scripts/manage_codex_provider.py` manages only its hardcoded invocation for `.esa/replays/KAFKA-2880/trial-1/evidence.json`. It is not a general provider supervisor and does not control registry-based processes. Do not start it on a port already occupied by another provider.
 
-The session uses `codex exec`, an ephemeral read-only sandbox, disabled native host tools, a custom diagnosis instruction and a strict final JSON schema. With managed tools enabled, four replay MCP tools provide source inspection, container commands, registered installation and environment change requests. Every citation must match a frozen document or audited tool response, including the exact source identifier, line number and quote. Results are left **Awaiting review** in Redmine and do not close the source issue.
+Current workflow constraints also apply to this mode: manual forwarding, initial Routing Agent retrieval, engineering diagnosis when needed, and Routing Agent grouping after supported findings. Engineering chooses inspected evidence IDs; the provider derives concrete source coordinates and quotes. The validator establishes citation provenance, not root cause or repair correctness. Historical reports retain the schema, tool availability and conditions of their original runs.
 
-Private audit artifacts under `.esa/codex-runs/<run-id>` preserve input, exact prompt, schema, CLI events, usage, errors and the final report. Repeating the same completed run returns its cached report. Interrupted or failed attempts cannot automatically restart with the same run ID; a new forced run is explicit. Missing usage from an interrupted CLI run is unknown, not zero.
+The adapter uses the authenticated local Codex CLI with native host tools and inherited user MCPs/plugins/hooks disabled. Routing receives only Issue-directory tools; engineering receives approved source, capability, runtime, pinned-tool installation and environment-request tools. The managed runtime is offline, nonroot and resource bounded, with frozen inputs and writable scratch. It can rerun the registered fixture; that is distinct from constructing an independent reproducer. See [tool environments](TOOL_IMAGES.md).
 
-The original trial used rule version 3. The current workflow excludes admission classification and requires explicit manual forwarding and an overall 900-second execution deadline. The native provider now retrieves local Issue records through Routing Agent; reuse skips engineering, while new diagnosis invokes engineering once. See [Issue directory and routing](ISSUE_DIRECTORY.md) for stage usage. Input 16,000, output 6,000 and total 22,000 weighted units trigger warnings without terminating analysis. The current defaults count uncached input/output at 1 and cached input at 0.1; raw usage and cache hits remain available. These weights are operator estimates, not a billing statement. The CLI can report usage only at completion; no hard generation-token ceiling is applied. See [pipeline operations](REPLAY_PIPELINE.md) for automatic setup, delta reuse, cleanup and permissions. Historical trial reports retain their original usage and conditions.
+## Prepare and run the fixed fixture
 
-## Reproduce
-
-Build the host tools with the existing project-local Go toolchain:
-
-```sh
-GOCACHE="$PWD/.tools/go-cache" GOTOOLCHAIN=local .tools/go/bin/go build -o bin/esa-replay ./cmd/esa-replay
-GOCACHE="$PWD/.tools/go-cache" GOTOOLCHAIN=local .tools/go/bin/go build -o bin/esa-codex ./cmd/esa-codex
-```
-
-Prepare a **new**, nonexisting bundle directory. This historical fixture uses `.esa/replays/KAFKA-2880/trial-1`.
+Run from the repository root with the external Kafka checkout, preserved Jira export, Docker context `colima-redmine` and authenticated CLI available. Build using `./scripts/build_esa.sh`. A private `deploy/redmine/.env` must contain the matching ESA service token. The bundle output directory must not already exist:
 
 ```sh
 bin/esa-replay -raw data/jira/raw/2015/11/24/KAFKA-2880.json -repo kafka -ref 0.9.0.0 \
@@ -41,29 +30,23 @@ bin/esa-replay -raw data/jira/raw/2015/11/24/KAFKA-2880.json -repo kafka -ref 0.
   -environment '{"reported_scenario":"Kafka Connect distributed startup with no broker running, as stated in the issue description"}'
 docker --context colima-redmine pull eclipse-temurin:8-jdk
 python3 scripts/replay_trial.py prepare
+python3 scripts/update_tool_images.py --context colima-redmine
 python3 scripts/manage_codex_provider.py start
 ```
 
-The former live Redmine import verifiers were removed because they depended on retired automatic intake and case matching. Current native routing coverage uses `go test ./internal/codex -run TestNativeRouting`; it exercises the public HTTP provider with fixture subprocesses and does not consume model tokens or modify live tickets. Use the external pipeline below for system replay.
+Configure ESA's `ESA_ANALYZER_URL` to this adapter's `/analyze` endpoint, using an address reachable from the service (for the local Colima setup, `http://host.lima.internal:8091/analyze`). Both processes must share the [Issue projection directory](ISSUE_DIRECTORY.md#local-service-and-compose). Preparing a bundle or starting a provider does not forward a Redmine issue. Stop this specific fixed-packet adapter with `python3 scripts/manage_codex_provider.py stop`; its process is not installed as a system service.
 
-The previous imported-report evaluator has been removed. The current command below starts a **new system replay** through public APIs. It does not ingest or evaluate the diagnosis from this historical provider trial:
+Private runs default to `.esa/codex-runs/<run-id>` and preserve input, prompt, schema, CLI events, usage, tool audit, errors and reports. Completed stage requests can return cached reports; failed/uncertain attempts require explicit new forwarding rather than an automatic model retry. Usage may arrive only at CLI completion; missing usage stays unknown. [Weighted token warnings](ESA_OPERATIONS.md#weighted-token-alerts) are advisory; invocation limits and the overall deadline are separate.
+
+## Independent evaluation
+
+The former imported-report evaluator is removed. `scripts/replay_trial.py evaluate` is unsupported. The command below starts a **new** public-API system replay; it does not evaluate a diagnosis stored by this fixed-packet trial:
 
 ```sh
+sh scripts/build_system_replay.sh
 python3 scripts/replay_pipeline.py --pipeline --manifest system_replay/examples/esa-api-kafka.json --output reports/new-system-run
 ```
 
-The default manifest disables the engineering provider and expects `awaiting_configuration` after explicit forwarding. It exports baseline, upstream parent and repaired snapshots below the new report directory, runs the same neutral client fixture, and checks external failure/healthy assertions. It verifies product behavior without claiming Agent accuracy.
+Its default manifest disables the provider, expects `awaiting_configuration` after manual forwarding, and independently checks baseline/parent/fix behavior with a neutral fixture. It proves the registered behavior change, not Agent accuracy. Testing model judgments requires a configured target provider and independent assertions/evaluation.
 
-
-To stop only the host adapter, use `python3 scripts/manage_codex_provider.py stop`. The adapter does not install a system-wide service. Registered evidence for other tickets and a production service supervisor are future work.
-
-## Limits of interpretation
-
-- The export has no independently captured initial description snapshot. Reconstruction relies on complete changelog metadata and available old field values. Ambiguous histories fail rather than invent values.
-- One selected, stack-rich public bug cannot establish classification or localization accuracy across the archive.
-- Historical input isolation does not remove knowledge the model may have learned during training.
-- Universal historical build profiles, attachment replay, archive-wide ground-truth scoring and release lifecycle verification remain future work. Controlled source/log retrieval is available only within the registered replay environment.
-
-The Codex execution mechanism follows [official non-interactive documentation](https://learn.chatgpt.com/docs/non-interactive-mode).
-
-Current ESA intake requires explicit `forwarded_by` and `forwarded_at`. External fixtures declare the manual action; the tester does not infer it. Classification and label learning are removed from the active application. See [manual forwarding](MANUAL_FORWARDING.md).
+A stack-rich ticket with selected code/log evidence cannot establish archive-wide localization accuracy. A generic workspace trial must separately demonstrate its own compilation and observations. Historical input isolation cannot remove knowledge a model learned during training. Universal historical builds, attachment replay, unavailable comment-body recovery and external release monitoring remain outside current coverage.

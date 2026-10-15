@@ -89,7 +89,7 @@ Managed process isolation is process-group ownership and an independent state pa
 
 Credentials are passed through environment/header configuration and omitted from recorded request headers; the service token is redacted from responses and process logs. Reports and verified caches are retained. Source repositories and input files are read-only inputs.
 
-Token thresholds are advisory and configured in the test manifest, independently of application rules. Measured usage is aggregated per job and deduplicated by observed run ID when available; missing usage remains unknown. Thresholds print warnings and do not terminate the target or an Agent. An explicit target timeout is a test deadline, not a token limit. Aggregate counts are not a price estimate.
+Token thresholds are advisory and configured in the test manifest, independently of application rules. Measured raw input/output counts are aggregated per job and deduplicated by observed run ID when available; missing usage remains unknown. The tester does not discount cached input or inherit the target's token weights. Thresholds print warnings and do not terminate the target or an Agent. An explicit target timeout is a test deadline, not a token limit. Aggregate counts are not a price estimate.
 
 ## Tests
 
@@ -102,4 +102,4 @@ go list -deps ./...
 Tests cover public submission/polling, withholding assertion labels, refusing existing targets, historical order, unchanged failure/pass scenarios, malformed evidence, source/history boundaries, mainline merges/renames and owned-process cleanup. HTTP tests need permission to bind local test ports. The examples additionally verify real ESA business transitions and real Kafka client behavior; their lack of model calls must not be interpreted as an Agent accuracy result.
 
 
-Current ESA intake requires explicit `forwarded_by` and `forwarded_at`. External fixtures declare the manual action; the tester does not infer it. Classification and label learning are removed from the active application. See [manual forwarding](../docs/MANUAL_FORWARDING.md).
+Current ESA intake requires explicit `forwarded_by` and `forwarded_at`. External fixtures declare the manual action; the tester does not infer it. ESA has no category-based intake gate. Its optional supervised label classifier is disabled by default and does not control routing. See [manual forwarding](../docs/MANUAL_FORWARDING.md).

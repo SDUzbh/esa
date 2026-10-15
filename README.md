@@ -6,7 +6,7 @@ This repository contains ESA code and deployment definitions. Redmine is referen
 
 ## Implementation
 
-- Native Redmine ESA pages for ticket lists, filters, Jira JSON/CSV import, manual forwarding and engineer review.
+- Native Redmine ESA pages for ticket lists, filters, Jira JSON/CSV import, manual forwarding and engineer review; live status, a separate report page and one-click metadata suggestions.
 - Durable, idempotent intake of manually forwarded snapshots with project and issue visibility checks.
 - Routing Agent retrieval from local Issue directories, reusing Agent analyses or engineer solutions without another engineering call.
 - On-demand engineering workers (maximum three), with isolated task environments, code evidence and advisory token warnings.
@@ -19,7 +19,7 @@ This repository contains ESA code and deployment definitions. Redmine is referen
 
 Redmine owns source issues and user permissions. The Ruby ESA plugin provides the UI, imports and a durable forwarding outbox stored in PostgreSQL. The Go service polls the outbox and acknowledges events after committing them; the plugin calls its scoped HTTP APIs to display results and submit human reviews.
 
-The Go service builds scoped local Issue directories and runs a bounded pipeline: intake routing, up to three engineering workers, then assignment routing. A persisted `investigating` claim lets matching tickets join work already in progress. It uses atomic JSON by default. Matching tickets share investigations and reviewed solutions. A transactional Redmine PostgreSQL adapter can replace JSON as the single state authority. The Codex Routing Agent searches this directory on demand. Reuse skips engineering; new problems reach an engineering Agent that resolves registered source, plans approved tools and returns read-only findings plus an Issue grouping request. Routing Agent makes the final membership decision.
+The Go service builds scoped local Issue directories and runs a bounded pipeline: intake routing, up to three engineering workers, then assignment routing. A persisted `investigating` claim lets matching tickets join work already in progress. It uses atomic JSON by default. Matching tickets share investigations and reviewed solutions. A transactional Redmine PostgreSQL adapter can replace JSON as the single state authority. The Codex Routing Agent searches this directory on demand. Reuse skips engineering; for new problems, the adapter resolves registered source and the engineering Agent plans approved tools and returns read-only findings plus an Issue grouping request. Routing Agent makes the final membership decision.
 
 The optional classifier runs locally in Go and supplies label suggestions only. Human corrections are exported to the independent `esa-classifier` CLI for training and testing; an operator promotes a tested model and restarts the service. Classification does not control manual forwarding or engineering routing.
 
@@ -27,13 +27,19 @@ The optional classifier runs locally in Go and supplies label suggestions only. 
 flowchart TD
     P["Redmine + ESA plugin"] <-->|Scoped APIs / outbox poll and ack| E["ESA Go service"]
     P --> D[("PostgreSQL: issues, outbox, optional ESA state")]
-    E --> S[("Selected adapter: JSON or Redmine API")]
-    S -->|State transactions| P
+    E -->|Default state adapter| S[("Atomic JSON, single writer")]
+    E -->|Optional transactional state API| P
     E <-->|Ticket + Issue directory path| A["Codex adapter: Routing → Engineering → Routing assignment"]
     E --> I[("Local Issue projection: proposals / solutions / investigating")]
     A -->|On-demand read-only search| I
     E -.->|Optional label suggestions| C["TF-IDF + Logistic Regression"]
-    T["Independent system_replay tester"] <-->|Public API events and results| E
+```
+
+Replay runs separately from the business workflow:
+
+```mermaid
+flowchart LR
+    T["Independent system_replay tester"] <-->|Public API events and results| E["System under test"]
     T <-->|Version and repair checks| H["Git history + isolated product runtime"]
 ```
 
@@ -42,7 +48,7 @@ flowchart TD
 ## Ticket workflow
 
 * Create or import an ordinary Redmine issue and prepare its diagnostic metadata. These actions do not submit it to ESA.
-*  An authorized user selects **Forward to ESA**. The durable outbox sends the snapshot with the human actor and forwarding time.
+* An authorized user selects **Forward to ESA**. The durable outbox sends the snapshot with the human actor and forwarding time.
 * Every forwarded open issue enters a shared task, independent of Tracker or metadata completeness. Go exports a historical, project-scoped local Issue directory and sends its path/hash instead of Issue or case bodies. Identical diagnostic inputs share an investigation.
 * The Routing Agent searches and reads the directory. Both `agent_analyzed` proposals and `engineer_resolved` solutions can be reused, with engineer solutions preferred when applicable. Reuse returns the stored solution and skips the engineering Agent and sandbox setup. Ordinary non-engineering requests return to customer support without an engineering call. Matching `investigating` records join the existing task without another engineering call. Otherwise it requests essential information or queues new read-only engineering analysis; at most three engineering environments run concurrently. See [Issue directory and routing](docs/ISSUE_DIRECTORY.md).
 * Engineering returns findings and a grouping request without catalogue access or an Issue ID. Routing Agent decides existing/new grouping; ESA validates its decision before linking or creating an Issue. Engineer review updates canonical solution provenance. Reuse stores a reference with a separate applicability review and never duplicates knowledge or promotes an Agent proposal to trusted status. Membership edits change links only; reanalysis requires explicit forwarding. ESA does not modify product source or close Redmine issues.
@@ -176,7 +182,7 @@ GOCACHE="$PWD/.tools/go-cache" GOTOOLCHAIN=local .tools/go/bin/go test -race ./.
 GOCACHE="$PWD/.tools/go-cache" GOTOOLCHAIN=local .tools/go/bin/go vet ./...
 ```
 
-Use `examples/resolved-case.json` to import a resolved synthetic issue, manually forward it, then approve its case after reviewing the evidence. Upload `examples/new-issues.csv` and manually forward the matching engineering issue to receive the trusted recommendation. Forward the usage question only if engineering assistance is needed. Reopen the source issue and forward its changed snapshot to withdraw the recommendation.
+Use `examples/resolved-case.json` to import a resolved synthetic issue, manually forward it, then approve its case after reviewing the evidence. Upload `examples/new-issues.csv` and forward a selected issue to exercise routing. Reuse requires a configured Routing Agent and an applicable, inspected record; text similarity alone does not trigger a recommendation. Without a provider, open forwarded issues await configuration. Reopen the source issue and forward its changed snapshot to withdraw obsolete advice.
 
 ## External system replay
 
@@ -190,9 +196,11 @@ python3 scripts/replay_pipeline.py --pipeline --manifest system_replay/examples/
 python3 scripts/replay_pipeline.py --pipeline --manifest system_replay/examples/esa-api-forwarding.json --output reports/new-forwarding-run
 ```
 
-The lifecycle example exercises the actual ESA public API: case collection/approval/reuse, duplicate and stale events, reopening, forwarded support requests and project permissions. The Kafka example additionally runs historical client code before and after the upstream repair. Both start a fresh backend on port 18090 with a separate state file and disable Redmine synchronization. The lifecycle example needs no Kafka checkout or Jira export; the Kafka example needs those external inputs and Docker.
+The lifecycle example exercises the actual ESA public API: case collection/approval, duplicate and stale events, reopening, forwarded support requests and project permissions. It verifies that open tickets await configuration, even when an approved case exists; it does not test Agent-driven reuse. The Kafka example additionally runs historical client code before and after the upstream repair. Both start a fresh backend on port 18090 with a separate state file and disable Redmine synchronization. The lifecycle example needs no Kafka checkout or Jira export; the Kafka example needs those external inputs and Docker.
 
 The defaults make no model calls. The explicitly forwarded Kafka ticket reaches `awaiting_configuration` without a provider; a successful runtime repair test does not establish engineering Agent accuracy. To test a provider, configure it in the system under test and update the external assertions. The tester never invokes that provider directly.
+
+The separate `system_replay/examples/esa-shared-investigations.json` fixture uses a deterministic HTTP provider to test shared tasks and solution revisions without model calls.
 
 See [manual forwarding](docs/MANUAL_FORWARDING.md), [architecture and evaluation](docs/TICKET_BACKTEST.md), [CLI operations](docs/REPLAY_PIPELINE.md), and [the standalone manifest/runtime contract](system_replay/README.md). Root application tests do not include the nested module:
 
@@ -203,14 +211,29 @@ GOCACHE="$PWD/.tools/go-cache" GOTOOLCHAIN=local .tools/go/bin/go -C system_repl
 
 ## Engineering provider
 
-Without `ESA_ANALYZER_URL`, engineering issues become **Awaiting configuration**. The local trial connects the Go Codex adapter for one explicitly registered ticket/evidence packet. Other tickets are rejected before invoking a model. See [the Codex replay trial](docs/CODEX_REPLAY_TRIAL.md) for startup, isolation, audits and evaluation. The general HTTP contract remains in [the workflow document](docs/ESA_BACKEND_WORKFLOW.md).
+Without `ESA_ANALYZER_URL`, eligible open forwarded issues become **Awaiting configuration**, including support requests: there is no keyword admission gate. The normal Codex adapter uses a project/release registry to resolve local source per engineering task. Unknown or ambiguous releases receive context-only analysis and can request missing information. A prior evidence packet is optional and applies only to an explicitly matched scenario. See [provider setup and source selection](docs/ESA_OPERATIONS.md#source-registry-profiles-and-tools); [the historical replay trial](docs/CODEX_REPLAY_TRIAL.md) describes the separate fixed-packet utility.
 
-The Codex adapter disables native host tools and exposes the registered ESA tools. Known releases can create a generic preset sandbox on demand without a prior evidence packet; the Agent builds unchanged frozen source and writes diagnostic helpers in scratch. Engineering selects tool-generated evidence IDs, and the provider derives source coordinates and exact quotes before validation. Token thresholds are advisory; the separate invocation limit and execution deadline still apply. CLI usage may arrive only when the turn finishes; missing usage is unknown. The service cannot independently restrict tools inside an arbitrary remote HTTP provider. See [replay pipeline operations](docs/REPLAY_PIPELINE.md) for profiles, batch commands, permissions and cleanup.
+The Codex adapter disables native host tools and exposes the registered ESA tools. Known releases can create a generic preset sandbox on demand without a prior evidence packet; the Agent builds unchanged frozen source and writes diagnostic helpers in scratch. Engineering selects tool-generated evidence IDs, and the provider derives source coordinates and exact quotes before validation. Token thresholds are advisory; the separate invocation limit and execution deadline still apply. CLI usage may arrive only when the turn finishes; missing usage is unknown. The service cannot independently restrict tools inside an arbitrary remote HTTP provider. See [tool environments](docs/TOOL_IMAGES.md) for preset tools and [system replay operations](docs/REPLAY_PIPELINE.md) for independent batch evaluation and cleanup.
 
-## Boundaries of this first version
+## Current limits
 
-This is a working development foundation with one focused historical replay trial. Automatic customer environment inference, universal historical build profiles, document retrieval, recovery of unavailable historical comment bodies, archive-wide diagnosis/classifier accuracy validation, external release listening and universal runtime verification remain to be implemented. Replay profiles explicitly separate environment readiness from reproduction of a customer issue. Importing a current Jira export does not make it a valid historical snapshot.
+This is a development implementation with synthetic workflow checks and focused Kafka runtime trials. These do not establish archive-wide Agent accuracy. Automatic customer environment inference, universal historical build profiles, document retrieval, recovery of unavailable historical comment bodies, archive-wide diagnosis/classifier accuracy validation, external release listening and universal runtime verification remain to be implemented. Replay profiles explicitly separate environment readiness from reproduction of a customer issue. Importing a current Jira export does not make it a valid historical snapshot.
 
-State is stored as an atomic JSON snapshot with a single-writer process lock. It preserves immutable events, run inputs, case revisions, classifier predictions and human feedback; it is intended for this local prototype. The plugin limits access to 2,000 visible ESA issues per request. Move state to a transactional database and implement scalable authorization before importing the full Jira archive. Source edits, reopening and resolution do not automatically reach ESA; manually forward updated visible snapshots. The plugin excludes current private issues from forwarding. Privacy changes affecting previously forwarded snapshots, cross-project moves, deletions and retroactive ingestion need a dedicated reconciliation mechanism. Backend snapshots marked private are excluded from shared analysis, case recommendations and classifier operations.
+The default state adapter uses atomic JSON with a single-writer process lock. The optional Redmine PostgreSQL adapter is implemented, but still writes a whole-state frame through transactional CAS with a 64 MiB limit; it is not a scalable row-level work queue. Both preserve immutable inputs and audit records. The plugin limits access to 2,000 visible ESA issues per request. Database migration, load testing and scalable authorization remain necessary before importing the full Jira archive. Source edits, reopening and resolution do not automatically reach ESA; manually forward updated visible snapshots. The plugin excludes current private issues from forwarding. Privacy changes affecting previously forwarded snapshots, cross-project moves, deletions and retroactive ingestion need a dedicated reconciliation mechanism. Backend snapshots marked private are excluded from shared analysis, case recommendations and classifier operations.
 
 Original Jira export revisions are retained: organization preserves bytes, and incremental updates archive the previous revision. The `kafka/` checkout remains untouched. Old audit reports retain their original language and paths.
+
+## Documentation
+
+| Topic | Entry point |
+| --- | --- |
+| Fresh checkout and Redmine start/stop | [Dependencies](docs/DEPENDENCIES.md), [local deployment](deploy/redmine/README.md) |
+| Support and engineer UI | [Manual forwarding](docs/MANUAL_FORWARDING.md), [frontend](docs/ESA_PLUGIN_FRONTEND.md) |
+| Service, provider, storage, logs and limits | [Operations](docs/ESA_OPERATIONS.md), [backend/API workflow](docs/ESA_BACKEND_WORKFLOW.md) |
+| Issue search, grouping and retention | [Issue directory](docs/ISSUE_DIRECTORY.md) |
+| Preset images and approved tools | [Tool images](docs/TOOL_IMAGES.md) |
+| Optional supervised classifier | [Classifier](docs/CLASSIFIER.md) |
+| Independent replay and evaluation | [Architecture](docs/TICKET_BACKTEST.md), [CLI](docs/REPLAY_PIPELINE.md), [standalone contract](system_replay/README.md) |
+| Specialized fixed-packet experiment | [Historical Codex trial](docs/CODEX_REPLAY_TRIAL.md) |
+
+Current operating instructions describe the checked-in implementation. Ignored runtime reports retain the conditions and paths of their individual experiments; they are not deployment instructions or general accuracy claims.

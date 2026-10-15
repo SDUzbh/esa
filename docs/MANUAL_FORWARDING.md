@@ -28,6 +28,8 @@ A forwarding with incomplete environment/context is accepted and sent to the Age
 
 The ticket page updates ESA state automatically without replacing the editable form. Open **View ESA report** for full analysis and engineer review. **Fill metadata from ESA** populates resolution fields from the current eligible result; it does not save, forward, approve or close anything. Agent suggestions retain their unverified status and validation steps remain proposals. Review the values and explicitly choose **Save metadata locally**. Use **Undo fill** to restore the previous form values. Components, affected versions and environment remain the operator's supplied context.
 
+Local metadata is stored in Redmine PostgreSQL as one `esa_ticket_sources` record per Redmine issue. Repeated **Save metadata locally** updates that record; it does not create another ticket or a metadata revision history. Each subsequent forwarding captures an immutable snapshot separately, so later saves do not overwrite earlier ESA inputs.
+
 ## Processing
 
 A private snapshot is restricted. A forwarded closed issue is collected as a case draft. Every open forwarded issue enters the Agent path, independent of Tracker or metadata completeness. The service supplies only a project/time-scoped local Issue directory path/hash. Routing Agent searches and reads records on demand; applicable Agent analyses and engineer solutions both skip engineering. A new problem reaches the engineering Agent for diagnosis only; its grouping request returns to Routing Agent for an existing/new Issue decision. Essential missing information can be requested without engineering. See [directory operations](ISSUE_DIRECTORY.md). Exact duplicate diagnostic inputs share one investigation.

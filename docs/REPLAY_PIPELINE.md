@@ -16,7 +16,7 @@ python3 scripts/replay_pipeline.py --pipeline --manifest system_replay/examples/
 
 Use a new output directory for every invocation. The lifecycle example needs the host target artifact. The Kafka example also needs the ignored external `kafka/` checkout, `data/jira/raw/2015/11/24/KAFKA-2880.json`, Docker and verified client dependencies. Manifests resolve paths relative to their own directory. The bundled Docker context defaults to `colima-redmine`; configure the runtime command for another context or verified cache.
 
-The Python compatibility wrapper builds only the tester if its binary is absent or `--build-tools` is given, then replaces itself with the executable. It does not build the target or call an engineering provider. After tester source changes, use `--build-tools` or rebuild explicitly to avoid running an older binary.
+The Python compatibility wrapper builds only the tester if its binary is absent or `--build-tools` is given, then replaces itself with the executable. It does not build the target or call an engineering provider. After tester source changes, use `--build-tools` or rebuild explicitly to avoid running an older binary. After building, `bin/system-replay --help` shows native options; the Python wrapper requires `--manifest` even for help and handles `--build-tools` itself.
 
 To use the module independently:
 
@@ -84,7 +84,7 @@ SYSTEM_REPLAY_SESSIONS=/absolute/path/run/sessions python3 system_replay/runtime
 
 The cleanup utility protects live sessions and resources with different ownership labels. Verified caches and reports are retained. The Docker runtime has disabled networking, read-only inputs and no host, credential or Docker socket mounts. The managed target process has independent state and process-group ownership; stronger filesystem isolation requires target configuration.
 
-`warn_input_tokens`, `warn_output_tokens` and `warn_total_tokens` are advisory per-job thresholds, independent of application rules. Public run IDs deduplicate measured usage; absent usage is unknown. Warnings appear on stderr and in result alerts and never terminate the target or Agent. `timeout_seconds` is a separate test deadline. Token usage and semantic evaluation require actual configured providers; the default examples make no model calls.
+`warn_input_tokens`, `warn_output_tokens` and `warn_total_tokens` are advisory per-job thresholds, independent of application rules. The tester sums reported raw input/output counts and does not apply ESA's cached-input weight of 0.1; its totals are not billing estimates. Public run IDs deduplicate measured usage; absent usage is unknown. Warnings appear on stderr and in result alerts and never terminate the target or Agent. `timeout_seconds` is a separate test deadline. Token usage and semantic evaluation require actual configured providers; the default examples make no model calls.
 
 
-Current ESA intake requires explicit `forwarded_by` and `forwarded_at`. External fixtures declare the manual action; the tester does not infer it. Classification and label learning are removed from the active application. See [manual forwarding](MANUAL_FORWARDING.md).
+Current ESA intake requires explicit `forwarded_by` and `forwarded_at`. External fixtures declare the manual action; the tester does not infer it. ESA has no category-based intake gate. Its optional supervised label classifier is disabled by default and does not control routing. See [manual forwarding](MANUAL_FORWARDING.md).

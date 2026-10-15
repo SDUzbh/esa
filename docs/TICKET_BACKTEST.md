@@ -44,14 +44,17 @@ Semantic evaluation is optional and cannot override the behavior gate. It requir
 
 | Manifest | Actual coverage | Model calls by default |
 | --- | --- | --- |
-| `esa-api-lifecycle.json` | Manually forwarded lifecycle events: collect/approve cases without bypassing the Agent path, duplicate and stale events, reopening, manual support requests, denied project submission | 0 |
+| `esa-api-lifecycle.json` | Case collection/approval, duplicate and stale events, reopening and authorization; open tickets await provider configuration, without automatic case reuse | 0 |
+| `esa-api-forwarding.json` | Manual actor/time requirements, rejection of automatic intake, missing-context admission and removed legacy label endpoint | 0 |
+| `esa-api-kafka.json` | Historical ticket intake with an unconfigured provider, plus independent baseline/parent/fix runtime checks | 0 |
+| `esa-shared-investigations.json` | Deterministic HTTP provider: shared investigation identity, pending proposals and immutable engineer solution revisions | 0 |
 
-Both examples start a separate backend on port 18090 with a new state file and disable Redmine synchronization. The Kafka fixture compiles unmodified historical clients and uses the shipped MockClient to inject a disconnected response. It is a client-code replay, not a full broker cluster or Kafka Connect deployment.
+These examples start a separate backend on port 18090 with a new state file and disable Redmine synchronization. The Kafka fixture compiles unmodified historical clients and uses the shipped MockClient to inject a disconnected response. It is a client-code replay, not a full broker cluster or Kafka Connect deployment.
 
 For the registered Kafka scenario, the baseline `fc7243c2af4b2b4affcdf14d80826986fe6d4ce8` and upstream parent `8c3c9548b636cdf760d2537afe115942d13bc003` exhibit NullPointerException. Upstream fix `9fb1e25738f89b75a36ef69f730b0e138ccd55b1` (PR #581) instead exhibits TimeoutException with the successful-response control passing. This establishes the registered behavioral change, not an engineering Agent accuracy result.
 
-The backend HTTP adapter does not cover Redmine browser actions or its outbox. Universal scenario generation, customer environment reconstruction, external release listening and generalized per-ticket provider environment registration remain outside current coverage. See [operations](REPLAY_PIPELINE.md) for commands and artifacts, and [the standalone contract](../system_replay/README.md) for manifest details.
+The backend HTTP adapter does not cover Redmine browser actions or its outbox. Universal scenario generation, customer environment reconstruction, external release listening and generic registration of arbitrary target-owned environments through this tester remain outside current coverage. The application provider can provision its own registered-source workspace; this backend-API fixture does not test that integration. See [operations](REPLAY_PIPELINE.md) for commands and artifacts, and [the standalone contract](../system_replay/README.md) for manifest details.
 
-Current ESA intake requires explicit `forwarded_by` and `forwarded_at`. External fixtures declare the manual action; the tester does not infer it. Classification and label learning are removed from the active application. See [manual forwarding](MANUAL_FORWARDING.md).
+Current ESA intake requires explicit `forwarded_by` and `forwarded_at`. External fixtures declare the manual action; the tester does not infer it. ESA has no category-based intake gate. Its optional supervised label classifier is disabled by default and does not control routing. See [manual forwarding](MANUAL_FORWARDING.md).
 
-`esa-api-forwarding.json` verifies explicit actor/time requirements, rejection of automatic intake, Agent admission with missing context, category-independent diagnosis and removal of the label endpoint. `esa-api-kafka.json` explicitly forwards the historical ticket and expects an unconfigured provider while independently verifying product repair behavior.
+The shared-investigation fixture verifies orchestration with synthetic provider responses; it does not test model judgment. No default example proves Agent case matching or localization accuracy.

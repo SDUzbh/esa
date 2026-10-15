@@ -61,7 +61,7 @@ def main():
                 source = 'clients/src/main/java/org/apache/kafka/clients/consumer/internals/Fetcher.java'
                 call('read_code', {'path':source,'first_line':1,'line_count':5})
                 script = 'set -eu\nif echo changed > /input/source/'+source+'; then exit 91; fi\nif echo changed > /input/classes/MetadataDisconnectReplay.class; then exit 92; fi\nprintf "printf AUXILIARY_SCRIPT=PASS\\\\n\\n" > /workspace/helper.sh\nsh /workspace/helper.sh\ncommand -v jdb\nsh /input/compile.sh\n'
-                evidence = call('run', {'script':script})['evidence']['lines']
+                evidence = [line['text'] for line in call('run', {'script':script})['evidence']['lines']]
                 text = '\n'.join(evidence)
                 assert 'Read-only file system' in text and 'AUXILIARY_SCRIPT=PASS' in text and 'DISCONNECTED_METADATA_RESULT=java.lang.NullPointerException' in text, text
                 call('request_environment_change', {'reason':'Integration check only', 'proposed_change':'Review the registered runtime profile', 'validation':'Rerun the control; no automatic change'})

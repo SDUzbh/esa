@@ -18,7 +18,7 @@ func (s *Server) prepareRuntime(ctx context.Context, profile string) error {
 	}
 	call, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
-	path, cleanup, err := ManagedEnvironment(setup.Script, setup.Evidence, profile)(call, setup.Directory)
+	path, cleanup, err := ManagedEnvironment(setup.Script, setup.Evidence, profile, setup.Workspace)(call, setup.Directory)
 	if err != nil {
 		return err
 	}

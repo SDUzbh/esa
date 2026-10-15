@@ -26,6 +26,7 @@ def main():
     parser.add_argument('--cleanup-owned', action='store_true')
     parser.add_argument('--run-dir', required=True)
     parser.add_argument('--profile', default='java-debug', help='Prebuilt environment for the registered Java scenario')
+    parser.add_argument('--workspace', action='store_true', help='Prepare an empty tool workspace from a source manifest, without a product build or reproducer')
     args = parser.parse_args()
     directory = Path(args.run_dir).resolve()
     if args.cleanup_owned:
@@ -44,19 +45,25 @@ def main():
     directory = Path(args.run_dir).resolve()
     with Environment(profile=args.profile) as env:
         write_json(directory / 'runtime-owned.json', {'container': env.name, 'writer': env.writer, 'volume': env.volume, 'session': env.session, 'context': env.context})
-        deps = dependencies(bundle / 'source/build.gradle', env.cache)
-        inputs = {'deps/' + name: item['path'] for name, item in deps.items()}
-        inputs.update({'compile.sh': ROOT / 'examples/replay/compile.sh',
-                       'MetadataDisconnectReplay.java': ROOT / 'examples/replay/MetadataDisconnectReplay.java'})
+        inputs = {}
+        if not args.workspace:
+            deps = dependencies(bundle / 'source/build.gradle', env.cache)
+            inputs = {'deps/' + name: item['path'] for name, item in deps.items()}
+            inputs.update({'compile.sh': ROOT / 'examples/replay/compile.sh',
+                           'MetadataDisconnectReplay.java': ROOT / 'examples/replay/MetadataDisconnectReplay.java'})
         installer = env.directory / 'install.sh'
-        installer.write_text('set -eu\nmkdir -p /workspace/lib\ncp /input/deps/*.jar /workspace/lib/\njava -version\n')
+        installer.write_text('set -eu\nmkdir -p /workspace/lib\n' + ('' if args.workspace else 'cp /input/deps/*.jar /workspace/lib/\n') + 'java -version\njavac -version\n')
         inputs['install.sh'] = installer
         delta = env.sync(bundle / 'source', manifest['files'], inputs)
-        # Warm the deterministic fixture once. The agent can rerun or debug it.
-        baseline = env.run('sh /input/compile.sh')
-        readiness = baseline_status(baseline.returncode, baseline.stdout)
-        env.freeze_build()
-        (directory / 'environment.log').write_text(baseline.stdout + baseline.stderr)
+        if args.workspace:
+            readiness = {'status': 'workspace_ready', 'compiled': False, 'control_passed': False, 'scenario_status': 'unassessed',
+                         'instructions': 'No prebuilt product or reproducer is supplied. Build unchanged /input/source into /workspace/classes. Install required pinned artifacts through tool_install; raw JAR artifacts may be copied unchanged into /workspace/lib with a .jar extension. Write diagnostic helpers in scratch. This image supplies target JDK 8; request an environment change for incompatible products. Do not replace or shadow product classes.'}
+        else:
+            # Only explicitly registered scenarios receive a deterministic fixture.
+            baseline = env.run('sh /input/compile.sh')
+            readiness = baseline_status(baseline.returncode, baseline.stdout)
+            env.freeze_build()
+            (directory / 'environment.log').write_text(baseline.stdout + baseline.stderr)
         write_json(directory / 'environment.json', {'runtime_image': env.jdk_digest, 'preset': env.preset, 'delta': delta, **readiness})
         config_path = directory / 'tools-config.json'
         tool_config = env.tool_config(packet['source_commit'], directory / 'tools.jsonl')

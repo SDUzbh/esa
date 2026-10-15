@@ -120,6 +120,7 @@ type RuntimeSetup struct {
 	Script    string `json:"script"`
 	Evidence  string `json:"evidence"`
 	Directory string `json:"directory"`
+	Workspace bool   `json:"workspace,omitempty"`
 }
 
 func (s *Server) docker(ctx context.Context, args ...string) ([]byte, error) {
@@ -308,7 +309,11 @@ func (s *Server) Call(ctx context.Context, name string, args json.RawMessage) (m
 	if closeErr != nil {
 		return nil, closeErr
 	}
-	return map[string]any{"evidence": record.Document, "environment_request": record.Request}, nil
+	result := map[string]any{"environment_request": record.Request}
+	if record.Document != nil {
+		result["evidence"] = Numbered(*record.Document)
+	}
+	return result, nil
 }
 
 func tools(extended bool) []map[string]any {
@@ -318,9 +323,9 @@ func tools(extended bool) []map[string]any {
 		return map[string]any{"type": "object", "properties": properties, "required": required, "additionalProperties": false}
 	}
 	result := []map[string]any{
-		{"name": "read_code", "description": "Read numbered lines from frozen historical source. Use returned reference_prefix and exact lines as report citations.", "inputSchema": schema(map[string]any{"path": str(), "first_line": number(), "line_count": number()}, "path", "first_line", "line_count")},
+		{"name": "read_code", "description": "Read frozen historical source with absolute line numbers and stable evidence IDs. Copy returned IDs into finding locations and evidence_ids; never count lines manually. last_line reflects the actual returned range, including EOF.", "inputSchema": schema(map[string]any{"path": str(), "first_line": number(), "line_count": number()}, "path", "first_line", "line_count")},
 		{"name": "run", "description": "Run installation, the system or debugger commands inside the isolated replay container. Product source and runtime inputs are read-only. Write auxiliary scripts and compiled tools only under /workspace. No host filesystem, credentials or Docker socket is exposed. Output is capped at 64 KiB.", "inputSchema": schema(map[string]any{"script": str(), "timeout_seconds": number()}, "script")},
-		{"name": "install_environment", "description": "Install the registered Java client dependencies into /workspace/lib. Java and JDK debugging tools are already provided. No product source is changed.", "inputSchema": schema(map[string]any{})},
+		{"name": "install_environment", "description": "Initialize the registered workspace and inspect its target Java toolchain. Scenario-specific inputs are available only when explicitly registered. No product source is changed.", "inputSchema": schema(map[string]any{})},
 		{"name": "request_environment_change", "description": "Record an environment defect and a proposed change for engineer review. Does not apply the change or modify product source.", "inputSchema": schema(map[string]any{"reason": str(), "proposed_change": str(), "validation": str()}, "reason", "proposed_change", "validation")},
 	}
 	if extended {

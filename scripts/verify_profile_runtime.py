@@ -60,7 +60,7 @@ JAVA
 javac -cp '/input/classes:/input/deps/*' -d /workspace/diagnostics/classes /workspace/diagnostics/RuntimeCompileProbe.java
 java -cp '/input/classes:/input/deps/*:/workspace/diagnostics/classes' RuntimeCompileProbe
 ''', 'timeout_seconds': 120})
-            assert 'AGENT_COMPILE_RUN=PASS' in compiled['evidence']['lines'], compiled
+            assert 'AGENT_COMPILE_RUN=PASS' in [line['text'] for line in compiled['evidence']['lines']], compiled
             analyzed = tool('run', {'script': '''set -eu
 product=/input/classes/org/apache/kafka/clients/NetworkClient.class
 before=$(sha256sum "$product")
@@ -70,7 +70,7 @@ grep -qF handleCompletedReceives /workspace/diagnostics/soot/org.apache.kafka.cl
 test "$before" = "$(sha256sum "$product")"
 printf 'AGENT_SOOT_ANALYSIS=PASS\\n'
 ''', 'timeout_seconds': 120})
-            assert 'AGENT_SOOT_ANALYSIS=PASS' in analyzed['evidence']['lines'], analyzed
+            assert 'AGENT_SOOT_ANALYSIS=PASS' in [line['text'] for line in analyzed['evidence']['lines']], analyzed
             sootup = tool('run', {'script': '''set -eu
 product=/input/classes/org/apache/kafka/clients/NetworkClient.class
 before=$(sha256sum "$product")
@@ -81,7 +81,7 @@ grep -q -- '->' /workspace/diagnostics/network-client.cfg
 test "$before" = "$(sha256sum "$product")"
 printf 'AGENT_SOOTUP_ANALYSIS=PASS\\n'
 ''', 'timeout_seconds': 120})
-            assert 'AGENT_SOOTUP_ANALYSIS=PASS' in sootup['evidence']['lines'], sootup
+            assert 'AGENT_SOOTUP_ANALYSIS=PASS' in [line['text'] for line in sootup['evidence']['lines']], sootup
             saved = json.loads((runtime / 'runtime-owned.json').read_text())
         finally:
             process.stdin.close()

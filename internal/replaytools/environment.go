@@ -14,9 +14,13 @@ import (
 
 // ManagedEnvironment starts an operator-owned environment helper, not a model
 // command. Closing stdin requests normal cleanup before a process is terminated.
-func ManagedEnvironment(script, evidence, profile string) func(context.Context, string) (string, func() error, error) {
+func ManagedEnvironment(script, evidence, profile string, workspace bool) func(context.Context, string) (string, func() error, error) {
 	return func(ctx context.Context, dir string) (string, func() error, error) {
-		cmd := exec.Command("python3", script, "--evidence", evidence, "--run-dir", dir, "--profile", profile)
+		args := []string{script, "--evidence", evidence, "--run-dir", dir, "--profile", profile}
+		if workspace {
+			args = append(args, "--workspace")
+		}
+		cmd := exec.Command("python3", args...)
 		for _, value := range os.Environ() {
 			if len(value) < 4 || value[:4] != "ESA_" {
 				cmd.Env = append(cmd.Env, value)

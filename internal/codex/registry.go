@@ -150,6 +150,11 @@ func (r *Registry) Resolve(ctx context.Context, in esa.AnalyzeRequest) (Registra
 		return result, errors.New("invalid cached source manifest")
 	}
 	result.Packet = Packet{Cutoff: cutoff, Commit: commit, Ticket: in.Ticket, Limitations: []string{"Only frozen source is registered for this release; no product runtime or causal reproduction is available. Git timestamps and operator release availability are source-selection provenance, not proof of historical system deployment."}}
+	if r.EnvironmentScript != "" {
+		result.Packet.Limitations = []string{"A generic tool workspace can be provisioned on request. No product build, reproduction program or prior runtime observations are supplied. Build the frozen source and write bounded diagnostic helpers in scratch. Request missing pinned dependencies or incompatible target runtimes; do not invent successful execution. Git timestamps are source-selection provenance, not proof of customer deployment."}
+		result.SetupEnvironment = ManagedWorkspace(r.EnvironmentScript, bundle)
+		return result, nil
+	}
 	result.SetupEnvironment = func(_ context.Context, dir string) (string, func() error, error) {
 		config := replaytools.Config{Session: in.RunID, SourceDir: filepath.Join(bundle, "source"), Commit: commit, Files: manifest.Files, AuditPath: filepath.Join(dir, "tools.jsonl"), ProfilesRoot: r.ProfilesRoot, AllowedProfiles: []string{"general", "java-debug", "performance", "compatibility", "configuration"}, AvailableCapabilities: []string{"source"}}
 		config.Readiness = map[string]any{"status": "source_only", "runtime_available": false, "source_commit": commit}

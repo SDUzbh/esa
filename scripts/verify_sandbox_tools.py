@@ -46,7 +46,7 @@ def main():
                 again = call('tool_install', args)
                 assert again['cache_hit'], 'tool reinstall was not avoided'
                 result = call('run', {'script': 'sh ' + first['path'], 'timeout_seconds': 5})
-                assert 'diagnostic-tool-v1' in '\n'.join(result['evidence']['lines']), result
+                assert 'diagnostic-tool-v1' in '\n'.join(line['text'] for line in result['evidence']['lines']), result
                 denied = call('tool_install', dict(args, version='future'))
                 assert denied['status'] == 'denied'
                 assert environment.run('touch /input/source/Example.java').returncode != 0, 'product source became writable'

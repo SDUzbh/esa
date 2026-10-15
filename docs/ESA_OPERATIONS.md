@@ -60,7 +60,13 @@ bin/esa-codex -registry runtime/releases.json -profiles profiles \
 
 Configure the matching provider URL/token on ESA. In Compose, use a reachable provider address rather than assuming container loopback is host loopback. The service dispatches `route`, `engineer`, and `assign` stages. Engineering concurrency defaults to three and can be lowered with `-concurrency 1..3`; it cannot exceed three. The shipped `worker.max_active_per_project: 4` permits three engineering tasks plus another routing/assignment workflow. A lower project limit reduces throughput. All stages retain the existing overall timeout. See [pipeline coordination](ISSUE_DIRECTORY.md#pipeline-and-in-progress-deduplication).
 
-The provider resolves a task-local packet and caches source by project, commit, scope and policy. The model sees no `.git` history. Reads/searches verify source hashes. Source-only registrations deny runtime work; an optional `packet_path` can supply a registered runtime only when commit, cutoff and diagnostic fingerprint match. The managed helper currently supports the Kafka metadata-disconnect fixture, not a universal installer.
+The provider resolves a task-local packet and caches source by project, commit, scope and policy. The model sees no `.git` history. Reads/searches verify source hashes. With managed tools enabled (the default), a known release can provision a generic workspace on an approved runtime capability request, independently of `packet_path`. The workspace uses the verified preset image and read-only frozen source, with writable scratch. It supplies no product build, reproduction program or prior runtime observations; the Agent must compile unchanged source and write bounded diagnostic helpers. The current preset supplies target JDK 8, not a universal historical runtime. Missing or incompatible runtimes/dependencies produce an environment request. `-managed-tools=false` retains explicit source-only operation.
+
+An optional `packet_path` remains an operator-registered scenario: commit, cutoff and diagnostic fingerprint must match before its prior evidence and specialized reproducer are used. Generic workspaces never inherit that fixture. Both modes use the same owned container lifecycle, capability gate and cleanup helper.
+
+Product dependency archives can be supplied through the existing `-tool-catalog /private/catalog.json` option. Entries require an approved ID, version, local file or URL, and SHA256. After requesting `temporary_tools`, the Agent installs only the needed entries with `tool_install`. A raw JAR may be copied unchanged from its returned scratch path into `/workspace/lib/name.jar`; no host network, unrestricted package manager or product-class replacement is granted. Unknown dependencies require an environment request.
+
+`read_code` and `run` return line objects `{line, id, text}` and actual `first_line`/`last_line` bounds. IDs bind source, reference and exact line bytes and remain stable across overlapping reads. Engineering output selects `location`, `end_location`, `problem`, `solution` and supporting `evidence_ids`; the provider derives canonical commit/file/line ranges and exact evidence quotes. Unknown IDs, non-Git locations, cross-file ranges, stale source and invented coordinates are rejected. Empty `findings` remain valid when localization is unavailable. Persisted/API reports keep their existing concrete finding/evidence shape, and retrospective review keeps its separate schema. Citation correctness still does not establish causality.
 
 ## Ticket runner and runtime logs
 
@@ -139,6 +145,7 @@ python3 scripts/verify_label_frontend.py
 python3 scripts/verify_transactional_store.py
 python3 scripts/verify_shared_investigations.py
 python3 scripts/verify_sandbox_tools.py
+python3 scripts/verify_engineering_workspace.py
 # Optional registered-runtime check (operator-supplied historical packet):
 python3 scripts/verify_profile_runtime.py --evidence /absolute/registered/evidence.json
 cd system_replay

@@ -47,7 +47,7 @@ func run() error {
 	once := flag.Bool("once", false, "Diagnose one registered packet and exit; used by replay pipelines")
 	runID := flag.String("run-id", "", "Unique diagnosis ID for once mode")
 	rules := flag.String("rules", "config/rules.json", "Workflow budget and advisory token thresholds")
-	managed := flag.Bool("managed-tools", true, "Automatically prepare and clean the registered packet's replay environment")
+	managed := flag.Bool("managed-tools", true, "Prepare and clean task-local workspaces and explicitly registered replay scenarios")
 	flag.Parse()
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()

@@ -68,6 +68,27 @@ func TestRegistrySelectsHistoricalSourceWithoutRuntimeSubstitution(t *testing.T)
 	if _, err = (&replaytools.Server{Config: tools}).Call(context.Background(), "read_code", json.RawMessage(`{"path":"Example.java","first_line":1,"line_count":1}`)); err != nil {
 		t.Fatal(err)
 	}
+	// Managed tools register a lazy generic workspace without a replay packet.
+	r.EnvironmentScript = filepath.Join(dir, "not-launched.py")
+	workspace, err := r.Resolve(context.Background(), in)
+	if err != nil || len(workspace.Packet.Documents) != 0 {
+		t.Fatal("generic workspace injected evidence", err)
+	}
+	workspaceDir := filepath.Join(dir, "workspace-run")
+	if err := os.Mkdir(workspaceDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	path, cleanup, err = workspace.SetupEnvironment(context.Background(), workspaceDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tools, err = replaytools.Load(path)
+	if err != nil || tools.Runtime == nil || !tools.Runtime.Workspace || len(tools.AvailableCapabilities) != 4 || tools.Container != "" || filepath.Base(tools.Runtime.Evidence) != "manifest.json" {
+		t.Fatal("generic runtime was not registered independently", tools, err)
+	}
+	if _, err := os.Stat(tools.Runtime.Directory); !os.IsNotExist(err) {
+		t.Fatal("workspace started before a capability grant")
+	}
 	in.Ticket.Versions = []string{"2"}
 	if _, err = r.Resolve(context.Background(), in); err == nil {
 		t.Fatal("future commit accepted")

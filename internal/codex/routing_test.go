@@ -142,7 +142,7 @@ func TestRoutingCLIHelper(t *testing.T) {
 			panic(err)
 		}
 	} else {
-		answer := EngineeringOutput{IssueRequest: esa.IssueRequest{Title: "A newly diagnosed defect", Reason: "Observed in frozen source"}, Findings: []esa.Finding{{Commit: "old", File: "Example.java", StartLine: 1, EndLine: 1, Problem: "An empty value is dereferenced", Solution: "Guard the empty value", Evidence: []esa.Evidence{{Source: "git", Reference: "old:Example.java:1", Quote: "bug();"}}}}}
+		answer := EngineeringOutput{IssueRequest: esa.IssueRequest{Title: "A newly diagnosed defect", Reason: "Observed in frozen source"}, Findings: []EngineeringFinding{selectedFinding("old", "Example.java", 1, "bug();", "An empty value is dereferenced", "Guard the empty value")}}
 		raw, _ := json.Marshal(answer)
 		if err := os.WriteFile(output, raw, 0600); err != nil {
 			panic(err)

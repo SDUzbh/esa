@@ -5,25 +5,31 @@ import (
 	"encoding/json"
 	"esa/internal/codexreview"
 	"esa/internal/esa"
+	"esa/internal/replaytools"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 )
 
+func selectedFinding(commit, file string, line int, text, problem, solution string) EngineeringFinding {
+	id := replaytools.EvidenceID("git", commit+":"+file+":", line, text)
+	return EngineeringFinding{Location: id, EndLocation: id, Problem: problem, Solution: solution, EvidenceIDs: []string{}}
+}
+
 func TestStructuredLocationMustBeHistoricalAndInspected(t *testing.T) {
 	packet := Packet{Commit: "old", Documents: []Document{{Source: "git", Prefix: "old:x.java:", First: 2, Lines: []string{"bug();", "tail();"}}}}
-	f := esa.Finding{Commit: "old", File: "x.java", StartLine: 2, EndLine: 2, Problem: "Null completion", Solution: "Fail future", Evidence: []esa.Evidence{{Source: "git", Reference: "old:x.java:2", Quote: "bug();"}}}
-	out := EngineeringOutput{IssueRequest: esa.IssueRequest{Title: "Completion failure", Reason: "New issue"}, Findings: []esa.Finding{f}}
-	if _, e := out.Report(packet); e != nil {
-		t.Fatal(e)
+	f := selectedFinding("old", "x.java", 2, "bug();", "Null completion", "Fail future")
+	out := EngineeringOutput{IssueRequest: esa.IssueRequest{Title: "Completion failure", Reason: "New issue"}, Findings: []EngineeringFinding{f}}
+	if r, e := out.Report(packet); e != nil || r.Findings[0].StartLine != 2 || r.Evidence[0].Quote != "bug();" {
+		t.Fatal(r, e)
 	}
-	out.Findings[0].StartLine = 1
+	out.Findings[0].Location = replaytools.EvidenceID("git", "old:x.java:", 1, "bug();")
 	if _, e := out.Report(packet); e == nil {
 		t.Fatal("uninspected location accepted")
 	}
 	out.Findings[0] = f
-	out.Findings[0].Commit = "future"
+	out.Findings[0].Location = replaytools.EvidenceID("git", "future:x.java:", 2, "bug();")
 	if _, e := out.Report(packet); e == nil {
 		t.Fatal("future source accepted")
 	}
@@ -31,6 +37,40 @@ func TestStructuredLocationMustBeHistoricalAndInspected(t *testing.T) {
 	out.Findings = nil
 	if _, e := out.Report(packet); e != nil {
 		t.Fatal("unlocated diagnosis must remain possible", e)
+	}
+}
+
+func TestEvidenceSelectionsResolveAbsoluteLinesWithoutModelCoordinates(t *testing.T) {
+	lines := make([]string, 129)
+	for i := range lines {
+		lines[i] = "// inspected source"
+	}
+	lines[350-225] = "            complete(response);"
+	doc := Document{Source: "git", Prefix: "old:Client.java:", First: 225, Lines: lines}
+	view := replaytools.Numbered(doc)
+	packet := Packet{Commit: "old", Documents: []Document{doc, {Source: "replay", Prefix: "run:", First: 1, Lines: []string{"CONTROL=PASS"}}}}
+	location := view.Lines[350-225].ID
+	out := EngineeringOutput{IssueRequest: esa.IssueRequest{Title: "Completion failure", Reason: "Observed"}, Findings: []EngineeringFinding{{Location: location, EndLocation: location, Problem: "Wrong completion", Solution: "Fail on disconnect", EvidenceIDs: []string{replaytools.EvidenceID("replay", "run:", 1, "CONTROL=PASS")}}}}
+	r, err := out.Report(packet)
+	if err != nil || r.Findings[0].StartLine != 350 || r.Findings[0].EndLine != 350 || r.Evidence[0].Reference != "old:Client.java:350" || len(r.Evidence) != 2 {
+		t.Fatal(r, err)
+	}
+	// Overlapping reads retain IDs; neither window offsets nor EOF affect them.
+	if replaytools.Numbered(Document{Source: doc.Source, Prefix: doc.Prefix, First: 350, Lines: []string{lines[125]}}).Lines[0].ID != location {
+		t.Fatal("overlapping read changed evidence identity")
+	}
+	out.Findings[0].EvidenceIDs = []string{"e_invented"}
+	if _, err := out.Report(packet); err == nil {
+		t.Fatal("unknown supporting evidence accepted")
+	}
+	out.Findings[0].EvidenceIDs = nil
+	out.Findings[0].Location = replaytools.EvidenceID("replay", "run:", 1, "CONTROL=PASS")
+	if _, err := out.Report(packet); err == nil {
+		t.Fatal("runtime log used as a code location")
+	}
+	var decoded EngineeringOutput
+	if decodeAgentOutput([]byte(`{"issue_request":{"title":"x","reason":"x"},"findings":[{"location":"x","end_location":"x","problem":"x","solution":"x","evidence_ids":[],"start_line":387}],"limitations":[]}`), &decoded) == nil {
+		t.Fatal("model-supplied source coordinates accepted")
 	}
 }
 

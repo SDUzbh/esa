@@ -177,6 +177,10 @@ See [classifier operations](docs/CLASSIFIER.md) for the JSONL contract, feedback
 
 ## Tests
 
+GitHub Actions reuses the existing deterministic tests and API replay fixtures,
+with no real Agent calls. Run the same check locally with
+`sh scripts/check_workflow.sh`; see [CI and build candidates](docs/CI.md).
+
 ```sh
 GOCACHE="$PWD/.tools/go-cache" GOTOOLCHAIN=local .tools/go/bin/go test -race ./...
 GOCACHE="$PWD/.tools/go-cache" GOTOOLCHAIN=local .tools/go/bin/go vet ./...

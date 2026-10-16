@@ -38,6 +38,7 @@ func BM25(query string, documents []Document) ([]Hit, string) {
 	index := Build(documents)
 	return index.Search(query), index.corpus
 }
+
 // Build compiles a deterministic lexical index and corpus fingerprint.
 // Callers must exclude inaccessible or future records before constructing it.
 func Build(documents []Document) *Index {
@@ -70,6 +71,7 @@ func Build(documents []Document) *Index {
 	avg := float64(total) / float64(len(docs))
 	return &Index{docs: docs, counts: counts, lengths: lengths, df: df, average: avg, corpus: corpus}
 }
+
 // Search ranks candidate IDs using BM25; scores do not certify a shared cause.
 func (index *Index) Search(query string) []Hit {
 	docs, counts, lengths, df, avg := index.docs, index.counts, index.lengths, index.df, index.average

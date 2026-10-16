@@ -1,0 +1,53 @@
+name: Workflow checks
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: workflow-checks-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  workflow:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      ESA_GO_ARCH: amd64
+      ESA_TEST_RACE: '1'
+      ESA_WORKFLOW_OUTPUT: .tools/workflow-checks
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Install Ruby test support
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ruby ruby-minitest
+      - name: Check deterministic workflows and build
+        run: sh scripts/check_workflow.sh
+      - name: Save replay reports
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: workflow-reports-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .tools/workflow-checks/
+          include-hidden-files: true
+          retention-days: 7
+      - name: Save verified build candidates
+        if: github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: esa-linux-amd64-${{ github.sha }}
+          path: bin/
+          if-no-files-found: error
+          retention-days: 7

@@ -4,7 +4,9 @@ cd "$(dirname "$0")/.."
 GO_BIN=${ESA_GO_BIN:-.tools/go/bin/go}
 if [ ! -x "$GO_BIN" ]; then GO_BIN=go; fi
 mkdir -p bin .tools/go-cache
-GOCACHE="$PWD/.tools/go-cache" GOTOOLCHAIN=local "$GO_BIN" test ./...
+set --
+if [ "${ESA_TEST_RACE:-0}" = 1 ]; then set -- -race; fi
+GOCACHE="$PWD/.tools/go-cache" GOTOOLCHAIN=local "$GO_BIN" test "$@" ./...
 CGO_ENABLED=0 GOOS=linux GOARCH=${ESA_GO_ARCH:-arm64} GOCACHE="$PWD/.tools/go-cache" GOTOOLCHAIN=local "$GO_BIN" build -trimpath -o bin/esa ./cmd/esa
 GOCACHE="$PWD/.tools/go-cache" GOTOOLCHAIN=local "$GO_BIN" build -trimpath -o bin/esa-host ./cmd/esa
 for ESA_HOST_COMMAND in esa-replay esa-codex esa-classifier; do

@@ -39,6 +39,7 @@ type Decision struct {
 	Profile *Profile `json:"profile,omitempty"`
 	Granted []string `json:"granted"`
 }
+
 // Planner intersects requested capabilities with both Profile and task policy.
 type Planner struct {
 	Root                                   string
@@ -65,6 +66,7 @@ func (p Planner) Catalog() ([]Profile, error) {
 	}
 	return profiles, nil
 }
+
 // Load confines manifest reads to the approved root and hashes the complete Profile.
 func (p Planner) Load(id string) (Profile, error) {
 	var profile Profile
@@ -121,6 +123,7 @@ func (p Planner) Load(id string) (Profile, error) {
 	profile.ManifestHash = Digest(append(append(append(environment, toolData...), skill...), preset...))
 	return profile, nil
 }
+
 // Resolve requires a hypothesis, purpose and expected observation before any grant.
 // Unknown Profiles, version drift or unavailable capabilities return a denied decision.
 func (p Planner) Resolve(request Request) Decision {

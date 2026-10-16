@@ -382,7 +382,9 @@ func (api *API) ticket(w http.ResponseWriter, r *http.Request) {
 		writeError(w, ErrNotFound)
 		return
 	}
-	if !t.Private {
+	// Record the access only when it would advance an Issue's LRU order; a write
+	// re-encodes the whole state, so plain reads must not pay for one.
+	if !t.Private && ticketTouchTarget(s, t.ID, api.Engine.Now()) != "" {
 		if err := api.Engine.update(func(state *State) error {
 			current := state.Tickets[t.ID]
 			if !current.Private && ticketAllowed(r, current.ID) && allowed(r, current.ProjectID) {

@@ -13,7 +13,7 @@ import (
 	"time"
 )
 
-func testEngine(t *testing.T) *Engine {
+func testEngine(t testing.TB) *Engine {
 	t.Helper()
 	b, err := os.ReadFile("../../config/rules.json")
 	if err != nil {

@@ -37,6 +37,8 @@ if [ -n "$unformatted" ]; then
 fi
 "$ESA_GO_BIN" vet ./...
 "$ESA_GO_BIN" -C system_replay vet ./...
+# Keep the store scaling benchmarks compiling and runnable (tiny size, one pass).
+ESA_BENCH_SIZES=50 "$ESA_GO_BIN" test ./internal/esa -run '^$' -bench 'Store|TicketGET|ReceiveClosed' -benchtime 1x > /dev/null
 sh scripts/build_esa.sh
 sh scripts/build_system_replay.sh
 python3 -B -m unittest discover -s scripts -p 'test_*.py'

@@ -32,16 +32,25 @@ func touchIssue(s *State, id string, at time.Time) {
 	s.Issues[id] = issue
 }
 
+// ticketTouchTarget returns the Issue that an access to the ticket would touch,
+// or "" when touchTicketIssue would change nothing. It only reads s.
+func ticketTouchTarget(s State, id string, at time.Time) string {
+	issueID := s.Runs[s.Latest[id]].IssueID
+	if link, ok := activeMembership(s, id); ok && link.IssueID != "" {
+		issueID = link.IssueID
+	} else if s.Tickets[id].Closed {
+		issueID = s.Cases["case_"+hash(id)[:24]].IssueID
+	}
+	if issue, ok := s.Issues[issueID]; !ok || issue.CreatedAt.After(at) {
+		return ""
+	}
+	return issueID
+}
+
 func touchTicketIssue(s *State, id string, at time.Time) {
-	if link, ok := activeMembership(*s, id); ok && link.IssueID != "" {
-		touchIssue(s, link.IssueID, at)
-		return
+	if issueID := ticketTouchTarget(*s, id, at); issueID != "" {
+		touchIssue(s, issueID, at)
 	}
-	if t := s.Tickets[id]; t.Closed {
-		touchIssue(s, s.Cases["case_"+hash(id)[:24]].IssueID, at)
-		return
-	}
-	touchIssue(s, s.Runs[s.Latest[id]].IssueID, at)
 }
 
 // maintainIssues removes empty Issues, then evicts by durable least-recent access.

@@ -431,16 +431,16 @@ func TestPipelineReleasesEngineeringSlotBeforeAssignment(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			for ctx.Err() == nil {
+			// A task that found every slot busy parks, and a free worker resumes it.
+			for ctx.Err() == nil && assignments.Load() < 4 {
 				worked, err := e.ProcessOne(ctx, provider)
 				if err != nil {
 					t.Error(err)
 					return
 				}
-				if worked {
-					return
+				if !worked {
+					time.Sleep(5 * time.Millisecond)
 				}
-				time.Sleep(5 * time.Millisecond)
 			}
 		}()
 	}
@@ -470,7 +470,7 @@ func TestPipelineExpiredInvestigatingPhasesDoNotRetainClaims(t *testing.T) {
 			}); err != nil {
 				t.Fatal(err)
 			}
-			if !e.Store.needsWork(e.Now(), true) {
+			if !e.Store.needsWork(e.Now(), true, time.Hour) {
 				t.Fatal("expired investigating lease was invisible to recovery")
 			}
 			if err := e.Recover(); err != nil {

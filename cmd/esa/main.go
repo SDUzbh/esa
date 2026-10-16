@@ -176,6 +176,10 @@ func run() error {
 					}
 					continue
 				}
+				// Take the signal before looking for work so a slot freed meanwhile
+				// is not missed. The ticker is the slow fallback for other processes,
+				// queue-wait limits and lease expiry.
+				wake := engine.WorkSignal()
 				worked, err := engine.ProcessOne(ctx, analyzer)
 				if err != nil {
 					slog.Error("Workflow processing failed", "error", err)
@@ -186,6 +190,7 @@ func run() error {
 				select {
 				case <-ctx.Done():
 					return
+				case <-wake:
 				case <-ticker.C:
 				}
 			}

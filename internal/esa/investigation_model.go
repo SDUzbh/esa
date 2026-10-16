@@ -6,6 +6,9 @@ import "time"
 type WorkerConfig struct {
 	LeaseSeconds        int `json:"lease_seconds"`
 	MaxActivePerProject int `json:"max_active_per_project"`
+	// MaxQueueWaitSeconds bounds waiting for an engineering slot, separately
+	// from the per-stage Budget.TimeoutSeconds.
+	MaxQueueWaitSeconds int `json:"max_queue_wait_seconds"`
 }
 
 // Replay is supplied explicitly by the test launcher, never by business rules.
@@ -108,6 +111,10 @@ type Investigation struct {
 	CreatedAt             time.Time            `json:"created_at"`
 	UpdatedAt             time.Time            `json:"updated_at"`
 	ElapsedMS             int64                `json:"elapsed_ms"`
+
+	// WaitingSince is the wall-clock time a parked task started waiting for an
+	// engineering slot; max_queue_wait_seconds is measured from it.
+	WaitingSince time.Time `json:"waiting_since,omitempty"`
 }
 
 // SolutionRevision is an immutable proposal or reviewed solution within one scope.

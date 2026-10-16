@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 )
@@ -15,6 +16,41 @@ var errEngineeringCapacity = errors.New("engineering capacity is occupied")
 
 func activeInvestigation(task Investigation) bool {
 	return task.State == "running" || task.State == "investigating"
+}
+
+// parked reports a task that waits for an engineering slot without holding a
+// worker or a lease. Its routed report and frozen provider input are durable.
+func parked(task Investigation) bool {
+	return task.State == "investigating" && task.Phase == "waiting_engineering" && task.Owner == ""
+}
+
+// engineeringActive counts reserved engineering slots, including single-call runs.
+func engineeringActive(s State) int {
+	active := 0
+	for _, task := range s.Investigations {
+		if activeInvestigation(task) && (task.Phase == "investigating" || task.Phase == "") {
+			active++
+		}
+	}
+	return active
+}
+
+// fairParked orders parked tasks oldest first, rotating across projects.
+func fairParked(s State) []Investigation {
+	var rows []Investigation
+	for _, task := range s.Investigations {
+		if parked(task) {
+			rows = append(rows, task)
+		}
+	}
+	sort.Slice(rows, func(i, j int) bool {
+		if rows[i].WaitingSince.Equal(rows[j].WaitingSince) {
+			return rows[i].ID < rows[j].ID
+		}
+		return rows[i].WaitingSince.Before(rows[j].WaitingSince)
+	})
+	rotateProjects(rows, s.LastClaimedProject)
+	return rows
 }
 
 // Intake routing is serialized per project until its claim is committed. The
@@ -32,11 +68,31 @@ func ownsInvestigation(current, claimed Investigation) bool {
 	return activeInvestigation(current) && current.Owner == claimed.Owner && current.Epoch == claimed.Epoch
 }
 
-// pipeline runs route, optional engineering, then assignment under the task deadline.
+// stage gives each provider stage its own timeout_seconds deadline, so time
+// spent in earlier stages or waiting for capacity cannot shorten it.
+func (e *Engine) stage(ctx context.Context, provider PipelineAnalyzer, input AnalyzeRequest, name string) (Report, error) {
+	stageCtx, cancel := context.WithTimeout(ctx, time.Duration(e.Config.Budget.TimeoutSeconds)*time.Second)
+	defer cancel()
+	report, err := provider.AnalyzeStage(stageCtx, input, name)
+	if err == nil && stageCtx.Err() != nil {
+		err = stageCtx.Err()
+	}
+	return report, err
+}
+
+// errParked tells ProcessOne that the task now waits without its worker.
+var errParked = errors.New("task parked until an engineering slot frees")
+
+func queueTimeout(seconds int) error {
+	// Routing usage is exact; nothing uncertain was spent on engineering.
+	return fmt.Errorf("engineering capacity stayed occupied for %d seconds; no engineering call was made. Forward the ticket again to retry", seconds)
+}
+
+// pipeline runs route, then reserves an engineering slot or parks the task.
 // It persists an investigating claim before releasing the project routing gate.
-// Engineering capacity is released before assignment; Routing cannot rewrite findings.
-func (e *Engine) pipeline(ctx context.Context, provider PipelineAnalyzer, input AnalyzeRequest, task Investigation) (Report, error) {
-	routed, err := provider.AnalyzeStage(ctx, input, "route")
+// A parked task returns errParked; ProcessOne later resumes it with engineer.
+func (e *Engine) pipeline(ctx context.Context, provider PipelineAnalyzer, input AnalyzeRequest, task Investigation, started time.Time) (Report, error) {
+	routed, err := e.stage(ctx, provider, input, "route")
 	if err != nil {
 		return routed, err
 	}
@@ -52,60 +108,44 @@ func (e *Engine) pipeline(ctx context.Context, provider PipelineAnalyzer, input 
 	}
 	// Persist both the route audit and the visible claim before another intake
 	// router can inspect this project. No Issue is created before diagnosis.
+	// Capacity is reserved transactionally, not just in a process-local channel.
+	// A task never overtakes one already parked, so slots go out in order.
+	parkedNow := false
 	err = e.update(func(s *State) error {
 		current := s.Investigations[task.ID]
 		if !ownsInvestigation(current, task) || !taskHasActiveMembers(*s, current) {
 			return ErrConflict
 		}
-		current.State, current.Phase, current.UpdatedAt = "investigating", "waiting_engineering", e.Now()
-		s.Investigations[task.ID] = current
 		run := s.Runs[task.RunID]
 		run.Report, run.UpdatedAt = routed, e.Now()
+		current.State, current.Phase, current.UpdatedAt = "investigating", "investigating", e.Now()
+		parkedNow = engineeringActive(*s) >= EngineeringConcurrency || len(fairParked(*s)) > 0
+		if parkedNow {
+			frozen := input
+			run.PipelineInput = &frozen
+			current.Phase, current.Owner, current.LeaseUntil = "waiting_engineering", "", time.Time{}
+			current.WaitingSince = time.Now().UTC()
+			current.ElapsedMS = time.Since(started).Milliseconds()
+		}
+		s.Investigations[task.ID] = current
 		s.Runs[run.ID] = run
 		return nil
 	})
 	if err != nil {
 		return routed, err
 	}
-	// Capacity is reserved transactionally, not just in a process-local channel.
-	// Waiting tasks retain a heartbeat and are searchable as investigating.
-	ticker := time.NewTicker(250 * time.Millisecond)
-	defer ticker.Stop()
-	for {
-		reserved := false
-		err = e.update(func(s *State) error {
-			reserved = false
-			current := s.Investigations[task.ID]
-			if !ownsInvestigation(current, task) || !taskHasActiveMembers(*s, current) {
-				return ErrConflict
-			}
-			active := 0
-			for _, other := range s.Investigations {
-				if activeInvestigation(other) && (other.Phase == "investigating" || other.Phase == "") {
-					active++
-				}
-			}
-			if active >= EngineeringConcurrency {
-				return errEngineeringCapacity
-			}
-			current.Phase, current.UpdatedAt = "investigating", e.Now()
-			s.Investigations[current.ID] = current
-			reserved = true
-			return nil
-		})
-		if err != nil && !errors.Is(err, errEngineeringCapacity) {
-			return routed, err
-		}
-		if reserved {
-			break
-		}
-		select {
-		case <-ctx.Done():
-			return routed, ctx.Err()
-		case <-ticker.C:
-		}
+	// The project routing gate is open again, and a parked task frees its worker.
+	e.Store.signalWork()
+	if parkedNow {
+		return routed, errParked
 	}
-	engineered, err := provider.AnalyzeStage(ctx, input, "engineer")
+	return e.engineer(ctx, provider, input, task, routed)
+}
+
+// engineer runs the diagnosis in a reserved slot, then assignment routing.
+// Engineering capacity is released before assignment; Routing cannot rewrite findings.
+func (e *Engine) engineer(ctx context.Context, provider PipelineAnalyzer, input AnalyzeRequest, task Investigation, routed Report) (Report, error) {
+	engineered, err := e.stage(ctx, provider, input, "engineer")
 	if err != nil {
 		return uncertainStage(engineered, routed), err
 	}
@@ -135,7 +175,8 @@ func (e *Engine) pipeline(ctx context.Context, provider PipelineAnalyzer, input 
 	if err != nil {
 		return engineered, err
 	}
-	assigned, err := provider.AnalyzeStage(ctx, input, "assign")
+	e.Store.signalWork()
+	assigned, err := e.stage(ctx, provider, input, "assign")
 	if err != nil {
 		return uncertainStage(assigned, engineered), err
 	}
@@ -176,7 +217,7 @@ func (e *Engine) joinInvestigation(s *State, task *Investigation, report Report,
 	if !ok || target.ID == task.ID || target.ProjectID != task.ProjectID || source.Private || source.Closed || target.RunID != selected.RunID || s.Groups[target.GroupID].CurrentTaskID != target.ID || !taskHasActiveMembers(*s, target) || investigationSignature(source) != investigationSignature(s.Runs[target.RunID].Input) || investigationScope(input) != selected.ScopeHash || target.Contract.IssueID != task.Contract.IssueID || target.Contract.ObservationCutoff.After(task.Contract.ObservationCutoff) {
 		return fmt.Errorf("%w: investigation source or scope changed", ErrConflict)
 	}
-	live := activeInvestigation(target) && target.LeaseUntil.After(e.Now()) && (target.Phase == "waiting_engineering" || target.Phase == "investigating" || target.Phase == "assignment")
+	live := activeInvestigation(target) && (target.LeaseUntil.After(e.Now()) || parked(target)) && (target.Phase == "waiting_engineering" || target.Phase == "investigating" || target.Phase == "assignment")
 	// Completion can race the routing turn. Share the completed investigation
 	// rather than starting another analysis or claiming a future solution.
 	if !live && target.State != "agent_proposed" && target.State != "trusted" {

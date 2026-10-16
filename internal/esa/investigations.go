@@ -284,16 +284,22 @@ func sortedInvestigations(s State) []Investigation {
 
 func fairInvestigations(s State) []Investigation {
 	rows := sortedInvestigations(s)
+	rotateProjects(rows, s.LastClaimedProject)
+	return rows
+}
+
+// rotateProjects starts after the last claimed project and keeps each
+// project's existing order.
+func rotateProjects(rows []Investigation, last string) {
 	sort.SliceStable(rows, func(i, j int) bool {
 		a, b := rows[i].ProjectID, rows[j].ProjectID
 		if a == b {
 			return false
 		}
-		aAfter, bAfter := a > s.LastClaimedProject, b > s.LastClaimedProject
+		aAfter, bAfter := a > last, b > last
 		if aAfter != bAfter {
 			return aAfter
 		}
 		return a < b
 	})
-	return rows
 }

@@ -2,16 +2,18 @@ package esa
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 )
 
 func (e *Engine) recoverInvestigations(s *State) error {
 	for id, task := range s.Investigations {
-		if activeInvestigation(task) && !task.LeaseUntil.After(e.Now()) {
+		if activeInvestigation(task) && !parked(task) && !task.LeaseUntil.After(e.Now()) {
 			task.State = "failed"
 			task.Epoch++
 			task.UpdatedAt = e.Now()
@@ -34,6 +36,85 @@ func (e *Engine) recoverInvestigations(s *State) error {
 		}
 	}
 	return nil
+}
+
+// settleParked supersedes parked tasks whose members left, and fails those that
+// waited longer than max_queue_wait_seconds with exact routing-only usage.
+func (e *Engine) settleParked(s *State) {
+	limit := time.Duration(e.Config.Worker.MaxQueueWaitSeconds) * time.Second
+	for id, task := range s.Investigations {
+		if !parked(task) {
+			continue
+		}
+		superseded := !taskHasActiveMembers(*s, task) || s.Groups[task.GroupID].CurrentTaskID != task.ID
+		if !superseded && time.Since(task.WaitingSince) < limit {
+			continue
+		}
+		run := s.Runs[task.RunID]
+		var input AnalyzeRequest
+		if run.PipelineInput != nil {
+			input = *run.PipelineInput
+		}
+		elapsed := time.Since(task.WaitingSince.Add(-time.Duration(task.ElapsedMS) * time.Millisecond)).Milliseconds()
+		e.sealReport(&run.Report, task, input, elapsed)
+		task.State = "superseded"
+		if !superseded {
+			task.State, run.Error = "failed", queueTimeout(e.Config.Worker.MaxQueueWaitSeconds).Error()
+		}
+		task.ElapsedMS, task.UpdatedAt = elapsed, e.Now()
+		run.PipelineInput, run.UpdatedAt = nil, e.Now()
+		s.Investigations[id] = task
+		s.Runs[run.ID] = run
+	}
+}
+
+// sealReport adds the audit envelope and refreshes usage warnings.
+func (e *Engine) sealReport(report *Report, task Investigation, input AnalyzeRequest, elapsed int64) {
+	report.StoredFields = nil
+	report.Envelope = reportEnvelope(task, e.Now(), elapsed)
+	report.Envelope.ProviderInputHash = hash(input)
+	UpdateTokenAlerts(report, e.Config.Budget)
+	if !report.Usage.TokensReported {
+		report.Limitations = append(report.Limitations, "Provider usage is unknown; it must not be interpreted as zero.")
+	}
+}
+
+// frozenIssueRecords reloads the records a parked task was routed against from
+// its content-addressed view, instead of recomputing them from current state.
+func frozenIssueRecords(root string, input AnalyzeRequest) ([]IssueRecord, error) {
+	view, err := OpenIssueDirectory(root, input.IssueDirectory, input.IssueDirectoryHash)
+	if err != nil {
+		return nil, fmt.Errorf("frozen Issue directory is unavailable: %w", err)
+	}
+	if input.Contract == nil || view.Manifest.ProjectID != input.Ticket.ProjectID || view.Manifest.Cutoff.After(input.Contract.ObservationCutoff) {
+		return nil, errors.New("frozen Issue directory project/cutoff mismatch")
+	}
+	var names []string
+	for name := range view.Manifest.Files {
+		if strings.HasSuffix(name, "/issue.json") {
+			names = append(names, name)
+		}
+	}
+	sort.Strings(names)
+	records := make([]IssueRecord, 0, len(names))
+	for _, name := range names {
+		record, err := view.ReadRecord(name, "")
+		if err != nil {
+			return nil, err
+		}
+		records = append(records, record)
+	}
+	return records, nil
+}
+
+// issueRoot is the configured Issue projection root. Without one, a single
+// process-lifetime directory keeps views readable for parked tasks.
+func (e *Engine) issueRoot() (string, error) {
+	if e.IssueDirectory != "" {
+		return filepath.Abs(e.IssueDirectory)
+	}
+	e.tempRootOnce.Do(func() { e.tempRoot, e.tempRootErr = os.MkdirTemp("", "esa-issue-view-") })
+	return e.tempRoot, e.tempRootErr
 }
 
 func validateReport(report Report, input AnalyzeRequest, records []IssueRecord) error {
@@ -128,28 +209,50 @@ func validateReport(report Report, input AnalyzeRequest, records []IssueRecord) 
 }
 
 // ProcessOne claims at most one eligible shared task and executes its provider stages.
+// When an engineering slot is free it first resumes the oldest parked task,
+// rotating across projects; otherwise it claims a queued ticket for routing.
 // It maintains a lease heartbeat and rejects results from superseded owners/epochs.
 // Returns whether work was selected plus an error; no configured provider means no model call.
 // Usage and alerts remain auditable even when report validation fails.
 func (e *Engine) ProcessOne(ctx context.Context, analyzer Analyzer) (bool, error) {
-	if !e.Store.needsWork(e.Now(), analyzer != nil && e.Config.Budget.MaxCalls > 0) {
+	if !e.Store.needsWork(e.Now(), analyzer != nil && e.Config.Budget.MaxCalls > 0, time.Duration(e.Config.Worker.MaxQueueWaitSeconds)*time.Second) {
 		return false, nil
 	}
 	pipeline, staged := analyzer.(PipelineAnalyzer)
 	var task Investigation
 	var run Run
-	found := false
+	found, resumed := false, false
 	err := e.update(func(s *State) error {
-		found = false
+		found, resumed = false, false
 		task = Investigation{}
 		run = Run{}
 		if err := e.recoverInvestigations(s); err != nil {
 			return err
 		}
+		e.settleParked(s)
+		// Parked tasks hold no worker, so they do not count toward the project limit.
 		active := map[string]int{}
 		for _, item := range s.Investigations {
-			if activeInvestigation(item) {
+			if activeInvestigation(item) && !parked(item) {
 				active[item.ProjectID]++
+			}
+		}
+		if staged && e.Config.Budget.MaxCalls > 0 && engineeringActive(*s) < EngineeringConcurrency {
+			for _, candidate := range fairParked(*s) {
+				if active[candidate.ProjectID] >= e.Config.Worker.MaxActivePerProject {
+					continue
+				}
+				// Claiming reserves the slot; the new epoch fences any earlier owner.
+				candidate.Phase, candidate.Owner = "investigating", e.workerID
+				candidate.Epoch++
+				candidate.HeartbeatAt = e.Now()
+				candidate.LeaseUntil = e.Now().Add(time.Duration(e.Config.Worker.LeaseSeconds) * time.Second)
+				candidate.UpdatedAt = e.Now()
+				s.Investigations[candidate.ID] = candidate
+				s.LastClaimedProject = candidate.ProjectID
+				task, run = candidate, s.Runs[candidate.RunID]
+				found, resumed = true, true
+				return nil
 			}
 		}
 		for _, candidate := range fairInvestigations(*s) {
@@ -193,12 +296,24 @@ func (e *Engine) ProcessOne(ctx context.Context, analyzer Analyzer) (bool, error
 		}
 		return nil
 	})
-	if err != nil || !found || task.State != "running" {
+	if err != nil || !found || task.State != "running" && !resumed {
 		return found, err
 	}
 	started := time.Now()
-	callCtx, cancel := context.WithTimeout(ctx, time.Duration(e.Config.Budget.TimeoutSeconds)*time.Second)
+	if resumed {
+		// Elapsed time spans routing, waiting and the resumed stages.
+		started = task.WaitingSince.Add(-time.Duration(task.ElapsedMS) * time.Millisecond)
+	}
+	// The lease heartbeat cancels runCtx when ownership is lost. A staged pipeline
+	// sets per-stage deadlines; a single-call analyzer keeps one call deadline.
+	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
+	callCtx := runCtx
+	if !staged {
+		var cancelCall context.CancelFunc
+		callCtx, cancelCall = context.WithTimeout(runCtx, time.Duration(e.Config.Budget.TimeoutSeconds)*time.Second)
+		defer cancelCall()
+	}
 	done := make(chan struct{})
 	heartbeatDone := make(chan struct{})
 	go func() {
@@ -209,7 +324,7 @@ func (e *Engine) ProcessOne(ctx context.Context, analyzer Analyzer) (bool, error
 			select {
 			case <-done:
 				return
-			case <-callCtx.Done():
+			case <-runCtx.Done():
 				return
 			case <-ticker.C:
 				if err := e.update(func(s *State) error {
@@ -229,27 +344,33 @@ func (e *Engine) ProcessOne(ctx context.Context, analyzer Analyzer) (bool, error
 		}
 	}()
 	input := AnalyzeRequest{RunID: run.ID, Ticket: run.Input, Budget: e.Config.Budget, ReadOnly: true, Contract: &task.Contract}
-	s := e.Store.Snapshot()
-	records := issueRecords(s, task, run.Input)
-	root := e.IssueDirectory
-	var callErr error
-	if root == "" {
-		root, callErr = os.MkdirTemp("", "esa-issue-view-")
+	var records []IssueRecord
+	var report Report
+	root, callErr := e.issueRoot()
+	if resumed {
+		// The provider keeps per-run state between stages, so a resumed task sends
+		// the same run ID and frozen request, and validates against the same records.
+		report = run.Report
+		if run.PipelineInput == nil {
+			callErr = errors.New("parked task has no frozen provider input")
+		} else {
+			input = *run.PipelineInput
+		}
 		if callErr == nil {
-			defer os.RemoveAll(root)
+			records, callErr = frozenIssueRecords(root, input)
+		}
+	} else {
+		records = issueRecords(e.Store.Snapshot(), task, run.Input)
+		if callErr == nil {
+			input.IssueDirectory, input.IssueDirectoryHash, callErr = ExportIssueDirectory(root, run.ProjectID, task.Contract.ObservationCutoff, records)
 		}
 	}
-	if callErr == nil {
-		root, callErr = filepath.Abs(root)
-	}
-	if callErr == nil {
-		input.IssueDirectory, input.IssueDirectoryHash, callErr = ExportIssueDirectory(root, run.ProjectID, task.Contract.ObservationCutoff, records)
-	}
-	var report Report
 	invoked := callErr == nil
 	if invoked {
-		if staged {
-			report, callErr = e.pipeline(callCtx, pipeline, input, task)
+		if resumed {
+			report, callErr = e.engineer(callCtx, pipeline, input, task, report)
+		} else if staged {
+			report, callErr = e.pipeline(callCtx, pipeline, input, task, started)
 		} else {
 			report, callErr = analyzer.Analyze(callCtx, input)
 		}
@@ -277,19 +398,19 @@ func (e *Engine) ProcessOne(ctx context.Context, analyzer Analyzer) (bool, error
 	}
 	close(done)
 	<-heartbeatDone
+	if errors.Is(callErr, errParked) {
+		// The parking transaction already stored the routed report and released
+		// ownership; the worker is free for other tickets.
+		return true, nil
+	}
+	defer e.Store.signalWork()
 	if callErr == nil {
 		callErr = validateReport(report, input, records)
 	}
-	report.StoredFields = nil
-	report.Envelope = reportEnvelope(task, e.Now(), time.Since(started).Milliseconds())
-	report.Envelope.ProviderInputHash = hash(input)
 	if invoked && report.Usage.Calls < 1 {
 		report.Usage.Calls = 1
 	}
-	UpdateTokenAlerts(&report, e.Config.Budget)
-	if !report.Usage.TokensReported {
-		report.Limitations = append(report.Limitations, "Provider usage is unknown; it must not be interpreted as zero.")
-	}
+	e.sealReport(&report, task, input, time.Since(started).Milliseconds())
 	err = e.update(func(s *State) error {
 		current := s.Investigations[task.ID]
 		if !ownsInvestigation(current, task) {
@@ -297,7 +418,7 @@ func (e *Engine) ProcessOne(ctx context.Context, analyzer Analyzer) (bool, error
 		}
 		r := s.Runs[run.ID]
 		// Failed or superseded work still has a cost and a diagnostic audit.
-		r.Report = report
+		r.Report, r.PipelineInput = report, nil
 		if report.Routing != nil && report.Routing.Action == "join" {
 			for _, record := range records {
 				if record.Kind == "investigating" && recordPath(record) == report.Routing.RecordPath && issueRecordHash(record) == report.Routing.RecordHash {

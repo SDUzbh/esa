@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -40,7 +41,13 @@ type Engine struct {
 	classifiers    map[string]*classifier.Model
 	workerID       string
 	clock          atomic.Int64
+	tempRootOnce   sync.Once
+	tempRoot       string
+	tempRootErr    error
 }
+
+// WorkSignal closes when a worker or an engineering slot frees in this process.
+func (e *Engine) WorkSignal() <-chan struct{} { return e.Store.WorkSignal() }
 
 // NewEngine validates budgets, worker limits and optional project models.
 // It initializes replay time only when explicitly configured and enforces Issue retention.
@@ -75,6 +82,12 @@ func NewEngine(store *Store, config Config) (*Engine, error) {
 	}
 	if e.Config.Worker.LeaseSeconds < 3 || e.Config.Worker.LeaseSeconds > 3600 {
 		return nil, fmt.Errorf("%w: lease must be 3..3600 seconds", ErrInvalid)
+	}
+	if config.Worker.MaxQueueWaitSeconds == 0 {
+		e.Config.Worker.MaxQueueWaitSeconds = 1800
+	}
+	if e.Config.Worker.MaxQueueWaitSeconds < 1 || e.Config.Worker.MaxQueueWaitSeconds > 86400 {
+		return nil, fmt.Errorf("%w: max_queue_wait_seconds must be 1..86400", ErrInvalid)
 	}
 	e.workerID = randomID("worker_")
 	if config.Replay.Enabled {

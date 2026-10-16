@@ -10,6 +10,9 @@
 !deploy/esa/seed/**
 !deploy/redmine/
 !deploy/redmine/Dockerfile
+!deploy/redmine/Dockerfile.fixture
 !plugins/
 !plugins/redmine_esa/
 !plugins/redmine_esa/**
+!scripts/
+!scripts/esa_fixture_target.py

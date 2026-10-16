@@ -180,6 +180,9 @@ See [classifier operations](docs/CLASSIFIER.md) for the JSONL contract, feedback
 GitHub Actions reuses the existing deterministic tests and API replay fixtures,
 with no real Agent calls. Run the same check locally with
 `sh scripts/check_workflow.sh`; see [CI and build candidates](docs/CI.md).
+The separate manual **Deployment acceptance** workflow starts an isolated real
+Redmine stack with the same fixture provider and verifies forwarding, review,
+permissions, restart persistence and cleanup without real Agent calls.
 
 ```sh
 GOCACHE="$PWD/.tools/go-cache" GOTOOLCHAIN=local .tools/go/bin/go test -race ./...

@@ -1,0 +1,41 @@
+# Overlay the real deployment; every resource belongs to the test project.
+services:
+  redmine:
+    image: ${ESA_TEST_PROJECT}-redmine
+    networks: [default, frontend]
+    ports: !override
+      - "127.0.0.1:${ESA_TEST_PORT}:3000"
+    environment:
+      ESA_DEPLOYMENT_TEST: '1'
+      ESA_TEST_PASSWORD: ${ESA_TEST_PASSWORD:?Fixture password required}
+  esa:
+    image: ${ESA_TEST_PROJECT}-esa
+    environment:
+      ESA_STATE_URL: ''
+      ESA_ANALYZER_URL: http://fixture:8091/analyze
+    depends_on:
+      - fixture
+    volumes: !override
+      - esa_state:/var/lib/esa
+  fixture:
+    image: ${ESA_TEST_PROJECT}-fixture
+    build:
+      context: ../..
+      dockerfile: deploy/redmine/Dockerfile.fixture
+    command: [python3, /fixture.py, --provider-only, --store, /reports/state.json,
+              --rules, unused, --listen, '0.0.0.0:8091']
+    environment:
+      ESA_API_TOKEN: ${ESA_API_TOKEN}
+    volumes:
+      - provider_data:/reports
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+networks:
+  default:
+    internal: true
+  frontend: {}
+volumes:
+  provider_data:

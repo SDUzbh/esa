@@ -32,11 +32,24 @@ func ownsInvestigation(current, claimed Investigation) bool {
 	return activeInvestigation(current) && current.Owner == claimed.Owner && current.Epoch == claimed.Epoch
 }
 
-// pipeline runs route, optional engineering, then assignment under the task deadline.
+// stage gives each provider stage its own timeout_seconds deadline, so time
+// spent in earlier stages or waiting for capacity cannot shorten it.
+func (e *Engine) stage(ctx context.Context, provider PipelineAnalyzer, input AnalyzeRequest, name string) (Report, error) {
+	stageCtx, cancel := context.WithTimeout(ctx, time.Duration(e.Config.Budget.TimeoutSeconds)*time.Second)
+	defer cancel()
+	report, err := provider.AnalyzeStage(stageCtx, input, name)
+	if err == nil && stageCtx.Err() != nil {
+		err = stageCtx.Err()
+	}
+	return report, err
+}
+
+// pipeline runs route, optional engineering, then assignment, each under its own deadline.
+// Waiting for an engineering slot is bounded separately by max_queue_wait_seconds.
 // It persists an investigating claim before releasing the project routing gate.
 // Engineering capacity is released before assignment; Routing cannot rewrite findings.
 func (e *Engine) pipeline(ctx context.Context, provider PipelineAnalyzer, input AnalyzeRequest, task Investigation) (Report, error) {
-	routed, err := provider.AnalyzeStage(ctx, input, "route")
+	routed, err := e.stage(ctx, provider, input, "route")
 	if err != nil {
 		return routed, err
 	}
@@ -71,6 +84,8 @@ func (e *Engine) pipeline(ctx context.Context, provider PipelineAnalyzer, input 
 	// Waiting tasks retain a heartbeat and are searchable as investigating.
 	ticker := time.NewTicker(250 * time.Millisecond)
 	defer ticker.Stop()
+	queueWait := time.NewTimer(time.Duration(e.Config.Worker.MaxQueueWaitSeconds) * time.Second)
+	defer queueWait.Stop()
 	for {
 		reserved := false
 		err = e.update(func(s *State) error {
@@ -102,10 +117,13 @@ func (e *Engine) pipeline(ctx context.Context, provider PipelineAnalyzer, input 
 		select {
 		case <-ctx.Done():
 			return routed, ctx.Err()
+		case <-queueWait.C:
+			// Routing usage is exact; nothing uncertain was spent on engineering.
+			return routed, fmt.Errorf("engineering capacity stayed occupied for %d seconds; no engineering call was made. Forward the ticket again to retry", e.Config.Worker.MaxQueueWaitSeconds)
 		case <-ticker.C:
 		}
 	}
-	engineered, err := provider.AnalyzeStage(ctx, input, "engineer")
+	engineered, err := e.stage(ctx, provider, input, "engineer")
 	if err != nil {
 		return uncertainStage(engineered, routed), err
 	}
@@ -135,7 +153,7 @@ func (e *Engine) pipeline(ctx context.Context, provider PipelineAnalyzer, input 
 	if err != nil {
 		return engineered, err
 	}
-	assigned, err := provider.AnalyzeStage(ctx, input, "assign")
+	assigned, err := e.stage(ctx, provider, input, "assign")
 	if err != nil {
 		return uncertainStage(assigned, engineered), err
 	}

@@ -6,6 +6,9 @@ import "time"
 type WorkerConfig struct {
 	LeaseSeconds        int `json:"lease_seconds"`
 	MaxActivePerProject int `json:"max_active_per_project"`
+	// MaxQueueWaitSeconds bounds waiting for an engineering slot, separately
+	// from the per-stage Budget.TimeoutSeconds.
+	MaxQueueWaitSeconds int `json:"max_queue_wait_seconds"`
 }
 
 // Replay is supplied explicitly by the test launcher, never by business rules.

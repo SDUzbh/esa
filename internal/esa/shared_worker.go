@@ -197,8 +197,16 @@ func (e *Engine) ProcessOne(ctx context.Context, analyzer Analyzer) (bool, error
 		return found, err
 	}
 	started := time.Now()
-	callCtx, cancel := context.WithTimeout(ctx, time.Duration(e.Config.Budget.TimeoutSeconds)*time.Second)
+	// The lease heartbeat cancels runCtx when ownership is lost. A staged pipeline
+	// sets per-stage deadlines; a single-call analyzer keeps one call deadline.
+	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
+	callCtx := runCtx
+	if !staged {
+		var cancelCall context.CancelFunc
+		callCtx, cancelCall = context.WithTimeout(runCtx, time.Duration(e.Config.Budget.TimeoutSeconds)*time.Second)
+		defer cancelCall()
+	}
 	done := make(chan struct{})
 	heartbeatDone := make(chan struct{})
 	go func() {
@@ -209,7 +217,7 @@ func (e *Engine) ProcessOne(ctx context.Context, analyzer Analyzer) (bool, error
 			select {
 			case <-done:
 				return
-			case <-callCtx.Done():
+			case <-runCtx.Done():
 				return
 			case <-ticker.C:
 				if err := e.update(func(s *State) error {

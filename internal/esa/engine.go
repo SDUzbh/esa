@@ -19,6 +19,17 @@ var ErrInvalid = errors.New("invalid request")
 var ErrNotFound = errors.New("not found")
 var ErrConflict = errors.New("conflict")
 
+// ErrRejected marks an event that can never be accepted as sent. Retrying it
+// cannot succeed, unlike store, contention or clock-skew failures.
+var ErrRejected = errors.New("event rejected")
+
+// rejectedError keeps the wrapped message and status sentinel for HTTP callers.
+type rejectedError struct{ error }
+
+func (r rejectedError) Unwrap() error        { return r.error }
+func (r rejectedError) Is(target error) bool { return target == ErrRejected }
+func reject(err error) error                 { return rejectedError{err} }
+
 // Engine coordinates one business workflow over the selected authoritative Store.
 // Provider calls run outside state transactions; mutations use validated snapshots.
 type Engine struct {
@@ -195,9 +206,13 @@ func diagnosticHash(t Ticket) string {
 func (e *Engine) Receive(event Event) (Receipt, error) {
 	t := event.Ticket
 	if strings.TrimSpace(event.ID) == "" || strings.TrimSpace(t.ID) == "" || strings.TrimSpace(t.ProjectID) == "" || strings.TrimSpace(t.Subject) == "" {
-		return Receipt{}, fmt.Errorf("%w: event ID, ticket ID, project ID, and subject are required", ErrInvalid)
+		return Receipt{}, reject(fmt.Errorf("%w: event ID, ticket ID, project ID, and subject are required", ErrInvalid))
 	}
-	if strings.TrimSpace(event.ForwardedBy) == "" || event.ForwardedAt.IsZero() || event.ForwardedAt.After(e.Now()) {
+	if strings.TrimSpace(event.ForwardedBy) == "" || event.ForwardedAt.IsZero() {
+		return Receipt{}, reject(fmt.Errorf("%w: explicit manual forwarding identity and time required", ErrInvalid))
+	}
+	// A forwarding time ahead of this clock is skew, not a defective event: retry it.
+	if event.ForwardedAt.After(e.Now()) {
 		return Receipt{}, fmt.Errorf("%w: explicit manual forwarding identity and time required", ErrInvalid)
 	}
 	t.ForwardedBy = event.ForwardedBy
@@ -209,7 +224,7 @@ func (e *Engine) Receive(event Event) (Receipt, error) {
 		event.OccurredAt = t.UpdatedAt
 	}
 	if event.OccurredAt.IsZero() {
-		return Receipt{}, fmt.Errorf("%w: source timestamp is required", ErrInvalid)
+		return Receipt{}, reject(fmt.Errorf("%w: source timestamp is required", ErrInvalid))
 	}
 	if t.UpdatedAt.IsZero() {
 		t.UpdatedAt = event.OccurredAt
@@ -218,11 +233,11 @@ func (e *Engine) Receive(event Event) (Receipt, error) {
 		t.CreatedAt = t.UpdatedAt
 	}
 	if t.UpdatedAt.After(event.ForwardedAt) || t.CreatedAt.After(event.ForwardedAt) {
-		return Receipt{}, fmt.Errorf("%w: snapshot source time exceeds forwarding cutoff", ErrInvalid)
+		return Receipt{}, reject(fmt.Errorf("%w: snapshot source time exceeds forwarding cutoff", ErrInvalid))
 	}
 	for _, comment := range t.Comments {
 		if comment.CreatedAt.After(event.ForwardedAt) || comment.UpdatedAt.After(event.ForwardedAt) || e.Config.Replay.Enabled && comment.CreatedAt.IsZero() {
-			return Receipt{}, fmt.Errorf("%w: comment provenance is outside the observation cutoff", ErrInvalid)
+			return Receipt{}, reject(fmt.Errorf("%w: comment provenance is outside the observation cutoff", ErrInvalid))
 		}
 	}
 	event.Ticket = t
@@ -231,14 +246,14 @@ func (e *Engine) Receive(event Event) (Receipt, error) {
 		previousRunID := s.Latest[t.ID]
 		if old, ok := s.Events[event.ID]; ok {
 			if hash(old.Ticket) != hash(t) || old.Origin != event.Origin || old.Force != event.Force {
-				return fmt.Errorf("%w: event ID was reused with different content", ErrConflict)
+				return reject(fmt.Errorf("%w: event ID was reused with different content", ErrConflict))
 			}
 			receipt = s.Receipts[event.ID]
 			receipt.Action = "duplicate"
 			return nil
 		}
 		if old, ok := s.Tickets[t.ID]; ok && old.ProjectID != t.ProjectID {
-			return fmt.Errorf("%w: ticket belongs to a different project", ErrConflict)
+			return reject(fmt.Errorf("%w: ticket belongs to a different project", ErrConflict))
 		}
 		receipt = Receipt{EventID: event.ID, TicketID: t.ID}
 		if event.Origin == "esa" {

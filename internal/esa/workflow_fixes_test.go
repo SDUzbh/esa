@@ -235,7 +235,7 @@ func TestCanonicalTitleAndRepresentativeStaySeparate(t *testing.T) {
 			t.Fatal("canonical title was replaced")
 		}
 	}
-	state := e.Store.Snapshot()
+	state := e.Store.Clone()
 	private := fixture(e, "private-title-source")
 	private.Private = true
 	state.Tickets[private.ID] = private

@@ -252,10 +252,11 @@ func TestDurableStoreAndRollback(t *testing.T) {
 	if err = loaded.Update(func(s *State) error { s.LastClaimedProject = "4"; return ErrConflict }); !errors.Is(err, ErrConflict) || loaded.Snapshot().LastClaimedProject != "3" {
 		t.Fatal("failed transaction committed")
 	}
-	snapshot := loaded.Snapshot()
-	snapshot.Tickets["foreign"] = Ticket{}
+	// Snapshot is read-only and shared; Clone is the detached copy to edit.
+	clone := loaded.Clone()
+	clone.Tickets["foreign"] = Ticket{}
 	if len(loaded.Snapshot().Tickets) != 0 {
-		t.Fatal("snapshot aliases live state")
+		t.Fatal("clone aliases live state")
 	}
 }
 func TestAPIAuthenticationScopeFilteringAndVisibility(t *testing.T) {

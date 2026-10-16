@@ -261,15 +261,24 @@ func (s *Store) verifyPublished() {
 	s.verifyPublishedLocked()
 }
 
-// Snapshot returns a detached copy so callers cannot mutate authoritative state.
+// Snapshot returns the published state without copying it. Writers never
+// change a published state (Update is copy-on-write), so the result stays
+// consistent after the lock is released. It is read-only: callers must not
+// edit its maps, slices or entities; use Clone for a state to modify.
 func (s *Store) Snapshot() State {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	s.verifyPublishedLocked()
-	b, _ := json.Marshal(s.state)
-	var snapshot State
-	_ = json.Unmarshal(b, &snapshot)
-	return snapshot
+	return s.state
+}
+
+// Clone returns a fully independent copy of the published state.
+func (s *Store) Clone() State {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var clone State
+	_ = json.Unmarshal(s.encoded, &clone)
+	return clone
 }
 
 // detach returns a state whose top-level maps and slices can be changed without

@@ -9,6 +9,9 @@
       <button type="button" data-esa-fill>Fill metadata from ESA</button>
     <% end %></p>
   <% end %>
+  <% if (rejection = @presentation.rejection) && User.current.allowed_to?(:submit_esa, @issue.project) %>
+    <p class="warning">ESA rejected the forward by <%= rejection['forwarded_by'] %> at <%= format_time(rejection['forwarded_at']) %>: <%= rejection['reason'] %>. Correct the issue and forward it again.</p>
+  <% end %>
   <% run = @row['latest_run'] %>
   <% if @presentation.state == 'failed' %><p class="warning">Analysis could not finish. Open the report for details.</p><% end %>
   <% if @presentation.state == 'awaiting_information' %><p class="warning">More information is needed. Open the report for the requested details.</p><% end %>

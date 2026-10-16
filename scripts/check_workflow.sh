@@ -42,6 +42,7 @@ sh scripts/build_system_replay.sh
 python3 -B -m unittest discover -s scripts -p 'test_*.py'
 ruby scripts/test_label_payload.rb
 ruby scripts/test_esa_presentation.rb
+ruby scripts/test_esa_acknowledgement.rb
 "${ESA_NODE_BIN:-node}" --test scripts/test_esa_ticket_ui.cjs
 python3 -B scripts/verify_shared_investigations.py
 for fixture in esa-api-lifecycle esa-api-forwarding esa-shared-investigations; do

@@ -16,7 +16,8 @@ import (
 // A permanently rejected event is recorded, then acknowledged so it cannot block
 // later events. A transient failure stays unacknowledged and holds back only later
 // events of the same ticket, preserving per-ticket order. An acknowledgement
-// failure leaves delivery retryable through event idempotency.
+// failure leaves delivery retryable through event idempotency. Each acknowledgement
+// carries the status, plus the reason for a rejection.
 func (e *Engine) SyncRedmine(ctx context.Context, baseURL, token string, client *http.Client) error {
 	if baseURL == "" {
 		return nil
@@ -50,9 +51,11 @@ func (e *Engine) SyncRedmine(ctx context.Context, baseURL, token string, client 
 		if held[event.Ticket.ID] {
 			continue
 		}
+		outcome := map[string]string{"event_id": event.ID, "status": "accepted"}
 		_, err = e.Receive(event)
 		if errors.Is(err, ErrRejected) {
 			slog.Warn("Forwarded event rejected", "event_id", event.ID, "ticket_id", event.Ticket.ID, "forwarded_by", event.ForwardedBy, "reason", err)
+			outcome["status"], outcome["reason"] = "rejected", err.Error()
 			err = e.recordRejection(event, err)
 		}
 		if err != nil {
@@ -60,7 +63,7 @@ func (e *Engine) SyncRedmine(ctx context.Context, baseURL, token string, client 
 			failures = append(failures, fmt.Errorf("event %s: %w", event.ID, err))
 			continue
 		}
-		if err = acknowledge(ctx, client, baseURL, token, event.ID); err != nil {
+		if err = acknowledge(ctx, client, baseURL, token, outcome); err != nil {
 			return errors.Join(append(failures, err)...)
 		}
 	}
@@ -82,8 +85,10 @@ func (e *Engine) recordRejection(event Event, cause error) error {
 	})
 }
 
-func acknowledge(ctx context.Context, client *http.Client, baseURL, token, eventID string) error {
-	body, _ := json.Marshal(map[string]string{"event_id": eventID})
+// acknowledge tells the plugin the event's outcome so it can show rejections to
+// the forwarder; the plugin still accepts a bare {event_id} as accepted.
+func acknowledge(ctx context.Context, client *http.Client, baseURL, token string, outcome map[string]string) error {
+	body, _ := json.Marshal(outcome)
 	ack, err := http.NewRequestWithContext(ctx, http.MethodPost, baseURL+"/esa/api/events/ack", bytes.NewReader(body))
 	if err != nil {
 		return err

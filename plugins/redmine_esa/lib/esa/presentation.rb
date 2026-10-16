@@ -3,8 +3,14 @@ module Esa
   class Presentation
     ACTIVE = %w[queued running investigating].freeze
 
-    def initialize(row, pending: false)
-      @row, @pending = row, pending
+    # rejection describes the issue's newest acknowledged forward when ESA rejected it.
+    def initialize(row, pending: false, rejection: nil)
+      @row, @pending, @rejection = row, pending, rejection
+    end
+
+    # A newer forward still in the outbox supersedes an earlier rejection.
+    def rejection
+      @pending ? nil : @rejection
     end
 
     def state

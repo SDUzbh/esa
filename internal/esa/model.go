@@ -255,6 +255,18 @@ type Run struct {
 	UpdatedAt          time.Time  `json:"updated_at"`
 }
 
+// EventRejection records an outbox event acknowledged without being accepted.
+// It keeps no ticket body; the forwarder must correct the issue and forward again.
+type EventRejection struct {
+	EventID     string    `json:"event_id"`
+	TicketID    string    `json:"ticket_id"`
+	ProjectID   string    `json:"project_id"`
+	ForwardedBy string    `json:"forwarded_by"`
+	ForwardedAt time.Time `json:"forwarded_at"`
+	Reason      string    `json:"reason"`
+	RejectedAt  time.Time `json:"rejected_at"`
+}
+
 type Receipt struct {
 	EventID  string `json:"event_id"`
 	TicketID string `json:"ticket_id"`
@@ -285,6 +297,7 @@ type State struct {
 	Tickets               map[string]Ticket               `json:"tickets"`
 	Events                map[string]Event                `json:"events"`
 	Receipts              map[string]Receipt              `json:"receipts"`
+	Rejections            map[string]EventRejection       `json:"event_rejections,omitempty"`
 	Runs                  map[string]Run                  `json:"runs"`
 	Latest                map[string]string               `json:"latest"`
 	Cases                 map[string]Case                 `json:"cases"`

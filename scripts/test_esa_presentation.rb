@@ -19,6 +19,14 @@ class EsaPresentationTest < Minitest::Test
     assert_empty view.suggestion
   end
 
+  def test_rejected_forward_is_shown_until_a_newer_forward_is_pending
+    rejection = { 'forwarded_by' => 'support-user', 'reason' => 'conflict: ticket belongs to a different project' }
+    assert_equal rejection, Esa::Presentation.new({}, rejection: rejection).rejection
+    assert_equal 'awaiting_forward', Esa::Presentation.new({}, rejection: rejection).state
+    assert_nil Esa::Presentation.new(row, pending: true, rejection: rejection).rejection
+    assert_nil Esa::Presentation.new(row).rejection
+  end
+
   def test_unforwarded_and_active_states_do_not_fill_metadata
     assert_equal 'awaiting_forward', Esa::Presentation.new({}).state
     %w[queued running investigating awaiting_information failed returned_to_support].each do |state|

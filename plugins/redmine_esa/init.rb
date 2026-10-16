@@ -1,4 +1,5 @@
 require 'redmine'
+require_relative 'lib/esa/acknowledgement'
 require_relative 'lib/esa/client'
 require_relative 'lib/esa/payload'
 require_relative 'lib/esa/presentation'

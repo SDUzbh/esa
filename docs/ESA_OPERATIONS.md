@@ -179,6 +179,7 @@ Engineering Issue titles retain canonical provenance; representative ticket subj
 .tools/go/bin/go build -o bin/esa-host ./cmd/esa
 .tools/go/bin/go build -o bin/esa-codex ./cmd/esa-codex
 ruby scripts/test_esa_presentation.rb
+ruby scripts/test_esa_acknowledgement.rb
 node --test scripts/test_esa_ticket_ui.cjs
 python3 scripts/verify_label_frontend.py
 python3 scripts/verify_transactional_store.py

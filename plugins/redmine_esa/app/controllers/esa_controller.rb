@@ -180,8 +180,11 @@ class EsaController < ApplicationController
       { 'ticket' => { 'ticket' => { 'closed' => @issue.closed? } }, 'history' => [] }
     end
     @row = @result.fetch('ticket')
-    pending = EsaEvent.where(issue_id: @issue.id, acknowledged_at: nil).where.not(forwarded_at: nil).exists?
-    @presentation = Esa::Presentation.new(@row, pending: pending)
+    forwards = EsaEvent.where(issue_id: @issue.id).where.not(forwarded_at: nil)
+    pending = forwards.where(acknowledged_at: nil).exists?
+    latest = forwards.where.not(acknowledged_at: nil).order(:id).last
+    rejection = latest&.rejected_at && { 'forwarded_by' => latest.forwarded_by, 'forwarded_at' => latest.forwarded_at, 'reason' => latest.rejection_reason }
+    @presentation = Esa::Presentation.new(@row, pending: pending, rejection: rejection)
   end
 
   def load_scope

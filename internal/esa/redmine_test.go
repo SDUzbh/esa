@@ -18,7 +18,20 @@ type fakeOutbox struct {
 	mu       sync.Mutex
 	events   []Event
 	acked    []string
+	bodies   []map[string]string
 	dropAcks bool
+}
+
+// validAck accepts only the bodies ESA sends: an accepted status, or a rejected
+// status with a reason.
+func validAck(body map[string]string) bool {
+	switch body["status"] {
+	case "accepted":
+		return len(body) == 2
+	case "rejected":
+		return len(body) == 3 && body["reason"] != ""
+	}
+	return false
 }
 
 func (o *fakeOutbox) serve(t *testing.T) *httptest.Server {
@@ -27,11 +40,12 @@ func (o *fakeOutbox) serve(t *testing.T) *httptest.Server {
 		defer o.mu.Unlock()
 		if r.URL.Path == "/esa/api/events/ack" {
 			var body map[string]string
-			if err := json.NewDecoder(r.Body).Decode(&body); err != nil || len(body) != 1 || body["event_id"] == "" {
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body["event_id"] == "" || !validAck(body) {
 				w.WriteHeader(http.StatusBadRequest)
 				return
 			}
 			o.acked = append(o.acked, body["event_id"])
+			o.bodies = append(o.bodies, body)
 			if !o.dropAcks {
 				for i, event := range o.events {
 					if event.ID == body["event_id"] {
@@ -86,6 +100,30 @@ func TestSyncRedminePoisonEventDoesNotBlockLaterEvents(t *testing.T) {
 	}
 	if _, ok := s.Events["redmine_event_1"]; ok {
 		t.Fatal("a rejected event must not be stored as accepted")
+	}
+}
+
+func TestSyncRedmineAcknowledgementReportsOutcome(t *testing.T) {
+	e := testEngine(t)
+	receive(t, e, "seed", fixture(e, "T1"))
+	moved := fixture(e, "T1")
+	moved.ProjectID = "2"
+	outbox := &fakeOutbox{events: []Event{outboxEvent(e, "redmine_event_1", moved), outboxEvent(e, "redmine_event_2", fixture(e, "T2"))}}
+	if err := sync3(e, outbox.serve(t)); err != nil {
+		t.Fatal(err)
+	}
+	if len(outbox.bodies) != 2 {
+		t.Fatal("each event must be acknowledged exactly once", outbox.bodies)
+	}
+	rejected, accepted := outbox.bodies[0], outbox.bodies[1]
+	if rejected["event_id"] != "redmine_event_1" || rejected["status"] != "rejected" || rejected["reason"] != "conflict: ticket belongs to a different project" {
+		t.Fatal("rejected acknowledgement must carry the status and reason", rejected)
+	}
+	if rejected["reason"] != e.Store.Snapshot().Rejections["redmine_event_1"].Reason {
+		t.Fatal("acknowledged reason must match the recorded rejection", rejected)
+	}
+	if accepted["event_id"] != "redmine_event_2" || accepted["status"] != "accepted" || accepted["reason"] != "" {
+		t.Fatal("accepted acknowledgement must carry only the accepted status", accepted)
 	}
 }
 

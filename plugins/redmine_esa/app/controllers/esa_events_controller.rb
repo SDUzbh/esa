@@ -9,11 +9,12 @@ class EsaEventsController < ActionController::Base
     render json: { events: events }
   end
 
+  # The first acknowledgement wins; a redelivered one never rewrites the outcome.
   def ack
-    value = params[:event_id].to_s
-    return head :bad_request unless value.match?(/\Aredmine_event_\d+\z/)
-    event = EsaEvent.find(value.delete_prefix('redmine_event_'))
-    event.update!(acknowledged_at: Time.current) unless event.acknowledged_at
+    id, attributes = Esa::Acknowledgement.parse(params, Time.current)
+    return head :bad_request unless id
+    event = EsaEvent.find(id)
+    event.update!(attributes) unless event.acknowledged_at
     render json: { acknowledged: true }
   end
 

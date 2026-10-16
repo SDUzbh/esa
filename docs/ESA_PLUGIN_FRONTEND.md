@@ -6,7 +6,7 @@ The link on an ordinary issue opens its ESA page even before forwarding. **Forwa
 
 Upload accepts UTF-8 JSON/CSV, previews rows and creates Redmine issues while preserving original uploads and source-key deduplication. Import does not forward or analyze them. Metadata saves component/version/environment and resolution information locally; forward the issue separately to submit an updated snapshot.
 
-The ticket page keeps the status panel, manual forwarding and metadata form. Status refreshes automatically (every 3 seconds while processing, every 15 seconds while idle), pauses in hidden tabs, and backs off after network failures. It replaces only the status fragment so unsaved metadata edits survive. Manual forwarding waiting in the outbox is shown as Queued before the backend receives it.
+The ticket page keeps the status panel, manual forwarding and metadata form. Status refreshes automatically (every 3 seconds while processing, every 15 seconds while idle), pauses in hidden tabs, and backs off after network failures. It replaces only the status fragment so unsaved metadata edits survive. Manual forwarding waiting in the outbox is shown as Queued before the backend receives it. If ESA rejected the newest forward, users with Submit ESA see who forwarded it, when, and the reason, and are asked to correct the issue and forward it again.
 
 Once a result is available, **View ESA report** opens a separate authenticated report page with recommendations, code findings, evidence, usage, advisory alerts, history and engineer review controls. The same project, issue visibility and private-issue restrictions apply to the page and status endpoint.
 

@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"sync"
 	"time"
 )
@@ -19,11 +21,11 @@ type Store struct {
 	state    State
 	backend  StateBackend
 	revision uint64
-	// guardBytes is the encoded published state, kept only while
-	// guardPublishedState is on.
-	guardBytes []byte
-	wakeMu     sync.Mutex
-	wake       chan struct{}
+	// encoded is json.Marshal(state) as last published. Update compares
+	// against it instead of encoding the previous state again.
+	encoded []byte
+	wakeMu  sync.Mutex
+	wake    chan struct{}
 }
 
 // WorkSignal returns a channel that closes the next time a worker or an
@@ -140,7 +142,10 @@ func openStore(path string) (*Store, error) {
 	return s, nil
 }
 
-// Update commits a detached state atomically. Failed writes never alter memory.
+// Update commits a copy-on-write state atomically. Failed writes never alter memory.
+// The callback gets new top-level maps and slices that share unchanged entities:
+// replace an entity (s.Tickets[id] = t) and never edit a shared map, slice or
+// nested value in place.
 // Update callbacks may run again after a remote CAS conflict.
 // Keep callbacks repeatable and free of provider calls or external side effects.
 func (s *Store) Update(fn func(*State) error) error {
@@ -162,18 +167,11 @@ func (s *Store) Update(fn func(*State) error) error {
 }
 func (s *Store) updateLocked(fn func(*State) error) error {
 	s.verifyPublishedLocked()
-	b, err := json.Marshal(s.state)
-	if err != nil {
-		return err
-	}
-	var next State
-	if err = json.Unmarshal(b, &next); err != nil {
-		return err
-	}
+	next := s.state.detach()
 	if next.Snapshots != nil || next.Investigations != nil {
 		prepareInvestigations(&next)
 	}
-	err = fn(&next)
+	err := fn(&next)
 	s.verifyPublishedLocked()
 	if err != nil {
 		return err
@@ -183,7 +181,7 @@ func (s *Store) updateLocked(fn func(*State) error) error {
 	if err != nil {
 		return err
 	}
-	if bytes.Equal(b, updated) {
+	if bytes.Equal(s.encoded, updated) {
 		return nil
 	}
 	if s.backend != nil {
@@ -194,10 +192,6 @@ func (s *Store) updateLocked(fn func(*State) error) error {
 		s.revision = revision
 	}
 	if s.path != "" {
-		b, err = json.Marshal(next)
-		if err != nil {
-			return err
-		}
 		if err = os.MkdirAll(filepath.Dir(s.path), 0700); err != nil {
 			return err
 		}
@@ -208,7 +202,7 @@ func (s *Store) updateLocked(fn func(*State) error) error {
 		name := f.Name()
 		defer os.Remove(name)
 		if err = f.Chmod(0600); err == nil {
-			_, err = f.Write(b)
+			_, err = f.Write(updated)
 		}
 		if err == nil {
 			err = f.Sync()
@@ -233,21 +227,20 @@ func (s *Store) updateLocked(fn func(*State) error) error {
 			return err
 		}
 	}
-	s.state = next
-	s.publishLocked()
+	s.state, s.encoded = next, updated
 	return nil
 }
 
 // guardPublishedState makes in-place mutation of published state fail loudly.
+// Update shares unchanged entities with the published state (copy-on-write),
+// so an in-place edit would also corrupt s.encoded and later change detection.
 // Tests turn it on (TestMain); it re-encodes the whole state per operation.
 var guardPublishedState bool
 
-// publishLocked records the newly published state. Callers hold s.mu for
-// writing, or own s exclusively while constructing it.
+// publishLocked records the encoding of a newly loaded state. Callers hold
+// s.mu for writing, or own s exclusively while constructing it.
 func (s *Store) publishLocked() {
-	if guardPublishedState {
-		s.guardBytes, _ = json.Marshal(s.state)
-	}
+	s.encoded, _ = json.Marshal(s.state)
 }
 
 // verifyPublishedLocked panics if anyone changed the published state in place
@@ -256,7 +249,7 @@ func (s *Store) verifyPublishedLocked() {
 	if !guardPublishedState {
 		return
 	}
-	if b, _ := json.Marshal(s.state); !bytes.Equal(b, s.guardBytes) {
+	if b, _ := json.Marshal(s.state); !bytes.Equal(b, s.encoded) {
 		panic("esa: published state was mutated in place; Update callbacks and Snapshot readers must replace values, never edit shared ones")
 	}
 }
@@ -277,6 +270,35 @@ func (s *Store) Snapshot() State {
 	var snapshot State
 	_ = json.Unmarshal(b, &snapshot)
 	return snapshot
+}
+
+// detach returns a state whose top-level maps and slices can be changed without
+// touching s. Entities themselves are shared and must be replaced, not edited.
+// Slices are clipped so an append always reallocates instead of writing into
+// an array that the published state still references.
+func (s State) detach() State {
+	next := s
+	next.StoredFields = maps.Clone(s.StoredFields)
+	next.LatestSnapshot = maps.Clone(s.LatestSnapshot)
+	next.Snapshots = maps.Clone(s.Snapshots)
+	next.Issues = maps.Clone(s.Issues)
+	next.Memberships = maps.Clone(s.Memberships)
+	next.MembershipHistory = slices.Clip(s.MembershipHistory)
+	next.IssueOverrides = maps.Clone(s.IssueOverrides)
+	next.Investigations = maps.Clone(s.Investigations)
+	next.Groups = maps.Clone(s.Groups)
+	next.Solutions = maps.Clone(s.Solutions)
+	next.ClassifierPredictions = maps.Clone(s.ClassifierPredictions)
+	next.ClassifierFeedback = maps.Clone(s.ClassifierFeedback)
+	next.Tickets = maps.Clone(s.Tickets)
+	next.Events = maps.Clone(s.Events)
+	next.Receipts = maps.Clone(s.Receipts)
+	next.Rejections = maps.Clone(s.Rejections)
+	next.Runs = maps.Clone(s.Runs)
+	next.Latest = maps.Clone(s.Latest)
+	next.Cases = maps.Clone(s.Cases)
+	next.CaseHistory = slices.Clip(s.CaseHistory)
+	return next
 }
 
 // An idle worker does not copy the archive just to inspect its queue.

@@ -33,6 +33,7 @@ func testEngine(t testing.TB) *Engine {
 	}
 	e.IssueDirectory = t.TempDir()
 	e.Now = func() time.Time { return time.Date(2026, 10, 11, 1, 0, 0, 0, time.UTC) }
+	t.Cleanup(e.Store.verifyPublished)
 	return e
 }
 func fixture(e *Engine, id string) Ticket {

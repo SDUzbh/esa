@@ -19,8 +19,11 @@ type Store struct {
 	state    State
 	backend  StateBackend
 	revision uint64
-	wakeMu   sync.Mutex
-	wake     chan struct{}
+	// guardBytes is the encoded published state, kept only while
+	// guardPublishedState is on.
+	guardBytes []byte
+	wakeMu     sync.Mutex
+	wake       chan struct{}
 }
 
 // WorkSignal returns a channel that closes the next time a worker or an
@@ -74,6 +77,7 @@ func (s *Store) refreshLocked() error {
 	}
 	if revision >= s.revision {
 		s.state, s.revision = state, revision
+		s.publishLocked()
 	}
 	return nil
 }
@@ -87,7 +91,9 @@ func OpenBackendStore(backend StateBackend) (*Store, error) {
 	if err = validateState(state); err != nil {
 		return nil, err
 	}
-	return &Store{state: state, backend: backend, revision: revision}, nil
+	s := &Store{state: state, backend: backend, revision: revision}
+	s.publishLocked()
+	return s, nil
 }
 func validateState(s State) error {
 	if s.SchemaVersion != 1 || s.Tickets == nil || s.Events == nil || s.Receipts == nil || s.Runs == nil || s.Latest == nil || s.Cases == nil {
@@ -107,6 +113,13 @@ func (s *Store) Refresh() error {
 // OpenStore opens a JSON state frame; an empty path selects an in-memory store.
 // The service launcher, not this function, takes the cross-process writer lock.
 func OpenStore(path string) (*Store, error) {
+	s, err := openStore(path)
+	if err == nil {
+		s.publishLocked()
+	}
+	return s, err
+}
+func openStore(path string) (*Store, error) {
 	s := &Store{path: path, state: State{SchemaVersion: 1, Tickets: map[string]Ticket{}, Events: map[string]Event{}, Receipts: map[string]Receipt{}, Runs: map[string]Run{}, Latest: map[string]string{}, Cases: map[string]Case{}}}
 	if path == "" {
 		return s, nil
@@ -148,6 +161,7 @@ func (s *Store) Update(fn func(*State) error) error {
 	return fmt.Errorf("%w: state contention; retry the idempotent request", ErrConflict)
 }
 func (s *Store) updateLocked(fn func(*State) error) error {
+	s.verifyPublishedLocked()
 	b, err := json.Marshal(s.state)
 	if err != nil {
 		return err
@@ -159,7 +173,9 @@ func (s *Store) updateLocked(fn func(*State) error) error {
 	if next.Snapshots != nil || next.Investigations != nil {
 		prepareInvestigations(&next)
 	}
-	if err = fn(&next); err != nil {
+	err = fn(&next)
+	s.verifyPublishedLocked()
+	if err != nil {
 		return err
 	}
 	projectInvestigationStates(&next)
@@ -218,13 +234,45 @@ func (s *Store) updateLocked(fn func(*State) error) error {
 		}
 	}
 	s.state = next
+	s.publishLocked()
 	return nil
+}
+
+// guardPublishedState makes in-place mutation of published state fail loudly.
+// Tests turn it on (TestMain); it re-encodes the whole state per operation.
+var guardPublishedState bool
+
+// publishLocked records the newly published state. Callers hold s.mu for
+// writing, or own s exclusively while constructing it.
+func (s *Store) publishLocked() {
+	if guardPublishedState {
+		s.guardBytes, _ = json.Marshal(s.state)
+	}
+}
+
+// verifyPublishedLocked panics if anyone changed the published state in place
+// since it was published, through a shared map, slice or nested value.
+func (s *Store) verifyPublishedLocked() {
+	if !guardPublishedState {
+		return
+	}
+	if b, _ := json.Marshal(s.state); !bytes.Equal(b, s.guardBytes) {
+		panic("esa: published state was mutated in place; Update callbacks and Snapshot readers must replace values, never edit shared ones")
+	}
+}
+
+// verifyPublished runs the published-state guard; tests call it when they end.
+func (s *Store) verifyPublished() {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	s.verifyPublishedLocked()
 }
 
 // Snapshot returns a detached copy so callers cannot mutate authoritative state.
 func (s *Store) Snapshot() State {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+	s.verifyPublishedLocked()
 	b, _ := json.Marshal(s.state)
 	var snapshot State
 	_ = json.Unmarshal(b, &snapshot)

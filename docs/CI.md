@@ -62,3 +62,52 @@ There is no registry publishing, automatic deployment, local provider restart,
 database migration, or real Agent smoke test. Deployment continues through the
 existing documented Compose and provider operations. Configure the `workflow`
 job as a required branch check in GitHub when enabling merge protection.
+
+## Manual deployment acceptance
+
+`Deployment acceptance` is a separate, manually dispatched workflow. It reuses
+the real deployment Dockerfiles and Compose file, with `compose.test.yaml` as a
+test-only overlay. No real Agent is invoked and no existing deployment is updated.
+The existing fixture provider supports `--provider-only` so both the API replay
+and container acceptance share the same deterministic responses.
+
+After building for the Docker daemon's architecture, run locally:
+
+```sh
+sh scripts/build_esa.sh
+python3 -B scripts/verify_deployment.py --context colima-redmine \
+  --output .tools/deployment-checks-local
+```
+
+The default build targets Linux ARM64. For an AMD64 Docker daemon use
+`ESA_GO_ARCH=amd64 sh scripts/build_esa.sh`. Docker, Compose 2.24.4+ (or a newer
+standalone `docker-compose`) and the official image downloads are required.
+There are no Python package dependencies. Omit `--context` to use the active
+Docker context. The output directory must be new.
+
+The check creates a unique Compose project, loopback port, image tags and named
+volumes. Database, ESA and the fixture provider use an internal network without
+external connectivity; Redmine also has a frontend bridge for its loopback port.
+Containers mount no
+host directories, credentials or Docker socket. A private generated env file
+replaces the normal deployment `.env`; no production tokens are loaded. The seed
+script refuses to initialize an existing project database or run without the
+test-only environment marker.
+
+Acceptance uses HTTP cookie sessions and real Rails CSRF tokens for three fixture
+users. It creates an issue through Redmine, saves metadata twice, forwards through
+the plugin's durable outbox, polls status, retrieves suggestions and the report,
+checks role/project boundaries, and publishes a synthetic engineer review.
+It then recreates Redmine and ESA with the same volumes and checks retained data,
+solution identity, acknowledgement and absence of repeated fixture analysis.
+This verifies service integration and rendered HTTP endpoints; JavaScript browser
+behavior remains covered by the existing Node.js tests. It is not a historical
+schema-upgrade or automatic rollback test.
+
+`artifacts/result.json` lists assertions and cleanup status; `artifacts/compose.log`
+contains sanitized logs. Only `artifacts/` is uploaded. Generated passwords and
+service tokens remain in the private output directory, which is ignored by Git.
+Normal exit, test failure and SIGTERM remove only this project's containers,
+networks, volumes and image tags. Official base images remain cached. SIGKILL or a
+host crash may prevent cleanup; `private/compose.env` retains the unique project
+name even if no final result was written. A cleanup failure fails acceptance.

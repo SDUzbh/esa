@@ -12,13 +12,16 @@ import threading
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--esa-bin', required=True)
+    parser.add_argument('--esa-bin')
     parser.add_argument('--store', required=True)
     parser.add_argument('--rules', required=True)
     parser.add_argument('--listen', required=True)
     parser.add_argument('--replay-at', default='')
     parser.add_argument('--replay-projects', default='')
+    parser.add_argument('--provider-only', action='store_true', help='Serve the same fixture without starting ESA')
     args = parser.parse_args()
+    if not args.provider_only and not args.esa_bin:
+        parser.error('--esa-bin is required unless --provider-only is selected')
     token = os.environ['ESA_API_TOKEN']
     directory = Path(args.store).parent
     directory.mkdir(parents=True, exist_ok=True)
@@ -75,9 +78,21 @@ def main():
             self.end_headers()
             self.wfile.write(encoded)
 
-    provider = ThreadingHTTPServer(('127.0.0.1', 0), Provider)
+    host, port = args.listen.rsplit(':', 1) if args.provider_only else ('127.0.0.1', 0)
+    provider = ThreadingHTTPServer((host, int(port)), Provider)
     thread = threading.Thread(target=provider.serve_forever, daemon=True)
     thread.start()
+    if args.provider_only:
+        stop = threading.Event()
+        signal.signal(signal.SIGTERM, lambda *_: stop.set())
+        signal.signal(signal.SIGINT, lambda *_: stop.set())
+        try:
+            stop.wait()
+        finally:
+            provider.shutdown()
+            provider.server_close()
+            thread.join(timeout=3)
+        return
     environment = dict(os.environ, ESA_REDMINE_URL='', ESA_ANALYZER_URL='http://127.0.0.1:%d/analyze' % provider.server_port, ESA_ANALYZER_TOKEN=token)
     command = [args.esa_bin, '-listen', args.listen, '-store', args.store, '-rules', args.rules]
     if args.replay_at or args.replay_projects:

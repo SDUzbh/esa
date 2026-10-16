@@ -49,6 +49,39 @@ Import preserves the original JSON and rejects an existing/nonzero backend. Afte
 
 This is a **transactional adapter prototype**: HTTP CAS writes whole state (64 MiB bound); unchanged reads use revision ETags to avoid retransmitting the archive; shared investigation entities are stored separately, while per-ticket data remains in the core state frame. Row-level claims, scalable queries and production migration/load validation remain staged work. Graphs, bytecode and profiling arrays do not belong in business state.
 
+## Shutdown and cleanup
+
+Run from the repository root (Python 3.9+, no packages):
+
+```sh
+python3 -B scripts/shutdown.py --dry-run
+python3 -B scripts/shutdown.py
+```
+
+The script sends SIGTERM to this checkout's service/provider, replay and verification
+entry points. Owners have 30 seconds to cancel work and clean their helpers; remaining
+owned descendants receive SIGTERM and then SIGKILL if necessary. Process arguments
+and credentials are not printed. Do not start new work during shutdown.
+
+In the selected Docker context, it stops the `esa-redmine` Compose services, removes
+containers and scratch volumes with `esa.replay.session` or `system.replay.session`
+labels, and removes disposable `esa-deploy-<12 hex digits>` deployment-test resources
+and their service image tags. It deletes stale generated session directories in this
+checkout only after Docker cleanup succeeds. Production volumes, attachments, ESA
+state, Issue projections, Jira data, reports and tool/build caches are preserved.
+Downloads and unrelated host applications are not stopped.
+
+The default context is `colima-redmine`. When no foreign containers remain running,
+the script stops its `redmine` Colima profile. Use `--keep-vm` for cleanup without VM
+shutdown, or `--context NAME` for another context; non-Colima contexts have no VM
+shutdown step. Foreign running containers keep Colima running even without
+`--keep-vm`. Missing ownership information or cleanup failures return nonzero rather
+than claiming success. If Colima is already stopped, it is not restarted; orphan
+Docker resources can only be cleaned after the daemon is available again. It does
+not delete VM disks, prune Docker globally, or remove custom session directories
+outside the checkout. Shutdown does not acknowledge or discard queued tickets;
+persisted workflow recovery still applies on restart.
+
 ## Source registry, Profiles and tools
 
 Copy `config/releases.example.json` to a private runtime file; provide actual local repositories, release refs and verified availability times. The sample date is illustrative, not release evidence. After Routing chooses `analyze`, a deterministic handoff check requires one nonblank, unambiguous affected release and a matching project/release registration available by the cutoff. Missing or ambiguous releases return **Provide one unambiguous affected release**; unmatched registrations return **Invalid or nonexistent version**. The effective route becomes `request_information`, and ESA enters **Awaiting information** without invoking Engineering, exporting source, claiming engineering capacity or creating a sandbox. Reuse, join and customer-support returns bypass this check. A precompiled environment or reproducer is not required. Once admitted, source resolution also checks author/committer timestamps against the cutoff. It downloads no repository.

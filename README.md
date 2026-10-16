@@ -87,6 +87,17 @@ DOCKER_CONTEXT=colima-redmine docker-compose -f deploy/redmine/compose.yaml up -
 
 The build produces Linux ARM64 `bin/esa` and host binaries for `esa-host`, `esa-replay`, `esa-codex` and `esa-classifier`. Set `ESA_GO_ARCH=amd64` for an AMD64 service deployment. No external Go modules or Python packages are required. Building does not activate an existing deployment: rebuild and restart its images to use updated code. The Redmine service runs plugin migrations at startup, including the migration adding manual forwarding provenance to the outbox.
 
+Stop ESA host processes, Redmine services and temporary test environments, then shut
+down the dedicated Colima VM:
+
+```sh
+python3 -B scripts/shutdown.py
+```
+
+Use `--dry-run` to preview or `--keep-vm` to leave Colima running. Persistent data,
+reports and tool caches are retained. Other projects' running containers prevent VM
+shutdown. See [shutdown scope and cleanup](docs/ESA_OPERATIONS.md#shutdown-and-cleanup).
+
 For direct development, configure a service token and use a separate store:
 
 ```sh

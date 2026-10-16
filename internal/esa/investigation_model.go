@@ -111,6 +111,10 @@ type Investigation struct {
 	CreatedAt             time.Time            `json:"created_at"`
 	UpdatedAt             time.Time            `json:"updated_at"`
 	ElapsedMS             int64                `json:"elapsed_ms"`
+
+	// WaitingSince is the wall-clock time a parked task started waiting for an
+	// engineering slot; max_queue_wait_seconds is measured from it.
+	WaitingSince time.Time `json:"waiting_since,omitempty"`
 }
 
 // SolutionRevision is an immutable proposal or reviewed solution within one scope.

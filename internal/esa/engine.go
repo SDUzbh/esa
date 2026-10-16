@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -40,7 +41,13 @@ type Engine struct {
 	classifiers    map[string]*classifier.Model
 	workerID       string
 	clock          atomic.Int64
+	tempRootOnce   sync.Once
+	tempRoot       string
+	tempRootErr    error
 }
+
+// WorkSignal closes when a worker or an engineering slot frees in this process.
+func (e *Engine) WorkSignal() <-chan struct{} { return e.Store.WorkSignal() }
 
 // NewEngine validates budgets, worker limits and optional project models.
 // It initializes replay time only when explicitly configured and enforces Issue retention.

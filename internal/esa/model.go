@@ -253,6 +253,10 @@ type Run struct {
 	Error              string     `json:"error,omitempty"`
 	CreatedAt          time.Time  `json:"created_at"`
 	UpdatedAt          time.Time  `json:"updated_at"`
+
+	// PipelineInput freezes the exact provider request while a task is parked,
+	// so engineering resumes with the same run ID and byte-identical input.
+	PipelineInput *AnalyzeRequest `json:"pipeline_input,omitempty"`
 }
 
 // EventRejection records an outbox event acknowledged without being accepted.

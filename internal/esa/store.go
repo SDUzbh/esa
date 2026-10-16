@@ -19,6 +19,29 @@ type Store struct {
 	state    State
 	backend  StateBackend
 	revision uint64
+	wakeMu   sync.Mutex
+	wake     chan struct{}
+}
+
+// WorkSignal returns a channel that closes the next time a worker or an
+// engineering slot frees in this process. Idle workers wait on it together with
+// a slow poll, which covers other processes sharing the state and time limits.
+func (s *Store) WorkSignal() <-chan struct{} {
+	s.wakeMu.Lock()
+	defer s.wakeMu.Unlock()
+	if s.wake == nil {
+		s.wake = make(chan struct{})
+	}
+	return s.wake
+}
+
+func (s *Store) signalWork() {
+	s.wakeMu.Lock()
+	defer s.wakeMu.Unlock()
+	if s.wake != nil {
+		close(s.wake)
+		s.wake = nil
+	}
 }
 
 // StateBackend provides authoritative, transactional persistence. JSON remains
@@ -209,10 +232,18 @@ func (s *Store) Snapshot() State {
 }
 
 // An idle worker does not copy the archive just to inspect its queue.
-func (s *Store) needsWork(now time.Time, provider bool) bool {
+// Parked tasks need a worker once a slot frees or their queue wait expires.
+func (s *Store) needsWork(now time.Time, provider bool, maxQueueWait time.Duration) bool {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+	free := engineeringActive(s.state) < EngineeringConcurrency
 	for _, task := range s.state.Investigations {
+		if parked(task) {
+			if provider && free || time.Since(task.WaitingSince) >= maxQueueWait {
+				return true
+			}
+			continue
+		}
 		if task.State == "queued" || activeInvestigation(task) && !task.LeaseUntil.After(now) || provider && task.State == "awaiting_configuration" && !task.InvocationStarted {
 			return true
 		}

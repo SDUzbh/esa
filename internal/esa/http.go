@@ -94,6 +94,8 @@ func visibleRun(r *http.Request, s State, run Run) Run {
 	run.Report.StoredFields = nil
 	run.Report.AccessedIssueIDs = nil
 	run.Input.StoredFields = nil
+	// The frozen provider request is internal resume state, not public output.
+	run.PipelineInput = nil
 	if run.SourceTicketID != "" {
 		source, ok := s.Tickets[run.SourceTicketID]
 		if !ok || source.Private || !ticketAllowed(r, run.SourceTicketID) || !allowed(r, source.ProjectID) {

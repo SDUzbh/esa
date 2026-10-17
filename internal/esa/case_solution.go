@@ -20,7 +20,13 @@ func canonicalSolution(s State, issueID, scope string) (SolutionRevision, bool) 
 	return selected, selected.ID != ""
 }
 func (e *Engine) syncCases(s *State, sol SolutionRevision) {
-	for id, c := range s.Cases.All() {
+	// The index narrows the candidates; the filter below stays authoritative.
+	ids := s.indexes.retainedCasesByIssue.lookup(s.Cases, retainedCaseIssue, sol.IssueID)
+	if sol.IssueID == "" {
+		ids = s.Cases.Keys()
+	}
+	for _, id := range ids {
+		c := s.Cases.Get(id)
 		if c.IssueID != sol.IssueID || caseScope(c) != sol.ScopeHash || c.State == "invalidated" || c.State == "duplicate" || c.State == "archived" {
 			continue
 		}
@@ -60,7 +66,12 @@ func (e *Engine) publishSolution(s *State, task Investigation, old, next Solutio
 	next.RunID = old.RunID
 	next.AvailableAt, next.RecordedAt = e.Now(), time.Now().UTC()
 	s.Solutions.Put(next.ID, next)
-	for id, current := range s.Investigations.All() {
+	ids := s.investigationsOfIssue(task.IssueID)
+	if task.IssueID == "" {
+		ids = s.Investigations.Keys()
+	}
+	for _, id := range ids {
+		current := s.Investigations.Get(id)
 		if current.SolutionID == "" || current.IssueID != task.IssueID || s.Groups.Get(current.GroupID).ScopeHash != next.ScopeHash || s.Groups.Get(current.GroupID).CurrentTaskID != current.ID {
 			continue
 		}

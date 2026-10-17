@@ -12,23 +12,23 @@ import (
 )
 
 func (e *Engine) recoverInvestigations(s *State) error {
-	for id, task := range s.Investigations.All() {
-		if activeInvestigation(task) && !parked(task) && !task.LeaseUntil.After(e.Now()) {
+	for _, task := range s.investigationsIn("running", "investigating") {
+		if !parked(task) && !task.LeaseUntil.After(e.Now()) {
 			task.State = "failed"
 			task.Epoch++
 			task.UpdatedAt = e.Now()
-			s.Investigations.Put(id, task)
+			s.Investigations.Put(task.ID, task)
 			r := s.Runs.Get(task.RunID)
 			r.Error = "Investigation lease expired. Inspect the invocation audit before an explicit retry; spend is uncertain."
 			r.UpdatedAt = e.Now()
 			s.Runs.Put(r.ID, r)
 		}
 	}
-	for id, r := range s.Runs.All() {
-		if r.State == "queued" && (r.WorkflowVersion != WorkflowVersion || r.Input.ForwardedBy == "" || r.Input.ForwardedAt.IsZero()) {
+	for _, r := range s.queuedRuns() {
+		if r.WorkflowVersion != WorkflowVersion || r.Input.ForwardedBy == "" || r.Input.ForwardedAt.IsZero() {
 			r.State = "awaiting_forward"
 			r.Route = "manual_forward"
-			s.Runs.Put(id, r)
+			s.Runs.Put(r.ID, r)
 			if task, ok := s.Investigations.Lookup(r.InvestigationID); ok {
 				task.State = "awaiting_forward"
 				s.Investigations.Put(task.ID, task)
@@ -42,7 +42,7 @@ func (e *Engine) recoverInvestigations(s *State) error {
 // waited longer than max_queue_wait_seconds with exact routing-only usage.
 func (e *Engine) settleParked(s *State) {
 	limit := time.Duration(e.Config.Worker.MaxQueueWaitSeconds) * time.Second
-	for id, task := range s.Investigations.All() {
+	for _, task := range s.investigationsIn("investigating") {
 		if !parked(task) {
 			continue
 		}
@@ -63,7 +63,7 @@ func (e *Engine) settleParked(s *State) {
 		}
 		task.ElapsedMS, task.UpdatedAt = elapsed, e.Now()
 		run.PipelineInput, run.UpdatedAt = nil, e.Now()
-		s.Investigations.Put(id, task)
+		s.Investigations.Put(task.ID, task)
 		s.Runs.Put(run.ID, run)
 	}
 }
@@ -232,8 +232,8 @@ func (e *Engine) ProcessOne(ctx context.Context, analyzer Analyzer) (bool, error
 		e.settleParked(s)
 		// Parked tasks hold no worker, so they do not count toward the project limit.
 		active := map[string]int{}
-		for _, item := range s.Investigations.All() {
-			if activeInvestigation(item) && !parked(item) {
+		for _, item := range s.investigationsIn("running", "investigating") {
+			if !parked(item) {
 				active[item.ProjectID]++
 			}
 		}
@@ -255,8 +255,12 @@ func (e *Engine) ProcessOne(ctx context.Context, analyzer Analyzer) (bool, error
 				return nil
 			}
 		}
-		for _, candidate := range fairInvestigations(*s) {
-			if candidate.State != "queued" && !(candidate.State == "awaiting_configuration" && !candidate.InvocationStarted && analyzer != nil && e.Config.Budget.MaxCalls > 0) {
+		claimable := []string{"queued"}
+		if analyzer != nil && e.Config.Budget.MaxCalls > 0 {
+			claimable = append(claimable, "awaiting_configuration")
+		}
+		for _, candidate := range fairInvestigations(*s, claimable...) {
+			if candidate.State == "awaiting_configuration" && candidate.InvocationStarted {
 				continue
 			}
 			if active[candidate.ProjectID] >= e.Config.Worker.MaxActivePerProject || staged && routingBusy(*s, candidate.ProjectID) {

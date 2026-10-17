@@ -130,6 +130,24 @@ func runTicket(r Run) string                     { return r.TicketID }
 func caseTicket(c Case) string                   { return c.TicketID }
 func overrideIssue(issueID string) string        { return issueID }
 
+// workState indexes investigations a worker may still claim, run or recover
+// by their state; terminal investigations, the bulk of an archive, are not
+// indexed.
+func workState(t Investigation) string {
+	switch t.State {
+	case "queued", "running", "investigating", "awaiting_configuration":
+		return t.State
+	}
+	return ""
+}
+
+func queuedRun(r Run) string {
+	if r.State == "queued" {
+		return "queued"
+	}
+	return ""
+}
+
 // tentativeIssue, retainedCaseIssue and usableSolutionIssue index the records
 // that can keep an Issue alive, judged by their own fields; Issue retention
 // checks the ticket-dependent conditions at lookup time.
@@ -177,6 +195,8 @@ type stateIndexes struct {
 	retainedCasesByIssue       tableIndex[Case]
 	usableSolutionsByIssue     tableIndex[SolutionRevision]
 	overridesByIssue           tableIndex[string]
+	investigationsByWorkState  tableIndex[Investigation]
+	queuedRuns                 tableIndex[Run]
 }
 
 func (s *State) advanceIndexes() {
@@ -191,6 +211,8 @@ func (s *State) advanceIndexes() {
 	x.retainedCasesByIssue = x.retainedCasesByIssue.advance(s.Cases, retainedCaseIssue)
 	x.usableSolutionsByIssue = x.usableSolutionsByIssue.advance(s.Solutions, usableSolutionIssue)
 	x.overridesByIssue = x.overridesByIssue.advance(s.IssueOverrides, overrideIssue)
+	x.investigationsByWorkState = x.investigationsByWorkState.advance(s.Investigations, workState)
+	x.queuedRuns = x.queuedRuns.advance(s.Runs, queuedRun)
 }
 
 func (s State) membershipsOfTicket(ticketID string) []string {
@@ -211,6 +233,31 @@ func (s State) runsOfTicket(ticketID string) []string {
 
 func (s State) casesOfTicket(ticketID string) []string {
 	return s.indexes.casesByTicket.lookup(s.Cases, caseTicket, ticketID)
+}
+
+// investigationsIn returns the investigations in any of the given work
+// states (see workState), ordered by ID.
+func (s State) investigationsIn(states ...string) []Investigation {
+	var ids []string
+	for _, state := range states {
+		ids = append(ids, s.indexes.investigationsByWorkState.lookup(s.Investigations, workState, state)...)
+	}
+	slices.Sort(ids)
+	rows := make([]Investigation, len(ids))
+	for i, id := range ids {
+		rows[i] = s.Investigations.Get(id)
+	}
+	return rows
+}
+
+// queuedRuns returns the queued runs, ordered by ID.
+func (s State) queuedRuns() []Run {
+	ids := s.indexes.queuedRuns.lookup(s.Runs, queuedRun, "queued")
+	rows := make([]Run, len(ids))
+	for i, id := range ids {
+		rows[i] = s.Runs.Get(id)
+	}
+	return rows
 }
 
 func (s State) investigationsWithLiveApplication() []string {
@@ -241,4 +288,6 @@ func verifyIndexes(s *State) {
 	check("retainedCasesByIssue", x.retainedCasesByIssue.buckets, buildTableIndex(s.Cases, retainedCaseIssue).buckets)
 	check("usableSolutionsByIssue", x.usableSolutionsByIssue.buckets, buildTableIndex(s.Solutions, usableSolutionIssue).buckets)
 	check("overridesByIssue", x.overridesByIssue.buckets, buildTableIndex(s.IssueOverrides, overrideIssue).buckets)
+	check("investigationsByWorkState", x.investigationsByWorkState.buckets, buildTableIndex(s.Investigations, workState).buckets)
+	check("queuedRuns", x.queuedRuns.buckets, buildTableIndex(s.Runs, queuedRun).buckets)
 }

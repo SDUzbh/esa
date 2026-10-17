@@ -27,8 +27,8 @@ func parked(task Investigation) bool {
 // engineeringActive counts reserved engineering slots, including single-call runs.
 func engineeringActive(s State) int {
 	active := 0
-	for _, task := range s.Investigations.All() {
-		if activeInvestigation(task) && (task.Phase == "investigating" || task.Phase == "") {
+	for _, task := range s.investigationsIn("running", "investigating") {
+		if task.Phase == "investigating" || task.Phase == "" {
 			active++
 		}
 	}
@@ -38,7 +38,7 @@ func engineeringActive(s State) int {
 // fairParked orders parked tasks oldest first, rotating across projects.
 func fairParked(s State) []Investigation {
 	var rows []Investigation
-	for _, task := range s.Investigations.All() {
+	for _, task := range s.investigationsIn("investigating") {
 		if parked(task) {
 			rows = append(rows, task)
 		}
@@ -56,8 +56,8 @@ func fairParked(s State) []Investigation {
 // Intake routing is serialized per project until its claim is committed. The
 // durable phase/lease is shared by all workers, including other ESA processes.
 func routingBusy(s State, project string) bool {
-	for _, task := range s.Investigations.All() {
-		if task.ProjectID == project && task.State == "running" && task.Phase == "routing" {
+	for _, task := range s.investigationsIn("running") {
+		if task.ProjectID == project && task.Phase == "routing" {
 			return true
 		}
 	}

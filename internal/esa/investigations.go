@@ -271,17 +271,24 @@ func sortedInvestigations(s State) []Investigation {
 	for _, task := range s.Investigations.All() {
 		rows = append(rows, task)
 	}
+	sortByCreation(rows)
+	return rows
+}
+
+func sortByCreation(rows []Investigation) {
 	sort.Slice(rows, func(i, j int) bool {
 		if rows[i].CreatedAt.Equal(rows[j].CreatedAt) {
 			return rows[i].ID < rows[j].ID
 		}
 		return rows[i].CreatedAt.Before(rows[j].CreatedAt)
 	})
-	return rows
 }
 
-func fairInvestigations(s State) []Investigation {
-	rows := sortedInvestigations(s)
+// fairInvestigations orders the investigations in the given work states
+// oldest first, rotating across projects.
+func fairInvestigations(s State, states ...string) []Investigation {
+	rows := s.investigationsIn(states...)
+	sortByCreation(rows)
 	rotateProjects(rows, s.LastClaimedProject)
 	return rows
 }

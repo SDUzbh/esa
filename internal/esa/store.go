@@ -247,7 +247,11 @@ func (s *Store) needsWork(now time.Time, provider bool, maxQueueWait time.Durati
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	free := engineeringActive(s.state) < EngineeringConcurrency
-	for _, task := range s.state.Investigations.All() {
+	states := []string{"queued", "running", "investigating"}
+	if provider {
+		states = append(states, "awaiting_configuration")
+	}
+	for _, task := range s.state.investigationsIn(states...) {
 		if parked(task) {
 			if provider && free || time.Since(task.WaitingSince) >= maxQueueWait {
 				return true
@@ -258,8 +262,8 @@ func (s *Store) needsWork(now time.Time, provider bool, maxQueueWait time.Durati
 			return true
 		}
 	}
-	for _, run := range s.state.Runs.All() {
-		if run.State == "queued" && (run.WorkflowVersion != WorkflowVersion || run.Input.ForwardedBy == "" || run.Input.ForwardedAt.IsZero()) {
+	for _, run := range s.state.queuedRuns() {
+		if run.WorkflowVersion != WorkflowVersion || run.Input.ForwardedBy == "" || run.Input.ForwardedAt.IsZero() {
 			return true
 		}
 	}

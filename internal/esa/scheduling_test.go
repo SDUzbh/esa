@@ -33,7 +33,7 @@ func TestSharedInvestigationsProjectRotationRetainsTaskOrder(t *testing.T) {
 	receive(t, e, "b", b)
 	s := e.Store.Snapshot()
 	s.LastClaimedProject = "1"
-	ordered := fairInvestigations(s)
+	ordered := fairInvestigations(s, "queued")
 	if ordered[0].ProjectID != "2" {
 		t.Fatal("project rotation failed")
 	}

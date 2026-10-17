@@ -2,6 +2,7 @@ package esa
 
 import (
 	"fmt"
+	"maps"
 	"net/http"
 	"sort"
 	"time"
@@ -143,9 +144,16 @@ func (api *API) solutionHistory(w http.ResponseWriter, r *http.Request) {
 		lineage[current] = true
 		current = s.Solutions.Get(current).Supersedes
 	}
-	for _, solution := range s.Solutions.All() {
+	// The investigation's own revisions plus its applied lineage, which may
+	// belong to other investigations.
+	candidates := maps.Clone(lineage)
+	for _, id := range s.solutionsOfInvestigation(task.ID) {
+		candidates[id] = true
+	}
+	for id := range candidates {
+		solution, found := s.Solutions.Lookup(id)
 		source, exists := s.Tickets.Lookup(solution.SourceTicketID)
-		if (solution.InvestigationID == task.ID || lineage[solution.ID]) && !solution.AvailableAt.After(api.Engine.Now()) && exists && !source.Private && allowed(r, source.ProjectID) && ticketAllowed(r, source.ID) {
+		if found && !solution.AvailableAt.After(api.Engine.Now()) && exists && !source.Private && allowed(r, source.ProjectID) && ticketAllowed(r, source.ID) {
 			solution.StoredFields = nil
 			rows = append(rows, solution)
 		}

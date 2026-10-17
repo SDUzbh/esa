@@ -130,6 +130,7 @@ func runTicket(r Run) string                     { return r.TicketID }
 func caseTicket(c Case) string                   { return c.TicketID }
 func overrideIssue(issueID string) string        { return issueID }
 func groupIssue(g InvestigationGroup) string     { return g.IssueID }
+func solutionTask(sol SolutionRevision) string   { return sol.InvestigationID }
 
 // workState indexes investigations a worker may still claim, run or recover
 // by their state; terminal investigations, the bulk of an archive, are not
@@ -195,6 +196,7 @@ type stateIndexes struct {
 	tentativeByIssue           tableIndex[IssueTicketLink]
 	retainedCasesByIssue       tableIndex[Case]
 	usableSolutionsByIssue     tableIndex[SolutionRevision]
+	solutionsByInvestigation   tableIndex[SolutionRevision]
 	overridesByIssue           tableIndex[string]
 	groupsByIssue              tableIndex[InvestigationGroup]
 	investigationsByWorkState  tableIndex[Investigation]
@@ -212,6 +214,7 @@ func (s *State) advanceIndexes() {
 	x.tentativeByIssue = x.tentativeByIssue.advance(s.Memberships, tentativeIssue)
 	x.retainedCasesByIssue = x.retainedCasesByIssue.advance(s.Cases, retainedCaseIssue)
 	x.usableSolutionsByIssue = x.usableSolutionsByIssue.advance(s.Solutions, usableSolutionIssue)
+	x.solutionsByInvestigation = x.solutionsByInvestigation.advance(s.Solutions, solutionTask)
 	x.overridesByIssue = x.overridesByIssue.advance(s.IssueOverrides, overrideIssue)
 	x.groupsByIssue = x.groupsByIssue.advance(s.Groups, groupIssue)
 	x.investigationsByWorkState = x.investigationsByWorkState.advance(s.Investigations, workState)
@@ -236,6 +239,10 @@ func (s State) runsOfTicket(ticketID string) []string {
 
 func (s State) casesOfTicket(ticketID string) []string {
 	return s.indexes.casesByTicket.lookup(s.Cases, caseTicket, ticketID)
+}
+
+func (s State) solutionsOfInvestigation(taskID string) []string {
+	return s.indexes.solutionsByInvestigation.lookup(s.Solutions, solutionTask, taskID)
 }
 
 // investigationsIn returns the investigations in any of the given work
@@ -290,6 +297,7 @@ func verifyIndexes(s *State) {
 	check("tentativeByIssue", x.tentativeByIssue.buckets, buildTableIndex(s.Memberships, tentativeIssue).buckets)
 	check("retainedCasesByIssue", x.retainedCasesByIssue.buckets, buildTableIndex(s.Cases, retainedCaseIssue).buckets)
 	check("usableSolutionsByIssue", x.usableSolutionsByIssue.buckets, buildTableIndex(s.Solutions, usableSolutionIssue).buckets)
+	check("solutionsByInvestigation", x.solutionsByInvestigation.buckets, buildTableIndex(s.Solutions, solutionTask).buckets)
 	check("overridesByIssue", x.overridesByIssue.buckets, buildTableIndex(s.IssueOverrides, overrideIssue).buckets)
 	check("groupsByIssue", x.groupsByIssue.buckets, buildTableIndex(s.Groups, groupIssue).buckets)
 	check("investigationsByWorkState", x.investigationsByWorkState.buckets, buildTableIndex(s.Investigations, workState).buckets)

@@ -251,6 +251,56 @@ func TestDurableStoreAndRollback(t *testing.T) {
 		t.Fatal("clone aliases live state")
 	}
 }
+
+// A ticket-scoped list visits only the scoped IDs; it must list exactly what
+// an archive-wide walk would: scoped, existing, in-project tickets.
+func TestTicketListHonorsTicketScope(t *testing.T) {
+	e := testEngine(t)
+	for _, id := range []string{"a", "b", "c", "d"} {
+		ticket := fixture(e, "redmine:"+id)
+		if id == "d" {
+			ticket.ProjectID = "2"
+		}
+		receive(t, e, id, ticket)
+	}
+	handler := (&API{Engine: e, Token: "test-token"}).Handler()
+	list := func(scopes ...string) []string {
+		req := httptest.NewRequest("GET", "/v1/tickets?sort=id&direction=asc", nil)
+		req.Header.Set("Authorization", "Bearer test-token")
+		req.Header.Set("X-ESA-Project-IDs", "1")
+		for _, scope := range scopes {
+			req.Header.Add("X-ESA-Ticket-IDs", scope)
+		}
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, req)
+		var body struct {
+			Tickets []struct {
+				Ticket Ticket `json:"ticket"`
+			} `json:"tickets"`
+			Total int `json:"total_count"`
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil || w.Code != http.StatusOK || body.Total != len(body.Tickets) {
+			t.Fatal(w.Code, w.Body.String())
+		}
+		ids := []string{}
+		for _, row := range body.Tickets {
+			ids = append(ids, row.Ticket.ID)
+		}
+		return ids
+	}
+	for _, tc := range []struct {
+		scopes []string
+		want   string
+	}{
+		{nil, "redmine:a,redmine:b,redmine:c"},
+		{[]string{"redmine:c,redmine:missing,redmine:a,redmine:c", "redmine:d"}, "redmine:a,redmine:c"},
+		{[]string{"none"}, ""},
+	} {
+		if got := strings.Join(list(tc.scopes...), ","); got != tc.want {
+			t.Fatalf("scope %q listed %q, want %q", tc.scopes, got, tc.want)
+		}
+	}
+}
 func TestAPIAuthenticationScopeFilteringAndVisibility(t *testing.T) {
 	e := testEngine(t)
 	first := fixture(e, "redmine:1")

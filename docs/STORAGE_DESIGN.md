@@ -368,6 +368,7 @@ Each State map is a `Table[V]` (`internal/esa/table.go`), a persistent hash arra
 | tentative memberships, retained cases, usable solutions, overrides, groups, each by Issue | Issue retention and removal, solution publishing, the Issue list, membership review |
 | investigations by Issue, with a live application | canonical solution, application invalidation |
 | runs by ticket, cases by ticket | ticket GET |
+| solutions by investigation | solution history |
 | investigations by work state (queued, running, investigating, awaiting configuration), queued runs | lease recovery, parked settlement, slot counting, routing, fair ordering, the idle check |
 
 Each index records the table version it was built from. A lookup adds the keys that changed since then (`diffTable`, O(changes)) and filters by current values, so it stays exact in the middle of an `Update`. After each commit the store advances every index by the changes. A State without indexes (decoded, or a test literal) falls back to a scan.
@@ -412,13 +413,25 @@ Real archive, all 19,869 Kafka issues through `parseJira` and `Receive` into Pos
 
 The trie nodes and indexes add about 3% to the live heap.
 
+### List endpoints
+
+The plugin's ESA index page calls `GET /v1/tickets` with no query parameters (sort `updated_at` desc, page 1 of 25) and always scopes it with `X-ESA-Ticket-IDs`: the viewer's visible issues, at most 2,000. The list walked the whole archive anyway, and `ticketAllowed` re-split the 2,000-ID header for every ticket. Now `Handler` parses both scope headers once per request into sets, and a ticket-scoped list looks up just the scoped IDs, so it costs O(scope). Solution history visits the investigation's own revisions (the by-investigation index) plus its applied lineage.
+
+`BenchmarkTicketsList` and `BenchmarkSolutionHistory`, same machine, median of three. "Scoped" sends the plugin's 2,000 IDs spread over the archive; solution history has one solution per ticket:
+
+| | before 1k | before 10k | before 100k | now 1k | now 10k | now 100k |
+|---|---|---|---|---|---|---|
+| `GET /v1/tickets`, scoped (the plugin) | 13 ms | 208 ms | 1.83 s | 2.2 ms | 3.8 ms | 5.3 ms |
+| `GET /v1/tickets`, unscoped | 3.4 ms | 41 ms | 592 ms | 1.6 ms | 19 ms | 251 ms |
+| Solution history | 0.13 ms | 2.2 ms | 70 ms | 0.07 ms | 0.10 ms | 0.10 ms |
+
 ### Still proportional to the archive
 
 These remain O(N), off the per-write path or on rare events:
 
 - `issueRecords`, once per analysis. It reconstructs the directory as of the task's observation cutoff, which includes finished investigations.
 - `withdrawSourceSolutions` on a reopened ticket, and withdrawal when a ticket becomes private.
-- `GET /v1/tickets` and solution history, which filter whole tables. They read a `Snapshot` outside the write lock.
+- `GET /v1/tickets` without `X-ESA-Ticket-IDs`, which the plugin never sends: about 2.5 µs per ticket, outside the write lock. A scoped list is O(scope).
 - Startup, which loads the hot set and builds the indexes once.
 
 ## Postgres only

@@ -34,12 +34,34 @@ func prepareInvestigations(s *State) {
 		s.Solutions = map[string]SolutionRevision{}
 	}
 }
-func captureSnapshot(s *State, event Event) {
+
+// captureSnapshot stores the event's ticket as an immutable snapshot and
+// returns its ID.
+func captureSnapshot(s *State, event Event) string {
 	prepareInvestigations(s)
-	id := "snapshot_" + hash(event.ID)
+	id := snapshotIDFor(event.ID)
 	t := event.Ticket
 	s.Snapshots[id] = TicketSnapshot{ID: id, Hash: hash(t), EventID: event.ID, Ticket: t, EffectiveAt: t.UpdatedAt, AvailableAt: event.ForwardedAt, RecordedAt: time.Now().UTC(), Cutoff: event.ForwardedAt}
 	s.LatestSnapshot[t.ID] = id
+	return id
+}
+
+func snapshotIDFor(eventID string) string { return "snapshot_" + hash(eventID) }
+
+// compactLegacyEvents drops the ticket copy from loaded events whose own
+// snapshot holds the identical ticket. Events without a snapshot, or whose copy
+// differs from it, keep their ticket, so nothing is lost.
+func compactLegacyEvents(s *State) {
+	for id, r := range s.Events {
+		if r.Ticket == nil || r.SnapshotID != "" {
+			continue
+		}
+		snapID := snapshotIDFor(id)
+		if snap, ok := s.Snapshots[snapID]; ok && snap.EventID == id && snap.Hash == r.TicketHash {
+			r.SnapshotID, r.Ticket = snapID, nil
+			s.Events[id] = r
+		}
+	}
 }
 
 // Conservative operational deduplication: exact diagnostic content and exact

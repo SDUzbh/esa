@@ -67,6 +67,7 @@ func (s *Store) refreshLocked() error {
 	if err = validateState(state); err != nil {
 		return err
 	}
+	compactLegacyEvents(&state)
 	if revision >= s.revision {
 		s.state, s.revision = state, revision
 		s.publishLocked(nil)
@@ -88,6 +89,7 @@ func newStore(p Persister) (*Store, error) {
 	if err = validateState(state); err != nil {
 		return nil, err
 	}
+	compactLegacyEvents(&state)
 	s := &Store{state: state, persister: p, revision: revision}
 	s.publishLocked(nil)
 	return s, nil

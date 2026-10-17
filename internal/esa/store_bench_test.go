@@ -59,7 +59,7 @@ func seedClosedTickets(b *testing.B, n int) *Engine {
 			ticket := s.Tickets["K-0"]
 			ticket.ID, ticket.SourceKey = ticketID, ticketID
 			s.Tickets[ticketID] = ticket
-			event.ID, event.Ticket = eventID, ticket
+			event.ID, event.TicketID, event.TicketHash, event.SnapshotID = eventID, ticketID, hash(ticket), snapshotIDFor(eventID)
 			s.Events[eventID] = event
 			snapshot.ID, snapshot.EventID, snapshot.Ticket, snapshot.Hash = "snapshot_"+hash(eventID), eventID, ticket, hash(ticket)
 			s.Snapshots[snapshot.ID] = snapshot

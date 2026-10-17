@@ -7,6 +7,7 @@ import (
 	"iter"
 	"math/bits"
 	"slices"
+	"strings"
 )
 
 // Table is a persistent string-keyed map, a hash array mapped trie (HAMT).
@@ -144,24 +145,36 @@ func (t Table[V]) Keys() []string {
 
 // MarshalJSON writes the object json.Marshal writes for map[string]V: keys
 // sorted, each key and value encoded by encoding/json.
+// sortedEntries returns the entries ordered by key, in one walk.
+func (t Table[V]) sortedEntries() []tableEntry[V] {
+	entries := make([]tableEntry[V], 0, t.size)
+	for k, v := range t.All() {
+		entries = append(entries, tableEntry[V]{k, v})
+	}
+	slices.SortFunc(entries, func(a, b tableEntry[V]) int { return strings.Compare(a.key, b.key) })
+	return entries
+}
+
 func (t Table[V]) MarshalJSON() ([]byte, error) {
+	entries := t.sortedEntries()
+	// One Encoder streams every key and value into buf; it escapes exactly
+	// as json.Marshal does. Encode ends each value with a newline, dropped here.
 	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
 	buf.WriteByte('{')
-	for i, k := range t.Keys() {
+	for i := range entries {
 		if i > 0 {
 			buf.WriteByte(',')
 		}
-		key, err := json.Marshal(k)
-		if err != nil {
+		if err := enc.Encode(entries[i].key); err != nil {
 			return nil, err
 		}
-		val, err := json.Marshal(t.Get(k))
-		if err != nil {
-			return nil, err
-		}
-		buf.Write(key)
+		buf.Truncate(buf.Len() - 1)
 		buf.WriteByte(':')
-		buf.Write(val)
+		if err := enc.Encode(entries[i].val); err != nil {
+			return nil, err
+		}
+		buf.Truncate(buf.Len() - 1)
 	}
 	buf.WriteByte('}')
 	return buf.Bytes(), nil

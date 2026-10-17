@@ -159,7 +159,7 @@ func TestTableDiffAfterManyChanges(t *testing.T) {
 }
 
 func TestTableJSONMatchesMapEncoding(t *testing.T) {
-	m := map[string]tableValue{"b": {N: 2, Tags: []string{"x"}}, "a": {N: 1}, "<&>": {Text: "html   chars"}, "": {}}
+	m := map[string]tableValue{"b": {N: 2, Tags: []string{"x"}}, "a": {N: 1}, "<&>": {Text: "<b>html   & chars</b>"}, "": {}}
 	want, _ := json.Marshal(m)
 	got, err := json.Marshal(TableOf(m))
 	if err != nil || string(got) != string(want) {

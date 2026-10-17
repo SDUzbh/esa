@@ -77,6 +77,34 @@ func (x tableIndex[V]) lookup(current Table[V], key func(V) string, k string) []
 	return ids
 }
 
+// exists reports whether some ID whose value in current has key k also
+// satisfies ok. It stops at the first match instead of collecting the bucket.
+func (x tableIndex[V]) exists(current Table[V], key func(V) string, k string, ok func(V) bool) bool {
+	match := func(id string) bool {
+		v, found := current.Lookup(id)
+		return found && key(v) == k && ok(v)
+	}
+	if !x.built {
+		for _, v := range current.All() {
+			if key(v) == k && ok(v) {
+				return true
+			}
+		}
+		return false
+	}
+	for id := range x.buckets.Get(k).All() {
+		if match(id) {
+			return true
+		}
+	}
+	for _, id := range diffTable(x.base, current).Upserted {
+		if match(id) {
+			return true
+		}
+	}
+	return false
+}
+
 // advance returns the index rebuilt incrementally for current.
 func (x tableIndex[V]) advance(current Table[V], key func(V) string) tableIndex[V] {
 	if !x.built {
@@ -100,6 +128,31 @@ func linkInvestigation(l IssueTicketLink) string { return l.InvestigationID }
 func taskIssue(t Investigation) string           { return t.IssueID }
 func runTicket(r Run) string                     { return r.TicketID }
 func caseTicket(c Case) string                   { return c.TicketID }
+func overrideIssue(issueID string) string        { return issueID }
+
+// tentativeIssue, retainedCaseIssue and usableSolutionIssue index the records
+// that can keep an Issue alive, judged by their own fields; Issue retention
+// checks the ticket-dependent conditions at lookup time.
+func tentativeIssue(l IssueTicketLink) string {
+	if l.State != "tentative" {
+		return ""
+	}
+	return l.IssueID
+}
+
+func retainedCaseIssue(c Case) string {
+	if c.State == "invalidated" || c.State == "duplicate" || c.State == "archived" {
+		return ""
+	}
+	return c.IssueID
+}
+
+func usableSolutionIssue(sol SolutionRevision) string {
+	if sol.State != "proposed" && sol.State != "trusted" {
+		return ""
+	}
+	return sol.IssueID
+}
 
 // taskLiveApplication indexes investigations whose solution application can
 // still be withdrawn.
@@ -120,6 +173,10 @@ type stateIndexes struct {
 	liveApplications           tableIndex[Investigation]
 	runsByTicket               tableIndex[Run]
 	casesByTicket              tableIndex[Case]
+	tentativeByIssue           tableIndex[IssueTicketLink]
+	retainedCasesByIssue       tableIndex[Case]
+	usableSolutionsByIssue     tableIndex[SolutionRevision]
+	overridesByIssue           tableIndex[string]
 }
 
 func (s *State) advanceIndexes() {
@@ -130,6 +187,10 @@ func (s *State) advanceIndexes() {
 	x.liveApplications = x.liveApplications.advance(s.Investigations, taskLiveApplication)
 	x.runsByTicket = x.runsByTicket.advance(s.Runs, runTicket)
 	x.casesByTicket = x.casesByTicket.advance(s.Cases, caseTicket)
+	x.tentativeByIssue = x.tentativeByIssue.advance(s.Memberships, tentativeIssue)
+	x.retainedCasesByIssue = x.retainedCasesByIssue.advance(s.Cases, retainedCaseIssue)
+	x.usableSolutionsByIssue = x.usableSolutionsByIssue.advance(s.Solutions, usableSolutionIssue)
+	x.overridesByIssue = x.overridesByIssue.advance(s.IssueOverrides, overrideIssue)
 }
 
 func (s State) membershipsOfTicket(ticketID string) []string {
@@ -176,4 +237,8 @@ func verifyIndexes(s *State) {
 	check("liveApplications", x.liveApplications.buckets, buildTableIndex(s.Investigations, taskLiveApplication).buckets)
 	check("runsByTicket", x.runsByTicket.buckets, buildTableIndex(s.Runs, runTicket).buckets)
 	check("casesByTicket", x.casesByTicket.buckets, buildTableIndex(s.Cases, caseTicket).buckets)
+	check("tentativeByIssue", x.tentativeByIssue.buckets, buildTableIndex(s.Memberships, tentativeIssue).buckets)
+	check("retainedCasesByIssue", x.retainedCasesByIssue.buckets, buildTableIndex(s.Cases, retainedCaseIssue).buckets)
+	check("usableSolutionsByIssue", x.usableSolutionsByIssue.buckets, buildTableIndex(s.Solutions, usableSolutionIssue).buckets)
+	check("overridesByIssue", x.overridesByIssue.buckets, buildTableIndex(s.IssueOverrides, overrideIssue).buckets)
 }

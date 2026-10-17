@@ -1,6 +1,9 @@
 package esa
 
 import (
+	"bytes"
+	"encoding/json"
+	"slices"
 	"sort"
 	"time"
 )
@@ -53,60 +56,110 @@ func touchTicketIssue(s *State, id string, at time.Time) {
 	}
 }
 
+// issueRetentionReference, when set (by tests), is a scanning implementation
+// of maintainIssues that the guard runs on a copy and compares with the result.
+var issueRetentionReference func(*State, time.Time) bool
+
 // maintainIssues removes empty Issues, then evicts by durable least-recent access.
 // It detaches current associations while preserving immutable snapshots and reports.
+// Issues are capped at IssueLimit, so it walks Issues and asks the by-Issue
+// indexes for one record that keeps each alive, never the whole archive.
 func maintainIssues(s *State, at time.Time) bool {
 	if s.Issues.Len() == 0 {
 		return false
 	}
-	live := map[string]bool{}
-	assigned := map[string]string{}
-	for _, link := range s.Memberships.All() {
-		t, ok := s.Tickets.Lookup(link.TicketID)
-		if !ok || t.Private || link.State != "tentative" || link.IssueID == "" {
-			continue
-		}
-		live[link.IssueID] = true
-		assigned[t.ID] = link.IssueID
+	if !guardPublishedState || issueRetentionReference == nil {
+		return maintainIndexedIssues(s, at)
 	}
-	for _, c := range s.Cases.All() {
-		t, ok := s.Tickets.Lookup(c.TicketID)
-		if ok && !t.Private && t.Closed && c.State != "invalidated" && c.State != "duplicate" && c.State != "archived" {
-			live[c.IssueID] = true
-		}
+	ref := s.detach()
+	ref.MembershipHistory, ref.CaseHistory = slices.Clip(ref.MembershipHistory), slices.Clip(ref.CaseHistory)
+	wantRemoved := issueRetentionReference(&ref, at)
+	removed := maintainIndexedIssues(s, at)
+	got, _ := json.Marshal(*s)
+	want, _ := json.Marshal(ref)
+	if removed != wantRemoved || !bytes.Equal(got, want) {
+		panic("esa: indexed Issue retention diverged from the full scan")
 	}
-	// A usable analysis still has a source ticket while an explicit replacement
-	// task is unassigned. Do not erase that knowledge before routing can reuse it.
-	for _, sol := range s.Solutions.All() {
-		if live[sol.IssueID] || s.Investigations.Get(sol.InvestigationID).SolutionID != sol.ID || sol.State != "proposed" && sol.State != "trusted" {
-			continue
-		}
-		t, ok := s.Tickets.Lookup(sol.SourceTicketID)
-		run := s.Runs.Get(sol.RunID)
-		if !ok || t.Private || t.Closed || run.TicketID != t.ID || investigationSignature(run.Input) != investigationSignature(t) {
-			continue
-		}
-		primary := assigned[t.ID]
-		if override := s.IssueOverrides.Get(t.ID); override != "" {
-			primary = override
-		}
-		if primary == "" || primary == sol.IssueID {
-			live[sol.IssueID] = true
-		}
-	}
-	removed := false
-	for id, issue := range s.Issues.All() {
+	return removed
+}
+
+func maintainIndexedIssues(s *State, at time.Time) bool {
+	// Decide every Issue's liveness before removing any: a removal detaches
+	// memberships, which must not change another Issue's verdict.
+	var dead []string
+	for _, id := range s.Issues.Keys() {
+		issue := s.Issues.Get(id)
 		if issue.AccessOrder > s.IssueAccessSequence {
 			s.IssueAccessSequence = issue.AccessOrder
 		}
-		if !live[id] {
-			removeIssue(s, id, "empty", at)
-			removed = true
+		if !issueLive(*s, id) {
+			dead = append(dead, id)
 		}
 	}
+	for _, id := range dead {
+		removeIssue(s, id, "empty", at)
+	}
+	removed := len(dead) > 0
 	if s.Issues.Len() <= IssueLimit {
 		return removed
 	}
+	for _, issue := range leastRecentIssues(*s) {
+		removeIssue(s, issue.ID, "least recently used", at)
+	}
+	return true
+}
+
+// issueLive reports whether a current membership, a closed ticket's case, or
+// a still-usable analysis keeps the Issue.
+func issueLive(s State, id string) bool {
+	x := s.indexes
+	visible := func(ticketID string) (Ticket, bool) {
+		t, ok := s.Tickets.Lookup(ticketID)
+		return t, ok && !t.Private
+	}
+	if x.tentativeByIssue.exists(s.Memberships, tentativeIssue, id, func(link IssueTicketLink) bool {
+		_, ok := visible(link.TicketID)
+		return ok
+	}) {
+		return true
+	}
+	if x.retainedCasesByIssue.exists(s.Cases, retainedCaseIssue, id, func(c Case) bool {
+		t, ok := visible(c.TicketID)
+		return ok && t.Closed
+	}) {
+		return true
+	}
+	// A usable analysis still has a source ticket while an explicit replacement
+	// task is unassigned. Do not erase that knowledge before routing can reuse it.
+	return x.usableSolutionsByIssue.exists(s.Solutions, usableSolutionIssue, id, func(sol SolutionRevision) bool {
+		return keepsIssue(s, sol)
+	})
+}
+
+// keepsIssue is the analysis condition of issueLive for a proposed or
+// trusted solution.
+func keepsIssue(s State, sol SolutionRevision) bool {
+	if s.Investigations.Get(sol.InvestigationID).SolutionID != sol.ID {
+		return false
+	}
+	t, ok := s.Tickets.Lookup(sol.SourceTicketID)
+	run := s.Runs.Get(sol.RunID)
+	if !ok || t.Private || t.Closed || run.TicketID != t.ID || investigationSignature(run.Input) != investigationSignature(t) {
+		return false
+	}
+	var primary string
+	if link, ok := activeMembership(s, t.ID); ok {
+		primary = link.IssueID
+	}
+	if override := s.IssueOverrides.Get(t.ID); override != "" {
+		primary = override
+	}
+	return primary == "" || primary == sol.IssueID
+}
+
+// leastRecentIssues returns the Issues beyond IssueLimit, least recently
+// accessed first.
+func leastRecentIssues(s State) []EngineeringIssue {
 	issues := make([]EngineeringIssue, 0, s.Issues.Len())
 	for _, issue := range s.Issues.All() {
 		issues = append(issues, issue)
@@ -121,26 +174,23 @@ func maintainIssues(s *State, at time.Time) bool {
 		}
 		return a.ID < b.ID
 	})
-	for _, issue := range issues[:len(issues)-IssueLimit] {
-		removeIssue(s, issue.ID, "least recently used", at)
-	}
-	return true
+	return issues[:len(issues)-IssueLimit]
 }
 
 func removeIssue(s *State, id, reason string, at time.Time) {
 	s.Issues.Delete(id)
-	for key, link := range s.Memberships.All() {
-		if link.IssueID != id || link.State != "tentative" {
-			continue
-		}
-		link.State, link.Basis, link.AvailableAt = "detached", "Issue removed: "+reason, at
-		link.Version++
-		s.Memberships.Put(key, link)
-		s.MembershipHistory = append(s.MembershipHistory, link)
+	for _, key := range s.indexes.tentativeByIssue.lookup(s.Memberships, tentativeIssue, id) {
+		detachForRemovedIssue(s, key, reason, at)
 	}
-	for ticket, issue := range s.IssueOverrides.All() {
-		if issue == id {
-			s.IssueOverrides.Delete(ticket)
-		}
+	for _, ticket := range s.indexes.overridesByIssue.lookup(s.IssueOverrides, overrideIssue, id) {
+		s.IssueOverrides.Delete(ticket)
 	}
+}
+
+func detachForRemovedIssue(s *State, key, reason string, at time.Time) {
+	link := s.Memberships.Get(key)
+	link.State, link.Basis, link.AvailableAt = "detached", "Issue removed: "+reason, at
+	link.Version++
+	s.Memberships.Put(key, link)
+	s.MembershipHistory = append(s.MembershipHistory, link)
 }

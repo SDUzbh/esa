@@ -235,3 +235,37 @@ func TestEvictionDuringAnalysisCannotRestoreIssue(t *testing.T) {
 		t.Fatal("stale analysis restored an evicted issue")
 	}
 }
+
+// An open source ticket's usable analysis keeps its Issue unless the ticket
+// is now assigned elsewhere; an override naming the same Issue keeps it too.
+func TestUsableAnalysisKeepsIssueUnlessReassigned(t *testing.T) {
+	at := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	for _, tc := range []struct {
+		override string
+		kept     bool
+	}{{"", true}, {"issue_a", true}, {"issue_b", false}} {
+		for _, indexed := range []bool{false, true} {
+			var s State
+			ticket := Ticket{ID: "t1", ProjectID: "p", Subject: "Broken export"}
+			s.Tickets.Put(ticket.ID, ticket)
+			s.Runs.Put("r1", Run{ID: "r1", TicketID: ticket.ID, Input: ticket})
+			s.Investigations.Put("i1", Investigation{ID: "i1", SolutionID: "s1"})
+			s.Solutions.Put("s1", SolutionRevision{ID: "s1", IssueID: "issue_a", InvestigationID: "i1", RunID: "r1", SourceTicketID: ticket.ID, State: "proposed"})
+			for _, id := range []string{"issue_a", "issue_b"} {
+				s.Issues.Put(id, EngineeringIssue{ID: id, CreatedAt: at})
+			}
+			s.Memberships.Put("m_b", IssueTicketLink{ID: "m_b", IssueID: "issue_b", TicketID: "t2", State: "tentative"})
+			s.Tickets.Put("t2", Ticket{ID: "t2", ProjectID: "p"})
+			if tc.override != "" {
+				s.IssueOverrides.Put(ticket.ID, tc.override)
+			}
+			if indexed {
+				s.advanceIndexes()
+			}
+			maintainIssues(&s, at)
+			if _, kept := s.Issues.Lookup("issue_a"); kept != tc.kept {
+				t.Fatalf("override %q, indexed %v: issue kept = %v, want %v", tc.override, indexed, kept, tc.kept)
+			}
+		}
+	}
+}

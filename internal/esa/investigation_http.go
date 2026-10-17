@@ -281,7 +281,12 @@ func (api *API) reviewSolution(w http.ResponseWriter, r *http.Request) {
 }
 func (api *API) snapshot(w http.ResponseWriter, r *http.Request) {
 	s := api.Engine.Store.Snapshot()
-	snap, ok := s.Snapshots[r.PathValue("id")]
+	// Snapshots that nothing in memory references may live only in storage.
+	snap, ok, err := api.Engine.Store.LookupSnapshot(r.Context(), r.PathValue("id"))
+	if err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "Snapshot storage is unavailable."})
+		return
+	}
 	current := s.Tickets[snap.Ticket.ID]
 	if !ok || snap.Ticket.Private || current.Private || !allowed(r, snap.Ticket.ProjectID) || !ticketAllowed(r, snap.Ticket.ID) || snap.AvailableAt.After(api.Engine.Now()) {
 		writeError(w, ErrNotFound)

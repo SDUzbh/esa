@@ -12,6 +12,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -46,8 +47,12 @@ type PostgresPersister struct {
 	timeout     time.Duration
 	conn        *pgx.Conn // data; used under Store.mu, one Apply at a time
 	lock        *pgx.Conn // holds the advisory lock; used by AcquireWriter and CheckLock
-	lockPID     uint32
-	term        uint64
+	// reads serves cold reads from request handlers, which run outside
+	// Store.mu; connected on first use.
+	readMu  sync.Mutex
+	reads   *pgx.Conn
+	lockPID uint32
+	term    uint64
 	// membershipBase counts membership history rows that exist in the
 	// database but are not loaded; appended rows continue after them.
 	membershipBase int64
@@ -98,6 +103,41 @@ func (p *PostgresPersister) Close() {
 	if p.lock != nil {
 		p.lock.Close(ctx)
 	}
+	p.readMu.Lock()
+	defer p.readMu.Unlock()
+	if p.reads != nil {
+		p.reads.Close(ctx)
+	}
+}
+
+// ReadSnapshot reads one stored snapshot, including one that is not loaded
+// into memory. It does not load it into the Store. Snapshots are immutable, so
+// the read needs no transaction with the writer.
+func (p *PostgresPersister) ReadSnapshot(ctx context.Context, id string) (TicketSnapshot, bool, error) {
+	p.readMu.Lock()
+	defer p.readMu.Unlock()
+	ctx, cancel := context.WithTimeout(ctx, p.timeout)
+	defer cancel()
+	if p.reads == nil || p.reads.IsClosed() {
+		conn, err := pgx.Connect(ctx, p.url)
+		if err != nil {
+			return TicketSnapshot{}, false, err
+		}
+		p.reads = conn
+	}
+	var payload []byte
+	err := p.reads.QueryRow(ctx, "SELECT payload FROM "+p.table("snapshots")+" WHERE id = $1", id).Scan(&payload)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return TicketSnapshot{}, false, nil
+	}
+	if err != nil {
+		return TicketSnapshot{}, false, err
+	}
+	var snap TicketSnapshot
+	if err = json.Unmarshal(payload, &snap); err != nil {
+		return TicketSnapshot{}, false, fmt.Errorf("snapshot %s: %w", id, err)
+	}
+	return snap, true, nil
 }
 
 func (p *PostgresPersister) table(name string) string {

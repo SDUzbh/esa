@@ -2,6 +2,7 @@ package esa
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -27,6 +28,25 @@ type Store struct {
 	lost   func(error)
 	wakeMu sync.Mutex
 	wake   chan struct{}
+}
+
+// coldSnapshotReader is implemented by persisters that keep some snapshots
+// out of memory.
+type coldSnapshotReader interface {
+	ReadSnapshot(ctx context.Context, id string) (TicketSnapshot, bool, error)
+}
+
+// LookupSnapshot returns a snapshot from memory or, when the persister keeps
+// unreferenced snapshots out of memory, from storage. It never loads the
+// snapshot into memory and is safe to call outside Update.
+func (s *Store) LookupSnapshot(ctx context.Context, id string) (TicketSnapshot, bool, error) {
+	if snap, ok := s.Snapshot().Snapshots[id]; ok {
+		return snap, true, nil
+	}
+	if r, ok := s.persister.(coldSnapshotReader); ok {
+		return r.ReadSnapshot(ctx, id)
+	}
+	return TicketSnapshot{}, false, nil
 }
 
 // OnLostWriter registers fn to run once, in its own goroutine, when a commit

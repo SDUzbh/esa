@@ -83,9 +83,10 @@ func (api *API) reviewMembership(w http.ResponseWriter, r *http.Request) {
 	if review.IssueID != "" {
 		visible := false
 		state := api.Engine.Store.Snapshot()
-		for _, link := range state.Memberships.All() {
+		for _, key := range state.indexes.tentativeByIssue.lookup(state.Memberships, tentativeIssue, review.IssueID) {
+			link := state.Memberships.Get(key)
 			member, exists := state.Tickets.Lookup(link.TicketID)
-			visible = visible || exists && !member.Private && member.ProjectID == t.ProjectID && link.IssueID == review.IssueID && link.State == "tentative" && ticketAllowed(r, link.TicketID)
+			visible = visible || exists && !member.Private && member.ProjectID == t.ProjectID && ticketAllowed(r, link.TicketID)
 		}
 		if !visible {
 			writeError(w, ErrNotFound)
@@ -195,9 +196,10 @@ func (api *API) engineeringIssues(w http.ResponseWriter, r *http.Request) {
 		}
 		ids := map[string]bool{}
 		title := ""
-		for _, link := range s.Memberships.All() {
+		for _, key := range s.indexes.tentativeByIssue.lookup(s.Memberships, tentativeIssue, issue.ID) {
+			link := s.Memberships.Get(key)
 			t, ok := s.Tickets.Lookup(link.TicketID)
-			if link.IssueID == issue.ID && link.State == "tentative" && ok && !t.Private && ticketAllowed(r, t.ID) {
+			if ok && !t.Private && ticketAllowed(r, t.ID) {
 				ids[t.ID] = true
 				if title == "" || t.ID < title {
 					title = t.ID

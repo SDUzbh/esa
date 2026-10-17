@@ -234,3 +234,62 @@ func TestSharedInvestigationsReplayClockAndFutureCaseIsolation(t *testing.T) {
 		t.Fatal("clock scope bypassed", out.Code)
 	}
 }
+
+// The Issue list reports the state of the Issue's current investigation, and
+// a membership review may name only an Issue with a visible tentative member.
+func TestIssueListStateAndReviewTargetVisibility(t *testing.T) {
+	e := sharedInvestigationEngine(t)
+	receive(t, e, "owner-event", fixture(e, "owner"))
+	e.ProcessOne(context.Background(), analyzerFunc(func(context.Context, AnalyzeRequest) (Report, error) { return diagnosticReport(), nil }))
+	other := fixture(e, "other")
+	other.Description = "Different NullPointerException while validating a configuration"
+	receive(t, e, "other-event", other)
+	s := e.Store.Snapshot()
+	link, _ := activeMembership(s, "owner")
+	want := ""
+	for _, group := range s.Groups.All() {
+		if group.IssueID == link.IssueID {
+			want = s.Investigations.Get(group.CurrentTaskID).State
+		}
+	}
+	if link.IssueID == "" || want == "" || want == "tentative" {
+		t.Fatalf("analysis left Issue %q with group state %q", link.IssueID, want)
+	}
+	w := classifierRequest(e, "GET", "/v1/engineering-issues", "", "1", "owner,other")
+	var list struct {
+		Issues []struct {
+			Issue EngineeringIssue `json:"issue"`
+		} `json:"issues"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &list); err != nil || len(list.Issues) != 1 || list.Issues[0].Issue.State != want {
+		t.Fatalf("issue list = %s, want state %q", w.Body, want)
+	}
+
+	target, _ := activeMembership(s, "other")
+	body, _ := json.Marshal(MembershipReview{ExpectedMembershipID: target.ID, ExpectedSnapshotID: s.LatestSnapshot.Get("other"), IssueID: link.IssueID, Reviewer: "engineer", Reason: "Same cause"})
+	review := func() int {
+		return classifierRequest(e, "POST", "/v1/tickets/other/membership/review", string(body), "1", "owner,other").Code
+	}
+	if err := e.Store.Update(func(s *State) error {
+		owner := s.Tickets.Get("owner")
+		owner.Private = true
+		s.Tickets.Put(owner.ID, owner)
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if code := review(); code != 404 {
+		t.Fatalf("review into an Issue whose only member is private: %d, want 404", code)
+	}
+	if err := e.Store.Update(func(s *State) error {
+		owner := s.Tickets.Get("owner")
+		owner.Private = false
+		s.Tickets.Put(owner.ID, owner)
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if code := review(); code == 404 {
+		t.Fatal("review into a visible Issue was hidden")
+	}
+}

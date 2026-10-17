@@ -65,13 +65,13 @@ func projectRun(s *State, task Investigation) {
 // onto the family and accidentally mark unrelated investigations as repaired.
 func issueState(s State, id string, visible map[string]bool) string {
 	state := ""
-	for _, group := range s.Groups.All() {
-		if group.IssueID != id {
-			continue
-		}
+	links := s.indexes.tentativeByIssue.lookup(s.Memberships, tentativeIssue, id)
+	for _, key := range s.indexes.groupsByIssue.lookup(s.Groups, groupIssue, id) {
+		group := s.Groups.Get(key)
 		allowed := false
-		for _, link := range s.Memberships.All() {
-			allowed = allowed || link.IssueID == id && link.InvestigationID == group.CurrentTaskID && link.State == "tentative" && visible[link.TicketID]
+		for _, key := range links {
+			link := s.Memberships.Get(key)
+			allowed = allowed || link.InvestigationID == group.CurrentTaskID && visible[link.TicketID]
 		}
 		if !allowed {
 			continue

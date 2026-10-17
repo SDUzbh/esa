@@ -129,6 +129,7 @@ func taskIssue(t Investigation) string           { return t.IssueID }
 func runTicket(r Run) string                     { return r.TicketID }
 func caseTicket(c Case) string                   { return c.TicketID }
 func overrideIssue(issueID string) string        { return issueID }
+func groupIssue(g InvestigationGroup) string     { return g.IssueID }
 
 // workState indexes investigations a worker may still claim, run or recover
 // by their state; terminal investigations, the bulk of an archive, are not
@@ -195,6 +196,7 @@ type stateIndexes struct {
 	retainedCasesByIssue       tableIndex[Case]
 	usableSolutionsByIssue     tableIndex[SolutionRevision]
 	overridesByIssue           tableIndex[string]
+	groupsByIssue              tableIndex[InvestigationGroup]
 	investigationsByWorkState  tableIndex[Investigation]
 	queuedRuns                 tableIndex[Run]
 }
@@ -211,6 +213,7 @@ func (s *State) advanceIndexes() {
 	x.retainedCasesByIssue = x.retainedCasesByIssue.advance(s.Cases, retainedCaseIssue)
 	x.usableSolutionsByIssue = x.usableSolutionsByIssue.advance(s.Solutions, usableSolutionIssue)
 	x.overridesByIssue = x.overridesByIssue.advance(s.IssueOverrides, overrideIssue)
+	x.groupsByIssue = x.groupsByIssue.advance(s.Groups, groupIssue)
 	x.investigationsByWorkState = x.investigationsByWorkState.advance(s.Investigations, workState)
 	x.queuedRuns = x.queuedRuns.advance(s.Runs, queuedRun)
 }
@@ -288,6 +291,7 @@ func verifyIndexes(s *State) {
 	check("retainedCasesByIssue", x.retainedCasesByIssue.buckets, buildTableIndex(s.Cases, retainedCaseIssue).buckets)
 	check("usableSolutionsByIssue", x.usableSolutionsByIssue.buckets, buildTableIndex(s.Solutions, usableSolutionIssue).buckets)
 	check("overridesByIssue", x.overridesByIssue.buckets, buildTableIndex(s.IssueOverrides, overrideIssue).buckets)
+	check("groupsByIssue", x.groupsByIssue.buckets, buildTableIndex(s.Groups, groupIssue).buckets)
 	check("investigationsByWorkState", x.investigationsByWorkState.buckets, buildTableIndex(s.Investigations, workState).buckets)
 	check("queuedRuns", x.queuedRuns.buckets, buildTableIndex(s.Runs, queuedRun).buckets)
 }

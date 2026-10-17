@@ -177,10 +177,20 @@ func (s *Store) updateLocked(fn func(*State) error) error {
 		return err
 	}
 	projectInvestigationStates(&next)
+	// Only changed entities differ from the published state; when nothing
+	// changed, skip encoding the whole state. In tests the guard re-derives
+	// every change from JSON encodings and panics if the diff missed one.
+	changes := diffState(&s.state, &next)
+	verifyChanges(&s.state, &next, changes)
+	if changes.Empty() {
+		return nil
+	}
 	updated, err := json.Marshal(next)
 	if err != nil {
 		return err
 	}
+	// A replaced entity with equal content is reported as changed; keep
+	// skipping writes whose encoding is unchanged, exactly as before.
 	if bytes.Equal(s.encoded, updated) {
 		return nil
 	}

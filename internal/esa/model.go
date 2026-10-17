@@ -338,4 +338,6 @@ type State struct {
 	Latest                Table[string]               `json:"latest"`
 	Cases                 Table[Case]                 `json:"cases"`
 	CaseHistory           []Case                      `json:"case_history"`
+	// indexes are derived lookups, never persisted (see stateIndexes).
+	indexes stateIndexes
 }

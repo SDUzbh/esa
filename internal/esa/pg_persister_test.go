@@ -174,12 +174,19 @@ func TestPostgresTablesCoverEveryMap(t *testing.T) {
 		names[table.name] = true
 	}
 	typ := reflect.TypeOf(State{})
+	tables := 0
 	for i := 0; i < typ.NumField(); i++ {
 		f := typ.Field(i)
 		name := strings.Split(f.Tag.Get("json"), ",")[0]
-		if f.Type.Kind() == reflect.Map && name != "-" && !names[name] {
-			t.Errorf("State.%s (%s) has no Postgres table", f.Name, name)
+		if f.IsExported() && reflect.PointerTo(f.Type).Implements(reflect.TypeFor[stateTable]()) {
+			tables++
+			if !names[name] {
+				t.Errorf("State.%s (%s) has no Postgres table", f.Name, name)
+			}
 		}
+	}
+	if tables != len(pgTables) {
+		t.Errorf("State has %d tables, pgTables lists %d", tables, len(pgTables))
 	}
 	sql, _ := pgMigrations.ReadFile("pg_migrations/001_initial.sql")
 	for name := range names {

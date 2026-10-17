@@ -51,8 +51,9 @@ func investigationSignature(t Ticket) string {
 	return hash(struct{ Scope, Input string }{investigationScope(t), diagnosticHash(t)})
 }
 func (e *Engine) detachChangedMemberships(s *State, t Ticket) {
-	for id, link := range s.Memberships.All() {
-		if link.TicketID != t.ID || link.State != "tentative" {
+	for _, id := range s.membershipsOfTicket(t.ID) {
+		link := s.Memberships.Get(id)
+		if link.State != "tentative" {
 			continue
 		}
 		old := s.Snapshots.Get(link.SnapshotID).Ticket
@@ -82,8 +83,9 @@ func (e *Engine) detachChangedMemberships(s *State, t Ticket) {
 	e.invalidateApplications(s)
 }
 func taskHasActiveMembers(s State, task Investigation) bool {
-	for _, link := range s.Memberships.All() {
-		if link.InvestigationID != task.ID || link.State != "tentative" || link.IssueID != task.IssueID {
+	for _, id := range s.membershipsOfInvestigation(task.ID) {
+		link := s.Memberships.Get(id)
+		if link.State != "tentative" || link.IssueID != task.IssueID {
 			continue
 		}
 		t, ok := s.Tickets.Lookup(link.TicketID)
@@ -139,8 +141,9 @@ func recordRun(s *State, run Run) Receipt {
 }
 
 func recordInvestigationLink(s *State, link IssueTicketLink) {
-	for id, old := range s.Memberships.All() {
-		if old.TicketID == link.TicketID && old.State == "tentative" && old.InvestigationID != link.InvestigationID {
+	for _, id := range s.membershipsOfTicket(link.TicketID) {
+		old := s.Memberships.Get(id)
+		if old.State == "tentative" && old.InvestigationID != link.InvestigationID {
 			old.State, old.AvailableAt = "detached", link.AvailableAt
 			old.Version++
 			s.Memberships.Put(id, old)

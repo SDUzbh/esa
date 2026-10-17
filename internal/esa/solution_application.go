@@ -62,10 +62,8 @@ func (e *Engine) reviewApplication(s *State, task Investigation, review Solution
 	return source, nil
 }
 func (e *Engine) invalidateApplications(s *State) {
-	for id, task := range s.Investigations.All() {
-		if task.Application == nil || task.Application.State == "withdrawn" || task.Application.State == "rejected" {
-			continue
-		}
+	for _, id := range s.investigationsWithLiveApplication() {
+		task := s.Investigations.Get(id)
 		if _, ok := applicationSource(*s, *task.Application); ok {
 			continue
 		}

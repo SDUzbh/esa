@@ -7,8 +7,9 @@ import (
 
 func activeMembership(s State, ticketID string) (IssueTicketLink, bool) {
 	var found IssueTicketLink
-	for _, link := range s.Memberships.All() {
-		if link.TicketID == ticketID && link.State == "tentative" && (found.ID == "" || link.AvailableAt.After(found.AvailableAt) || link.AvailableAt.Equal(found.AvailableAt) && link.ID < found.ID) {
+	for _, id := range s.membershipsOfTicket(ticketID) {
+		link := s.Memberships.Get(id)
+		if link.State == "tentative" && (found.ID == "" || link.AvailableAt.After(found.AvailableAt) || link.AvailableAt.Equal(found.AvailableAt) && link.ID < found.ID) {
 			found = link
 		}
 	}

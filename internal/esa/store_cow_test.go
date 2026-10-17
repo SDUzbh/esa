@@ -15,6 +15,9 @@ func TestDetachCopiesEveryTopLevelContainer(t *testing.T) {
 	var s State
 	v := reflect.ValueOf(&s).Elem()
 	for i := 0; i < v.NumField(); i++ {
+		if !v.Type().Field(i).IsExported() {
+			continue
+		}
 		f := v.Field(i)
 		switch {
 		case f.Kind() == reflect.Map:
@@ -26,6 +29,9 @@ func TestDetachCopiesEveryTopLevelContainer(t *testing.T) {
 	next := s.detach()
 	n := reflect.ValueOf(&next).Elem()
 	for i := 0; i < v.NumField(); i++ {
+		if !v.Type().Field(i).IsExported() {
+			continue
+		}
 		name := v.Type().Field(i).Name
 		f, nf := v.Field(i), n.Field(i)
 		if table, ok := nf.Addr().Interface().(stateTable); ok {

@@ -144,6 +144,9 @@ func verifyChanges(old, next *State, c StateChanges) {
 	ov, nv := reflect.ValueOf(old).Elem(), reflect.ValueOf(next).Elem()
 	for i := 0; i < ov.NumField(); i++ {
 		field := ov.Type().Field(i)
+		if !field.IsExported() {
+			continue // derived indexes, never persisted
+		}
 		name := strings.Split(field.Tag.Get("json"), ",")[0]
 		of, nf := ov.Field(i), nv.Field(i)
 		missed := func(what string) {

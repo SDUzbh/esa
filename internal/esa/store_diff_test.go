@@ -75,6 +75,9 @@ func TestDiffStateCoversEveryField(t *testing.T) {
 	var base State
 	v := reflect.ValueOf(&base).Elem()
 	for i := 0; i < v.NumField(); i++ {
+		if !v.Type().Field(i).IsExported() {
+			continue
+		}
 		if f := v.Field(i); f.Kind() == reflect.Map {
 			f.Set(reflect.MakeMap(f.Type()))
 		}
@@ -82,6 +85,9 @@ func TestDiffStateCoversEveryField(t *testing.T) {
 	typ := v.Type()
 	for i := 0; i < typ.NumField(); i++ {
 		field := typ.Field(i)
+		if !field.IsExported() {
+			continue // derived indexes, never persisted
+		}
 		next := base.detach()
 		nf := reflect.ValueOf(&next).Elem().Field(i)
 		table, isTable := nf.Addr().Interface().(stateTable)

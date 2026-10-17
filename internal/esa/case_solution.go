@@ -7,9 +7,10 @@ func caseScope(c Case) string {
 }
 func canonicalSolution(s State, issueID, scope string) (SolutionRevision, bool) {
 	var selected SolutionRevision
-	for _, task := range s.Investigations.All() {
+	for _, id := range s.investigationsOfIssue(issueID) {
+		task := s.Investigations.Get(id)
 		sol, ok := s.Solutions.Lookup(task.SolutionID)
-		if !ok || task.IssueID != issueID || sol.ScopeHash != scope || s.Groups.Get(task.GroupID).CurrentTaskID != task.ID {
+		if !ok || sol.ScopeHash != scope || s.Groups.Get(task.GroupID).CurrentTaskID != task.ID {
 			continue
 		}
 		if selected.ID == "" || sol.AvailableAt.After(selected.AvailableAt) || sol.AvailableAt.Equal(selected.AvailableAt) && (sol.Revision > selected.Revision || sol.Revision == selected.Revision && sol.ID < selected.ID) {

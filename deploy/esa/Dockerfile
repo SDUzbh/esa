@@ -5,4 +5,4 @@ COPY --chown=1000:1000 deploy/esa/seed/ /var/lib/esa/
 COPY bin/esa /esa
 COPY config/rules.json /etc/esa/rules.json
 USER 1000:1000
-ENTRYPOINT ["/esa", "-listen", "0.0.0.0:8090", "-store", "/var/lib/esa/state.json", "-rules", "/etc/esa/rules.json"]
+ENTRYPOINT ["/esa", "-listen", "0.0.0.0:8090", "-rules", "/etc/esa/rules.json", "-issues-directory", "/var/lib/esa/issues", "-legacy-store", "/var/lib/esa/state.json"]

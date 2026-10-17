@@ -76,7 +76,7 @@ def main():
     with socket.socket() as probe:
         probe.bind(('127.0.0.1', 0))
         port = probe.getsockname()[1]
-    settings = dict(REDMINE_DB_PASSWORD=secrets.token_hex(24), SECRET_KEY_BASE=secrets.token_hex(64),
+    settings = dict(REDMINE_DB_PASSWORD=secrets.token_hex(24), ESA_DB_PASSWORD=secrets.token_hex(24), SECRET_KEY_BASE=secrets.token_hex(64),
                     ESA_API_TOKEN=secrets.token_hex(24), ESA_TEST_PASSWORD=password,
                     ESA_UID='1000', ESA_GID='1000', ESA_STATE_URL='', ESA_ANALYZER_URL='',
                     ESA_TEST_PROJECT=project, ESA_TEST_PORT=str(port))
@@ -123,7 +123,7 @@ def main():
         check('isolated_project_and_no_external_agent', config['name'] == project and
               config['services']['esa']['environment']['ESA_ANALYZER_URL'] == 'http://fixture:8091/analyze' and
               config['networks']['default']['internal'] is True and
-              all(set(config['services'][service]['networks']) == {'default'} for service in ['db', 'esa', 'fixture']) and
+              all(set(config['services'][service]['networks']) == {'default'} for service in ['db', 'esa-db-init', 'esa', 'fixture']) and
               all(mount['type'] == 'volume' for service in config['services'].values() for mount in service.get('volumes', [])))
         run(compose + ['up', '-d', '--build', '--wait', '--wait-timeout', '360'], timeout=720)
         check('real_services_healthy', True)
@@ -212,7 +212,7 @@ def main():
         try:
             logs = run(compose + ['logs', '--no-color'], timeout=30)
             # Test passwords and service tokens never belong in uploaded logs.
-            for secret in [password, settings['ESA_API_TOKEN'], settings['REDMINE_DB_PASSWORD'], settings['SECRET_KEY_BASE']]:
+            for secret in [password, settings['ESA_API_TOKEN'], settings['REDMINE_DB_PASSWORD'], settings['ESA_DB_PASSWORD'], settings['SECRET_KEY_BASE']]:
                 logs = logs.replace(secret, '[redacted]')
             (artifacts / 'compose.log').write_text(logs)
         except Exception as error:
@@ -221,7 +221,7 @@ def main():
             run(compose + ['down', '--volumes', '--remove-orphans'], timeout=120)
             for kind, command in [('containers', ['ps', '-aq']), ('volumes', ['volume', 'ls', '-q']), ('networks', ['network', 'ls', '-q'])]:
                 assert not run(docker + command + ['--filter', 'label=com.docker.compose.project=' + project]).strip(), 'Owned ' + kind + ' survived cleanup'
-            for service in ['redmine', 'esa', 'fixture']:
+            for service in ['redmine', 'esa-db-init', 'esa', 'fixture']:
                 image = project + '-' + service
                 inspected = subprocess.run(docker + ['image', 'inspect', image], env=env, capture_output=True, timeout=30)
                 if inspected.returncode == 0:

@@ -80,6 +80,10 @@ func (s *Store) signalWork() {
 
 // StateBackend provides authoritative, transactional persistence. JSON remains
 // a local single-process adapter; remote commits use optimistic CAS.
+//
+// Deprecated: the only remote backend, the Redmine state API, is retired as
+// ESA's store (see HTTPStateBackend). StateBackend and OpenBackendStore remain
+// for tests and are removed with the plugin's /esa/api/state endpoints.
 type StateBackend interface {
 	Load() (State, uint64, error)
 	Commit(State, uint64) (uint64, error)

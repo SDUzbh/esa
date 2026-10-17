@@ -17,6 +17,10 @@ var errStateCAS = errors.New("authoritative state revision conflict")
 
 // HTTPStateBackend uses Redmine's transactional whole-state CAS authority.
 // Unavailability fails closed; it never switches to a local JSON replica.
+//
+// Deprecated: ESA no longer runs on the Redmine state API; it is read only
+// once, by ReadStateAPI, to import into the Postgres store. It is removed
+// together with the plugin's /esa/api/state endpoints.
 type HTTPStateBackend struct {
 	URL, Token string
 	Client     *http.Client
@@ -95,6 +99,21 @@ func (b HTTPStateBackend) Commit(state State, revision uint64) (uint64, error) {
 	packet, err := b.request(http.MethodPut, map[string]any{"expected_revision": revision, "state": state})
 	return packet.Revision, err
 }
+
+// ReadStateAPI reads the whole state from a Redmine state API, for the
+// one-time import into the Postgres store (esa -import-state-url).
+func ReadStateAPI(url, token string) (State, error) {
+	backend := HTTPStateBackend{URL: url, Token: token}
+	if err := backend.Validate(); err != nil {
+		return State{}, err
+	}
+	state, _, err := backend.Load()
+	if err != nil {
+		return State{}, err
+	}
+	return state, validateState(state)
+}
+
 func (b HTTPStateBackend) Validate() error {
 	u, err := url.Parse(b.URL)
 	if err != nil || u.User != nil || u.Host == "" || len(b.Token) < 24 || !(strings.HasPrefix(b.URL, "http://") || strings.HasPrefix(b.URL, "https://")) {

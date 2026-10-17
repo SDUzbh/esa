@@ -1,3 +1,7 @@
+# Deprecated: ESA no longer stores its state here. This API remains, disabled
+# unless ESA_STATE_API_ENABLED=1, for one release so existing installations can
+# import it once into ESA's Postgres store (esa -import-state-url); it is then
+# removed.
 class EsaStateController < ActionController::Base
   skip_forgery_protection
   before_action :authenticate_service

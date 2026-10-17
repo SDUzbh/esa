@@ -37,7 +37,9 @@ services:
       REDMINE_PLUGINS_MIGRATE: '1'
       ESA_URL: http://esa:8090
       ESA_API_TOKEN: ${ESA_API_TOKEN:?Set ESA_API_TOKEN in .env}
-      ESA_STATE_API_ENABLED: '1'
+      # Deprecated state API, off by default: enable only to import it once into
+      # ESA's Postgres store (docs/ESA_OPERATIONS.md#postgres-state-store).
+      ESA_STATE_API_ENABLED: ${ESA_STATE_API_ENABLED:-0}
       TZ: Asia/Shanghai
     depends_on:
       db:
@@ -63,6 +65,8 @@ services:
       ESA_REDMINE_URL: http://redmine:3000
       # Postgres state store; empty keeps the JSON store in the esa_state volume.
       ESA_DATABASE_URL: ${ESA_DATABASE_URL:-}
+      # Retired. Passed through so ESA refuses to start, rather than starting on
+      # a stale JSON file, until the state is imported and this is unset.
       ESA_STATE_URL: ${ESA_STATE_URL:-}
       ESA_ANALYZER_URL: ${ESA_ANALYZER_URL:-}
       ESA_ANALYZER_TOKEN: ${ESA_API_TOKEN:?Set ESA_API_TOKEN in .env}

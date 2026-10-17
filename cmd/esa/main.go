@@ -31,8 +31,8 @@ func run() error {
 	data := flag.String("store", "runtime/esa/state.json", "Single-process durable state file; not used with -database-url")
 	issueDirectory := flag.String("issues-directory", "", "Local Issue projection root shared read-only with the provider")
 	databaseURL := flag.String("database-url", os.Getenv("ESA_DATABASE_URL"), "ESA-owned Postgres state database; replaces the JSON -store")
-	stateURL := flag.String("state-url", os.Getenv("ESA_STATE_URL"), "Deprecated: Redmine state API as the authority; use -database-url")
-	importState := flag.String("import-state", "", "Import a stopped JSON store into an empty -database-url (or -state-url) state and exit")
+	stateURL := flag.String("state-url", os.Getenv("ESA_STATE_URL"), "Retired: the Redmine state API is no longer a store; import it with -import-state-url")
+	importState := flag.String("import-state", "", "With -database-url: import a stopped JSON store into the empty database and exit")
 	importStateURL := flag.String("import-state-url", "", "With -database-url: import a Redmine state API's state into the empty database and exit")
 	rules := flag.String("rules", "config/rules.json", "Workflow configuration and analysis budget")
 	replayAt := flag.String("replay-at", "", "Test-only observation clock initial time (RFC3339)")
@@ -55,23 +55,14 @@ func run() error {
 	if len(token) < 24 {
 		return fmt.Errorf("ESA_API_TOKEN must contain at least 24 characters")
 	}
-	if *databaseURL != "" && *stateURL != "" {
-		return fmt.Errorf("-database-url and -state-url are mutually exclusive")
+	mode, err := chooseStoreMode(*databaseURL, *stateURL, *importState, *importStateURL)
+	if err != nil {
+		return err
 	}
-	if *importStateURL != "" && *databaseURL == "" {
-		return fmt.Errorf("-import-state-url requires -database-url")
-	}
-	if *databaseURL != "" && (*importState != "" || *importStateURL != "") {
+	if mode == modeImport {
 		return importIntoPostgres(*databaseURL, *importState, *importStateURL, token)
 	}
-	if *stateURL != "" && *importState != "" {
-		backend := esa.HTTPStateBackend{URL: *stateURL, Token: token}
-		if err := backend.Validate(); err != nil {
-			return err
-		}
-		return importIntoBackend(backend, *importState)
-	}
-	if *stateURL == "" && *databaseURL == "" {
+	if mode == modeJSON {
 		unlock, err := lockJSONStore(*data)
 		if err != nil {
 			return err
@@ -131,8 +122,8 @@ func run() error {
 	}
 
 	var store *esa.Store
-	switch {
-	case *databaseURL != "":
+	switch mode {
+	case modePostgres:
 		persister, err := esa.OpenPostgres(runCtx, *databaseURL, esa.PostgresOptions{})
 		if err != nil {
 			return err
@@ -147,17 +138,7 @@ func run() error {
 		}
 		store.OnLostWriter(lose)
 		go persister.WatchLock(runCtx, 5*time.Second, lose)
-	case *stateURL != "":
-		slog.Warn("-state-url is deprecated; migrate to -database-url")
-		backend := esa.HTTPStateBackend{URL: *stateURL, Token: token}
-		if err = backend.Validate(); err != nil {
-			return err
-		}
-		store, err = esa.OpenBackendStore(backend)
 	default:
-		if *importState != "" {
-			return fmt.Errorf("state import requires -database-url")
-		}
 		store, err = esa.OpenStore(*data)
 	}
 	if err != nil {
@@ -252,6 +233,37 @@ func run() error {
 	return err
 }
 
+type storeMode int
+
+const (
+	modeJSON storeMode = iota
+	modePostgres
+	modeImport
+)
+
+// chooseStoreMode decides from the state flags whether ESA runs on the JSON
+// file or Postgres, or imports and exits. The Redmine state API is retired as
+// a store: it can only be imported from, and a configured -state-url or
+// ESA_STATE_URL stops ESA instead of letting it start on a stale JSON file.
+func chooseStoreMode(databaseURL, stateURL, importState, importStateURL string) (storeMode, error) {
+	if importState != "" || importStateURL != "" {
+		if databaseURL == "" {
+			return 0, fmt.Errorf("state import requires -database-url; the Redmine state API is no longer an import target")
+		}
+		if importState != "" && importStateURL != "" {
+			return 0, fmt.Errorf("import needs exactly one of -import-state or -import-state-url")
+		}
+		return modeImport, nil
+	}
+	if stateURL != "" {
+		return 0, fmt.Errorf("ESA no longer runs on the Redmine state API (-state-url or ESA_STATE_URL). Import it once with -database-url <url> -import-state-url <state API URL>, then unset ESA_STATE_URL; see docs/ESA_OPERATIONS.md#postgres-state-store")
+	}
+	if databaseURL != "" {
+		return modePostgres, nil
+	}
+	return modeJSON, nil
+}
+
 // firstError prefers a server failure (such as a busy port) that ended the wait.
 func firstError(serverErr <-chan error, err error) error {
 	select {
@@ -284,15 +296,11 @@ func lockJSONStore(path string) (func(), error) {
 // an empty ESA database, verifies it in the same transaction, and exits. The
 // source is never modified.
 func importIntoPostgres(databaseURL, jsonPath, stateURL, token string) error {
-	if (jsonPath == "") == (stateURL == "") {
-		return fmt.Errorf("import needs exactly one of -import-state or -import-state-url")
-	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	var source *esa.Store
-	var err error
+	var source esa.State
 	if jsonPath != "" {
-		if _, err = os.Stat(jsonPath); err != nil {
+		if _, err := os.Stat(jsonPath); err != nil {
 			return err
 		}
 		unlock, err := lockJSONStore(jsonPath)
@@ -300,16 +308,14 @@ func importIntoPostgres(databaseURL, jsonPath, stateURL, token string) error {
 			return fmt.Errorf("stop the ESA writer before importing: %w", err)
 		}
 		defer unlock()
-		source, err = esa.OpenStore(jsonPath)
+		store, err := esa.OpenStore(jsonPath)
 		if err != nil {
 			return err
 		}
+		source = store.Snapshot()
 	} else {
-		backend := esa.HTTPStateBackend{URL: stateURL, Token: token}
-		if err = backend.Validate(); err != nil {
-			return err
-		}
-		if source, err = esa.OpenBackendStore(backend); err != nil {
+		var err error
+		if source, err = esa.ReadStateAPI(stateURL, token); err != nil {
 			return err
 		}
 	}
@@ -323,30 +329,9 @@ func importIntoPostgres(databaseURL, jsonPath, stateURL, token string) error {
 	if err = persister.AcquireWriter(wait, time.Second); err != nil {
 		return fmt.Errorf("another ESA process holds the state writer role; stop it before importing: %w", err)
 	}
-	snapshot := source.Snapshot()
-	if err = persister.Import(ctx, snapshot); err != nil {
+	if err = persister.Import(ctx, source); err != nil {
 		return err
 	}
-	slog.Info("State imported and verified; the source was not modified", "tickets", len(snapshot.Tickets), "events", len(snapshot.Events), "snapshots", len(snapshot.Snapshots))
-	return nil
-}
-
-// importIntoBackend keeps the deprecated JSON-to-Redmine-state import.
-func importIntoBackend(backend esa.HTTPStateBackend, jsonPath string) error {
-	state, revision, err := backend.Load()
-	if err != nil {
-		return err
-	}
-	if revision != 0 || len(state.Tickets) != 0 || len(state.Snapshots) != 0 || len(state.Investigations) != 0 {
-		return fmt.Errorf("state import requires a pristine backend")
-	}
-	legacy, err := esa.OpenStore(jsonPath)
-	if err != nil {
-		return err
-	}
-	if _, err = backend.Commit(legacy.Snapshot(), 0); err != nil {
-		return err
-	}
-	slog.Info("State imported; original JSON file preserved")
+	slog.Info("State imported and verified; the source was not modified", "tickets", len(source.Tickets), "events", len(source.Events), "snapshots", len(source.Snapshots))
 	return nil
 }

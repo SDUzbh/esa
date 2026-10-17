@@ -21,32 +21,33 @@ import (
 // rejection, membership and case history, and an unknown top-level field.
 func richStateFile(t *testing.T) string {
 	t.Helper()
-	path := filepath.Join(t.TempDir(), "state.json")
 	e := testEngine(t)
-	store, err := OpenStore(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	e.Store = store
 	analyzedTicket(t, e, "analyzed")
 	open := forward(e, "open-event", fixture(e, "open"))
 	open.Raw = json.RawMessage(`{"from":"jira","n":1}`)
-	if _, err = e.Receive(open); err != nil {
+	if _, err := e.Receive(open); err != nil {
 		t.Fatal(err)
 	}
 	stale := fixture(e, "open")
 	stale.Subject, stale.UpdatedAt = "older", stale.UpdatedAt.Add(-time.Hour)
-	if _, err = e.Receive(forward(e, "stale-event", stale)); err != nil {
+	if _, err := e.Receive(forward(e, "stale-event", stale)); err != nil {
 		t.Fatal(err)
 	}
 	closed := fixture(e, "closed")
 	closed.Closed, closed.Status = true, "Resolved"
 	closed.Resolution = Resolution{Reason: "fixed", Cause: "c", Solution: "s", Validation: "v"}
 	receive(t, e, "closed-event", closed)
-	if err = e.recordRejection(forward(e, "rejected-event", fixture(e, "other")), errors.New("ticket belongs to a different project")); err != nil {
+	if err := e.recordRejection(forward(e, "rejected-event", fixture(e, "other")), errors.New("ticket belongs to a different project")); err != nil {
 		t.Fatal(err)
 	}
-	b, err := os.ReadFile(path)
+	return writeLegacyStore(t, e.Store.Snapshot(), map[string]json.RawMessage{"future_field": json.RawMessage(`{"kept":true}`)})
+}
+
+// writeLegacyStore writes state as the JSON store of ESA before Postgres did,
+// plus extra top-level fields, and returns the file's path.
+func writeLegacyStore(t *testing.T, state State, extra map[string]json.RawMessage) string {
+	t.Helper()
+	b, err := json.Marshal(state)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -54,14 +55,26 @@ func richStateFile(t *testing.T) string {
 	if err = json.Unmarshal(b, &frame); err != nil {
 		t.Fatal(err)
 	}
-	frame["future_field"] = json.RawMessage(`{"kept":true}`)
+	for k, v := range extra {
+		frame[k] = v
+	}
 	if b, err = json.Marshal(frame); err != nil {
 		t.Fatal(err)
 	}
+	path := filepath.Join(t.TempDir(), "state.json")
 	if err = os.WriteFile(path, b, 0600); err != nil {
 		t.Fatal(err)
 	}
 	return path
+}
+
+func readLegacyStore(t *testing.T, path string) State {
+	t.Helper()
+	s, err := ReadLegacyStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return s
 }
 
 func acquiredTestPostgres(t *testing.T, url, schema string) *PostgresPersister {
@@ -80,12 +93,9 @@ func TestPostgresImportVerifiesAndPreservesTheSource(t *testing.T) {
 	schema := testSchema(t, url)
 	path := richStateFile(t)
 	original, _ := os.ReadFile(path)
-	source, err := OpenStore(path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	source := readLegacyStore(t, path)
 	p := acquiredTestPostgres(t, url, schema)
-	if err = p.Import(context.Background(), source.Snapshot()); err != nil {
+	if err := p.Import(context.Background(), source); err != nil {
 		t.Fatal(err)
 	}
 	if after, _ := os.ReadFile(path); !bytes.Equal(after, original) {
@@ -95,7 +105,7 @@ func TestPostgresImportVerifiesAndPreservesTheSource(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want, got := source.Snapshot(), store.Snapshot()
+	want, got := source, store.Snapshot()
 	if err = sameStateEncoding("working set", hotProjection(want), hotProjection(got)); err != nil {
 		t.Fatal(err)
 	}
@@ -119,12 +129,9 @@ func TestPostgresImportConvertsLegacyEvents(t *testing.T) {
 	url := testDatabaseURL(t)
 	e := testEngine(t)
 	receive(t, e, "accepted", fixture(e, "T1"))
-	legacy, err := OpenStore(legacyStateFile(t, e.Store.Snapshot(), ""))
-	if err != nil {
-		t.Fatal(err)
-	}
+	legacy := readLegacyStore(t, legacyStateFile(t, e.Store.Snapshot(), ""))
 	p := acquiredTestPostgres(t, url, testSchema(t, url))
-	if err = p.Import(context.Background(), legacy.Snapshot()); err != nil {
+	if err := p.Import(context.Background(), legacy); err != nil {
 		t.Fatal(err)
 	}
 	store, err := newStore(p)
@@ -139,16 +146,13 @@ func TestPostgresImportConvertsLegacyEvents(t *testing.T) {
 func TestPostgresImportRefusesUsedDatabaseAndRollsBackOnMismatch(t *testing.T) {
 	url := testDatabaseURL(t)
 	schema := testSchema(t, url)
-	source, err := OpenStore(richStateFile(t))
-	if err != nil {
-		t.Fatal(err)
-	}
+	source := readLegacyStore(t, richStateFile(t))
 	p := acquiredTestPostgres(t, url, schema)
 	p.testBeforeImportVerify = func(ctx context.Context, tx pgx.Tx) error {
 		_, err := tx.Exec(ctx, "UPDATE "+p.table("tickets")+" SET payload = '{\"id\":\"tampered\"}' WHERE id = 'open'")
 		return err
 	}
-	err = p.Import(context.Background(), source.Snapshot())
+	err := p.Import(context.Background(), source)
 	if err == nil || !strings.Contains(err.Error(), `"tickets" differs`) {
 		t.Fatal("tampered import was not rejected by verification", err)
 	}
@@ -156,10 +160,10 @@ func TestPostgresImportRefusesUsedDatabaseAndRollsBackOnMismatch(t *testing.T) {
 		t.Fatal("failed verification left rows behind", n)
 	}
 	p.testBeforeImportVerify = nil
-	if err = p.Import(context.Background(), source.Snapshot()); err != nil {
+	if err = p.Import(context.Background(), source); err != nil {
 		t.Fatal(err)
 	}
-	if err = p.Import(context.Background(), source.Snapshot()); !errors.Is(err, ErrConflict) || !strings.Contains(err.Error(), "pristine") {
+	if err = p.Import(context.Background(), source); !errors.Is(err, ErrConflict) || !strings.Contains(err.Error(), "pristine") {
 		t.Fatal("second import into a used database was accepted", err)
 	}
 }

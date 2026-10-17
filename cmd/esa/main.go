@@ -28,19 +28,20 @@ func main() {
 
 func run() error {
 	address := flag.String("listen", "127.0.0.1:8090", "HTTP listen address")
-	data := flag.String("store", "runtime/esa/state.json", "Single-process durable state file; not used with -database-url")
-	issueDirectory := flag.String("issues-directory", "", "Local Issue projection root shared read-only with the provider")
-	databaseURL := flag.String("database-url", os.Getenv("ESA_DATABASE_URL"), "ESA-owned Postgres state database; replaces the JSON -store")
+	issueDirectory := flag.String("issues-directory", "runtime/esa/issues", "Local Issue projection root shared read-only with the provider")
+	databaseURL := flag.String("database-url", os.Getenv("ESA_DATABASE_URL"), "ESA-owned Postgres state database (required)")
 	stateURL := flag.String("state-url", os.Getenv("ESA_STATE_URL"), "Removed: the Redmine state API is no longer supported; ESA refuses to start while it is set")
-	importState := flag.String("import-state", "", "With -database-url: import a stopped JSON store into the empty database and exit")
+	importState := flag.String("import-state", "", "Import a JSON store from before Postgres into the empty database and exit")
+	legacyStore := flag.String("legacy-store", "runtime/esa/state.json", "Where a JSON store from before Postgres would be; ESA refuses to start on an empty database while it exists")
+	ephemeral := flag.Bool("ephemeral-schema", false, "Test-only: keep the state in a new schema that is dropped on exit")
 	rules := flag.String("rules", "config/rules.json", "Workflow configuration and analysis budget")
 	replayAt := flag.String("replay-at", "", "Test-only observation clock initial time (RFC3339)")
 	replayProjects := flag.String("replay-projects", "", "Comma-separated operator project scope for the test clock")
-	health := flag.Bool("healthcheck", false, "Check the local ESA HTTP server and exit")
+	health := flag.Bool("healthcheck", false, "Check that the local ESA HTTP server is the active writer and exit")
 	flag.Parse()
 	if *health {
 		client := &http.Client{Timeout: 3 * time.Second}
-		resp, err := client.Get("http://127.0.0.1:8090/healthz")
+		resp, err := client.Get("http://127.0.0.1:8090/healthz?role=active")
 		if err != nil {
 			return err
 		}
@@ -54,19 +55,12 @@ func run() error {
 	if len(token) < 24 {
 		return fmt.Errorf("ESA_API_TOKEN must contain at least 24 characters")
 	}
-	mode, err := chooseStoreMode(*databaseURL, *stateURL, *importState)
+	mode, err := chooseStoreMode(*databaseURL, *stateURL, *importState, *ephemeral)
 	if err != nil {
 		return err
 	}
 	if mode == modeImport {
 		return importIntoPostgres(*databaseURL, *importState)
-	}
-	if mode == modeJSON {
-		unlock, err := lockJSONStore(*data)
-		if err != nil {
-			return err
-		}
-		defer unlock()
 	}
 	b, err := os.ReadFile(*rules)
 	if err != nil {
@@ -120,35 +114,42 @@ func run() error {
 		}
 	}
 
-	var store *esa.Store
-	switch mode {
-	case modePostgres:
-		persister, err := esa.OpenPostgres(runCtx, *databaseURL, esa.PostgresOptions{})
-		if err != nil {
-			return err
-		}
-		defer persister.Close()
-		slog.Info("ESA standby: waiting for the state writer role", "address", *address)
-		if store, err = esa.OpenPostgresStore(runCtx, persister, 5*time.Second); err != nil {
-			if ctx.Err() != nil {
-				return nil
-			}
-			return firstError(serverErr, err)
-		}
-		store.OnLostWriter(lose)
-		go persister.WatchLock(runCtx, 5*time.Second, lose)
-	default:
-		store, err = esa.OpenStore(*data)
+	options := esa.PostgresOptions{}
+	if *ephemeral {
+		options.Schema = esa.EphemeralSchema()
 	}
+	persister, err := esa.OpenPostgres(runCtx, *databaseURL, options)
 	if err != nil {
 		return err
+	}
+	defer persister.Close()
+	if *ephemeral {
+		defer func() {
+			drop, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			if err := persister.DropSchema(drop); err != nil {
+				slog.Warn("Could not drop the ephemeral schema", "error", err)
+			}
+		}()
+	}
+	slog.Info("ESA standby: waiting for the state writer role", "address", *address)
+	store, err := esa.OpenPostgresStore(runCtx, persister, 5*time.Second)
+	if err != nil {
+		if ctx.Err() != nil {
+			return nil
+		}
+		return firstError(serverErr, err)
+	}
+	store.OnLostWriter(lose)
+	go persister.WatchLock(runCtx, 5*time.Second, lose)
+	if !*ephemeral {
+		if err = refuseUnimportedStore(store.Snapshot(), *legacyStore); err != nil {
+			return err
+		}
 	}
 	engine, err := esa.NewEngine(store, config)
 	if err != nil {
 		return err
-	}
-	if *issueDirectory == "" {
-		*issueDirectory = filepath.Join(filepath.Dir(*data), "issues")
 	}
 	engine.IssueDirectory, err = filepath.Abs(*issueDirectory)
 	if err != nil {
@@ -217,7 +218,7 @@ func run() error {
 		}()
 	}
 	gate.Activate((&esa.API{Engine: engine, Token: token}).Handler())
-	slog.Info("ESA started", "address", *address, "workflow_version", engine.Version(), "analyzer_configured", analyzer != nil, "postgres", *databaseURL != "")
+	slog.Info("ESA started", "address", *address, "workflow_version", engine.Version(), "analyzer_configured", analyzer != nil)
 	err = <-serverErr
 	cancelRun()
 	workers.Wait()
@@ -235,29 +236,41 @@ func run() error {
 type storeMode int
 
 const (
-	modeJSON storeMode = iota
-	modePostgres
+	modeServe storeMode = iota
 	modeImport
 )
 
-// chooseStoreMode decides from the state flags whether ESA runs on the JSON
-// file or Postgres, or imports a JSON store and exits. The Redmine state API
-// was removed; a configured -state-url or ESA_STATE_URL stops ESA instead of
-// letting it start on an unrelated JSON file.
-func chooseStoreMode(databaseURL, stateURL, importState string) (storeMode, error) {
+// chooseStoreMode decides from the state flags whether ESA serves or imports
+// a JSON store from before Postgres and exits. ESA keeps its state only in
+// Postgres; the removed Redmine state API (-state-url or ESA_STATE_URL) stops
+// it instead of being ignored.
+func chooseStoreMode(databaseURL, stateURL, importState string, ephemeral bool) (storeMode, error) {
 	if stateURL != "" {
-		return 0, fmt.Errorf("the Redmine state API (-state-url or ESA_STATE_URL) is no longer supported; unset it and use the JSON store or -database-url, see docs/ESA_OPERATIONS.md#postgres-state-store")
+		return 0, fmt.Errorf("the Redmine state API (-state-url or ESA_STATE_URL) is no longer supported; unset it and set -database-url, see docs/ESA_OPERATIONS.md#postgres-state-store")
+	}
+	if databaseURL == "" {
+		return 0, fmt.Errorf("ESA keeps its state in Postgres: set ESA_DATABASE_URL or -database-url, see docs/ESA_OPERATIONS.md#postgres-state-store")
 	}
 	if importState != "" {
-		if databaseURL == "" {
-			return 0, fmt.Errorf("-import-state requires -database-url")
+		if ephemeral {
+			return 0, fmt.Errorf("-import-state cannot target an -ephemeral-schema")
 		}
 		return modeImport, nil
 	}
-	if databaseURL != "" {
-		return modePostgres, nil
+	return modeServe, nil
+}
+
+// refuseUnimportedStore stops ESA from starting on an empty database while a
+// JSON store from before Postgres still exists, which would hide that state
+// and make a later import impossible.
+func refuseUnimportedStore(state esa.State, legacyPath string) error {
+	if legacyPath == "" || state.Tickets.Len() > 0 || state.Events.Len() > 0 {
+		return nil
 	}
-	return modeJSON, nil
+	if _, err := os.Stat(legacyPath); err != nil {
+		return nil
+	}
+	return fmt.Errorf("the database holds no ESA state, but a JSON store from before Postgres exists at %s: import it once with -import-state %s (docs/ESA_OPERATIONS.md#postgres-state-store), or move the file away to start empty", legacyPath, legacyPath)
 }
 
 // firstError prefers a server failure (such as a busy port) that ended the wait.
@@ -272,11 +285,9 @@ func firstError(serverErr <-chan error, err error) error {
 	return err
 }
 
-// lockJSONStore takes the single-writer file lock next to a JSON store.
-func lockJSONStore(path string) (func(), error) {
-	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
-		return nil, err
-	}
+// lockLegacyStore takes the file lock that ESA versions with a JSON store
+// held while writing it, so an import cannot read a file still in use.
+func lockLegacyStore(path string) (func(), error) {
 	lock, err := os.OpenFile(path+".lock", os.O_CREATE|os.O_RDWR, 0600)
 	if err != nil {
 		return nil, err
@@ -296,16 +307,15 @@ func importIntoPostgres(databaseURL, jsonPath string) error {
 	if _, err := os.Stat(jsonPath); err != nil {
 		return err
 	}
-	unlock, err := lockJSONStore(jsonPath)
+	unlock, err := lockLegacyStore(jsonPath)
 	if err != nil {
 		return fmt.Errorf("stop the ESA writer before importing: %w", err)
 	}
 	defer unlock()
-	store, err := esa.OpenStore(jsonPath)
+	source, err := esa.ReadLegacyStore(jsonPath)
 	if err != nil {
 		return err
 	}
-	source := store.Snapshot()
 	persister, err := esa.OpenPostgres(ctx, databaseURL, esa.PostgresOptions{})
 	if err != nil {
 		return err

@@ -1,9 +1,11 @@
 package esa
 
 // Store scaling benchmarks (REVIEW_ISSUES.md Issue 1). They are not run by
-// go test without -bench. Example:
+// go test without -bench. The Memory, Store and TicketGET benchmarks keep the
+// state behind a discardPersister, measuring the in-memory work; the Postgres
+// one adds the database write. Example:
 //
-//	go test ./internal/esa -run '^$' -bench 'Store|TicketGET|ReceiveClosed' -benchtime 5x
+//	go test ./internal/esa -run '^$' -bench . -benchtime 5x
 //
 // ESA_BENCH_SIZES overrides the ticket counts, e.g. ESA_BENCH_SIZES=1000,10000.
 
@@ -44,63 +46,14 @@ func benchClosedTicket(e *Engine, id string) Ticket {
 	return ticket
 }
 
-// seedClosedTickets receives one real closed ticket, then copies its stored
-// entities under new IDs. Receiving every ticket would take quadratic time.
-func seedClosedTickets(b *testing.B, n int) *Engine {
-	b.Helper()
-	e := testEngine(b)
-	template := benchClosedTicket(e, "K-0")
-	receipt, err := e.Receive(Event{ID: "ev-0", Origin: "bench", ForwardedBy: "u", ForwardedAt: e.Now(), Ticket: template})
-	if err != nil {
-		b.Fatal(err)
-	}
-	err = e.Store.Update(func(s *State) error {
-		event, snapshot, c := s.Events.Get("ev-0"), s.Snapshots.Get(s.LatestSnapshot.Get("K-0")), s.Cases.Get(receipt.CaseID)
-		for i := 1; i < n; i++ {
-			ticketID, eventID := fmt.Sprintf("K-%d", i), fmt.Sprintf("ev-%d", i)
-			ticket := s.Tickets.Get("K-0")
-			ticket.ID, ticket.SourceKey = ticketID, ticketID
-			s.Tickets.Put(ticketID, ticket)
-			event.ID, event.TicketID, event.TicketHash, event.SnapshotID = eventID, ticketID, hash(ticket), snapshotIDFor(eventID)
-			s.Events.Put(eventID, event)
-			snapshot.ID, snapshot.EventID, snapshot.Ticket, snapshot.Hash = "snapshot_"+hash(eventID), eventID, ticket, hash(ticket)
-			s.Snapshots.Put(snapshot.ID, snapshot)
-			s.LatestSnapshot.Put(ticketID, snapshot.ID)
-			c.ID, c.TicketID, c.SourceKey = "case_"+hash(ticketID)[:24], ticketID, ticketID
-			s.Cases.Put(c.ID, c)
-			s.CaseHistory = append(s.CaseHistory, c)
-			s.Receipts.Put(eventID, Receipt{EventID: eventID, TicketID: ticketID, CaseID: c.ID, Action: receipt.Action})
-		}
-		return nil
-	})
-	if err != nil {
-		b.Fatal(err)
-	}
-	if got := e.Store.Snapshot().Tickets.Len(); got != n {
-		b.Fatalf("seeded %d tickets, want %d", got, n)
-	}
-	return e
-}
-
 // seeded builds each size once per benchmark binary run; Go invokes a
 // benchmark function several times while it calibrates b.N.
 var seeded sync.Map
 
-func seededEngine(b *testing.B, key string, n int) *Engine {
-	b.Helper()
-	cacheKey := fmt.Sprintf("%s/%d", key, n)
-	if e, ok := seeded.Load(cacheKey); ok {
-		return e.(*Engine)
-	}
-	e := seedClosedTickets(b, n)
-	seeded.Store(cacheKey, e)
-	return e
-}
-
 func BenchmarkStoreSnapshot(b *testing.B) {
 	for _, n := range benchSizes(b) {
 		b.Run(fmt.Sprint(n), func(b *testing.B) {
-			e := seededEngine(b, "read", n)
+			e := seedMemoryStore(b, n)
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
 				_ = e.Store.Snapshot()
@@ -112,46 +65,10 @@ func BenchmarkStoreSnapshot(b *testing.B) {
 func BenchmarkStoreUpdateNoop(b *testing.B) {
 	for _, n := range benchSizes(b) {
 		b.Run(fmt.Sprint(n), func(b *testing.B) {
-			e := seededEngine(b, "read", n)
+			e := seedMemoryStore(b, n)
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
 				if err := e.Store.Update(func(*State) error { return nil }); err != nil {
-					b.Fatal(err)
-				}
-			}
-		})
-	}
-}
-
-func BenchmarkStoreUpdateOneTicket(b *testing.B) {
-	for _, n := range benchSizes(b) {
-		b.Run(fmt.Sprint(n), func(b *testing.B) {
-			e := seededEngine(b, "write", n)
-			b.ResetTimer()
-			for i := 0; i < b.N; i++ {
-				err := e.update(func(s *State) error {
-					ticket := s.Tickets.Get("K-1")
-					ticket.Assignee = fmt.Sprint(i)
-					s.Tickets.Put(ticket.ID, ticket)
-					return nil
-				})
-				if err != nil {
-					b.Fatal(err)
-				}
-			}
-		})
-	}
-}
-
-func BenchmarkReceiveClosedTicket(b *testing.B) {
-	for _, n := range benchSizes(b) {
-		b.Run(fmt.Sprint(n), func(b *testing.B) {
-			e := seededEngine(b, "receive", n)
-			start := e.Store.Snapshot().Tickets.Len()
-			b.ResetTimer()
-			for i := 0; i < b.N; i++ {
-				id := fmt.Sprintf("R-%d", start+i)
-				if _, err := e.Receive(Event{ID: "ev-" + id, Origin: "bench", ForwardedBy: "u", ForwardedAt: e.Now(), Ticket: benchClosedTicket(e, id)}); err != nil {
 					b.Fatal(err)
 				}
 			}
@@ -163,7 +80,7 @@ func BenchmarkReceiveClosedTicket(b *testing.B) {
 func BenchmarkTicketGET(b *testing.B) {
 	for _, n := range benchSizes(b) {
 		b.Run(fmt.Sprint(n), func(b *testing.B) {
-			e := seededEngine(b, "read", n)
+			e := seedMemoryStore(b, n)
 			handler := (&API{Engine: e, Token: strings.Repeat("t", 24)}).Handler()
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
@@ -182,7 +99,7 @@ func BenchmarkTicketGET(b *testing.B) {
 }
 
 // BenchmarkPostgresUpdateOneTicket measures a one-ticket write on the Postgres
-// store; it needs ESA_TEST_DATABASE_URL and skips without it.
+// store.
 func BenchmarkPostgresUpdateOneTicket(b *testing.B) {
 	for _, n := range benchSizes(b) {
 		b.Run(fmt.Sprint(n), func(b *testing.B) {

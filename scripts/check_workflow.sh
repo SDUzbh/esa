@@ -35,11 +35,17 @@ if [ -n "$unformatted" ]; then
     printf 'Run gofmt on:\n%s\n' "$unformatted" >&2
     exit 1
 fi
+"$ESA_GO_BIN" mod verify
 "$ESA_GO_BIN" vet ./...
 "$ESA_GO_BIN" -C system_replay vet ./...
 # Keep the store scaling benchmarks compiling and runnable (tiny size, one pass).
 ESA_BENCH_SIZES=50 "$ESA_GO_BIN" test ./internal/esa -run '^$' -bench 'Store|TicketGET|ReceiveClosed' -benchtime 1x > /dev/null
 sh scripts/build_esa.sh
+# With a test database (CI provides one), rerun the store-backed suite on
+# Postgres, reloading and comparing the state after every commit.
+if [ -n "${ESA_TEST_DATABASE_URL:-}" ]; then
+    ESA_TEST_STORE=postgres "$ESA_GO_BIN" test ./internal/esa
+fi
 sh scripts/build_system_replay.sh
 python3 -B -m unittest discover -s scripts -p 'test_*.py'
 ruby scripts/test_label_payload.rb

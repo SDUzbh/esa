@@ -9,9 +9,18 @@ sh scripts/check_workflow.sh
 ```
 
 Requirements are Go matching `go.mod`, a C compiler for the race detector,
-Python 3.9+, Ruby with Minitest, Node.js 18+, and Git. The Go toolchain and standard
-language libraries are sufficient; Docker, Redmine, Jira data, Kafka source,
-Agent authentication and API credentials are not required.
+Python 3.9+, Ruby with Minitest, Node.js 18+, and Git. Go modules are
+downloaded through the module proxy and checked with `go mod verify`. Docker,
+Redmine, Jira data, Kafka source, Agent authentication and API credentials are
+not required.
+
+The Postgres store tests need `ESA_TEST_DATABASE_URL`. CI provides it through a
+digest-pinned `postgres:17-alpine` service container and also reruns the
+`internal/esa` suite with `ESA_TEST_STORE=postgres`: every `testEngine`-based
+test then runs on its own schema and reloads and compares the state after every
+commit. Locally the Postgres tests skip unless the variable is set; outside CI
+any disposable Postgres 17 works, for example
+`postgres://esa:<password>@127.0.0.1:55432/esa_test?sslmode=disable`.
 
 The entry point reuses:
 

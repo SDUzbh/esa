@@ -21,6 +21,22 @@ jobs:
       ESA_GO_ARCH: amd64
       ESA_TEST_RACE: '1'
       ESA_WORKFLOW_OUTPUT: .tools/workflow-checks
+      # Ephemeral test database from the service below; not a deployment secret.
+      ESA_TEST_DATABASE_URL: postgres://esa:esa-ci@localhost:5432/esa_test?sslmode=disable
+    services:
+      postgres:
+        image: postgres:17-alpine@sha256:b0f9560a2de083e2cc7382e75f808c7381a32852a7ec49117deedb300e552b24
+        env:
+          POSTGRES_USER: esa
+          POSTGRES_PASSWORD: esa-ci
+          POSTGRES_DB: esa_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U esa -d esa_test"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

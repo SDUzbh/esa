@@ -18,6 +18,7 @@ services:
     depends_on:
       fixture:
         condition: service_started
+    # The Issue directory lives in a volume; Colima shares no host folder.
     volumes: !override
       - esa_state:/var/lib/esa
   fixture:
@@ -41,4 +42,5 @@ networks:
     internal: true
   frontend: {}
 volumes:
+  esa_state:
   provider_data:

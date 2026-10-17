@@ -87,8 +87,6 @@ services:
       esa-db-init:
         condition: service_completed_successfully
     volumes:
-      # Holds a JSON store from before Postgres until it is imported.
-      - esa_state:/var/lib/esa
       - ${ESA_ISSUES_DIRECTORY:-../../runtime/esa/issues}:/var/lib/esa/issues
     healthcheck:
       test: ["CMD", "/esa", "-healthcheck"]
@@ -99,4 +97,3 @@ services:
 volumes:
   database:
   attachments:
-  esa_state:

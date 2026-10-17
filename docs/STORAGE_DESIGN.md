@@ -261,6 +261,8 @@ The guarantee comes from two layers:
 
 ## Migration
 
+*Removed with the JSON store (see [Postgres only](#postgres-only)); kept here as the record of the design.*
+
 Done once, with ESA stopped:
 
 ```sh
@@ -421,10 +423,8 @@ These remain O(N), off the per-write path or on rare events:
 
 ## Postgres only
 
-The JSON file adapter is removed (2026-10-18). ESA requires `-database-url`, and what remains of JSON is the one-time migration:
+The JSON file adapter is removed (2026-10-18), and so is the one-time migration in [Migration](#migration): no installation had JSON state to keep. ESA requires `-database-url`; nothing reads or writes JSON state, and the pre-EventRecord event shape is no longer decoded.
 
-- `ReadLegacyStore` decodes a JSON store from before Postgres for `-import-state`, converting old events. Nothing writes JSON state any more.
-- On an empty database ESA refuses to start while that file exists (`-legacy-store`, `/var/lib/esa/state.json` in the image), so an upgrade cannot begin from nothing and then make the import impossible.
 - Compose provisions ESA's role and database with the one-shot `esa-db-init` service from `ESA_DB_PASSWORD`, before every ESA start.
 - Tests and harnesses use throwaway schemas. Every `testEngine` test runs on its own schema with the reload-after-commit check; replay targets and local scripts run ESA with `-ephemeral-schema`, which drops its schema on exit. `scripts/test_postgres.sh` starts a disposable server.
 - A standby answers `/healthz` while `/v1/*` returns 503, so `-healthcheck` and every harness wait for `/healthz?role=active`.

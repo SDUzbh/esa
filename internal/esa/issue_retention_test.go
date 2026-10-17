@@ -3,7 +3,6 @@ package esa
 import (
 	"context"
 	"fmt"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -53,12 +52,6 @@ func TestEmptyIssueCleanupPreservesAudit(t *testing.T) {
 
 func TestIssueLimitUsesDurableAccessOrder(t *testing.T) {
 	e := testEngine(t)
-	path := filepath.Join(t.TempDir(), "state.json")
-	store, err := OpenStore(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	e.Store = store
 	seedIssueCatalogue(t, e, IssueLimit)
 	// Legacy issues have no access metadata: creation time provides a stable
 	// initial order. A successful detail read makes the oldest one most recent.
@@ -88,7 +81,7 @@ func TestIssueLimitUsesDurableAccessOrder(t *testing.T) {
 	ticket.ProjectID = "2" // The limit is global, not a separate project quota.
 	ticket.Description += " independent new issue"
 	receipt := receive(t, e, "new", ticket)
-	if _, err = e.ProcessOne(context.Background(), analyzerFunc(func(context.Context, AnalyzeRequest) (Report, error) { return diagnosticReport(), nil })); err != nil {
+	if _, err := e.ProcessOne(context.Background(), analyzerFunc(func(context.Context, AnalyzeRequest) (Report, error) { return diagnosticReport(), nil })); err != nil {
 		t.Fatal(err)
 	}
 	state := e.Store.Snapshot()
@@ -98,11 +91,7 @@ func TestIssueLimitUsesDurableAccessOrder(t *testing.T) {
 	if state.Memberships.Get("issue_001").State != "detached" {
 		t.Fatal("eviction left an active membership")
 	}
-	reopened, err := OpenStore(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	engine, err := NewEngine(reopened, e.Config)
+	engine, err := NewEngine(reopenTestStore(t, e.Store), e.Config)
 	if err != nil {
 		t.Fatal(err)
 	}

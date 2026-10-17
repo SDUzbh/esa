@@ -1,6 +1,7 @@
 package esa
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"os"
@@ -106,7 +107,7 @@ func legacyStateFile(t *testing.T, s State, tamper string) string {
 	return path
 }
 
-func TestLegacyEventsConvertOnLoad(t *testing.T) {
+func TestLegacyEventsConvertOnImport(t *testing.T) {
 	e := testEngine(t)
 	accepted := fixture(e, "T1")
 	receive(t, e, "accepted", accepted)
@@ -120,11 +121,10 @@ func TestLegacyEventsConvertOnLoad(t *testing.T) {
 	if b, _ := os.ReadFile(path); !strings.Contains(string(b), `"accepted":{"forwarded_by"`) || !strings.Contains(string(b), `"ticket":{`) {
 		t.Fatal("fixture is not in the legacy event shape")
 	}
-	loaded, err := OpenStore(path)
+	s, err := ReadLegacyStore(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	s := loaded.Snapshot()
 	if r := s.Events.Get("accepted"); r.Ticket != nil || r.SnapshotID == "" || r.TicketHash != s.Snapshots.Get(r.SnapshotID).Hash || r.TicketID != "T1" {
 		t.Fatal("legacy event with a matching snapshot was not compacted", r)
 	}
@@ -134,9 +134,16 @@ func TestLegacyEventsConvertOnLoad(t *testing.T) {
 	if r := s.Events.Get("divergent"); r.Ticket == nil || r.Ticket.Subject != "diverges from its snapshot" || r.TicketHash != hash(*r.Ticket) {
 		t.Fatal("legacy event that differs from its snapshot lost its own ticket", r)
 	}
-	// Idempotency keeps working on converted records.
+	// Idempotency keeps working on converted records once imported.
+	url := testDatabaseURL(t)
+	p := acquiredTestPostgres(t, url, testSchema(t, url))
+	if err = p.Import(context.Background(), s); err != nil {
+		t.Fatal(err)
+	}
 	reloaded := testEngine(t)
-	reloaded.Store = loaded
+	if reloaded.Store, err = newStore(p); err != nil {
+		t.Fatal(err)
+	}
 	original := Event{ID: "accepted", Origin: "test", ForwardedBy: "fixture-human", ForwardedAt: e.Now(), Ticket: accepted}
 	if receipt, err := reloaded.Receive(original); err != nil || receipt.Action != "duplicate" {
 		t.Fatal("converted event no longer deduplicates", receipt.Action, err)
@@ -145,19 +152,5 @@ func TestLegacyEventsConvertOnLoad(t *testing.T) {
 	changed.Ticket.Subject = "Different content"
 	if _, err := reloaded.Receive(changed); !errors.Is(err, ErrRejected) {
 		t.Fatal("converted event no longer rejects a reused ID with different content", err)
-	}
-	// The next write stores the new shape.
-	if err = loaded.Update(func(st *State) error { st.LastClaimedProject = "1"; return nil }); err != nil {
-		t.Fatal(err)
-	}
-	var written struct {
-		Events map[string]map[string]json.RawMessage `json:"events"`
-	}
-	b, _ := os.ReadFile(path)
-	if err = json.Unmarshal(b, &written); err != nil {
-		t.Fatal(err)
-	}
-	if _, copied := written.Events["accepted"]["ticket"]; copied || len(written.Events["accepted"]["ticket_hash"]) == 0 {
-		t.Fatal("rewritten file still copies the ticket into an accepted event")
 	}
 }

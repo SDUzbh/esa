@@ -110,6 +110,24 @@ func (p *PostgresPersister) Close() {
 	}
 }
 
+// EphemeralSchema returns a new, randomly named schema for a throwaway state:
+// tests and replay targets each get their own, then drop it with DropSchema.
+func EphemeralSchema() string {
+	return randomID("ephemeral_")
+}
+
+// DropSchema removes the persister's schema and everything in it, on its own
+// session. It is for ephemeral schemas; call it after the Store is done.
+func (p *PostgresPersister) DropSchema(ctx context.Context) error {
+	conn, err := pgx.Connect(ctx, p.url)
+	if err != nil {
+		return err
+	}
+	defer conn.Close(ctx)
+	_, err = conn.Exec(ctx, "DROP SCHEMA IF EXISTS "+pgx.Identifier{p.schema}.Sanitize()+" CASCADE")
+	return err
+}
+
 // ReadSnapshot reads one stored snapshot, including one that is not loaded
 // into memory. It does not load it into the Store. Snapshots are immutable, so
 // the read needs no transaction with the writer.

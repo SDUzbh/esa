@@ -19,6 +19,35 @@ func (f applicationAnalyzer) Analyze(ctx context.Context, in esa.AnalyzeRequest)
 	return f(ctx, in)
 }
 
+// testStore opens an ESA store on a throwaway Postgres schema, dropped when
+// the test ends. ESA keeps its state only in Postgres.
+func testStore(t *testing.T) *esa.Store {
+	t.Helper()
+	url := os.Getenv("ESA_TEST_DATABASE_URL")
+	if url == "" {
+		t.Fatal("ESA_TEST_DATABASE_URL is required: ESA keeps its state in Postgres. Start a disposable server with scripts/test_postgres.sh")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	p, err := esa.OpenPostgres(ctx, url, esa.PostgresOptions{Schema: esa.EphemeralSchema(), Timeout: 10 * time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := p.DropSchema(ctx); err != nil {
+			t.Error(err)
+		}
+		p.Close()
+	})
+	store, err := esa.OpenPostgresStore(ctx, p, 20*time.Millisecond)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return store
+}
+
 func TestBlockedEngineeringHandoffAwaitsInformationOverHTTP(t *testing.T) {
 	for _, versions := range [][]string{nil, {"unknown"}} {
 		t.Run(strings.Join(versions, ","), func(t *testing.T) {
@@ -32,10 +61,7 @@ func TestBlockedEngineeringHandoffAwaitsInformationOverHTTP(t *testing.T) {
 			if err = json.Unmarshal(raw, &config); err != nil {
 				t.Fatal(err)
 			}
-			store, err := esa.OpenStore("")
-			if err != nil {
-				t.Fatal(err)
-			}
+			store := testStore(t)
 			engine, err := esa.NewEngine(store, config)
 			if err != nil {
 				t.Fatal(err)
@@ -100,7 +126,7 @@ func TestNativeRoutingReusesAuthoritativeIssueOverHTTP(t *testing.T) {
 			if err = json.Unmarshal(raw, &config); err != nil {
 				t.Fatal(err)
 			}
-			store, _ := esa.OpenStore("")
+			store := testStore(t)
 			engine, err := esa.NewEngine(store, config)
 			if err != nil {
 				t.Fatal(err)
@@ -186,7 +212,7 @@ func TestNativeEngineeringRequestsRoutingAssignmentOverHTTP(t *testing.T) {
 			if err = json.Unmarshal(raw, &config); err != nil {
 				t.Fatal(err)
 			}
-			store, _ := esa.OpenStore("")
+			store := testStore(t)
 			engine, err := esa.NewEngine(store, config)
 			if err != nil {
 				t.Fatal(err)

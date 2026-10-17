@@ -8,8 +8,6 @@ services:
       POSTGRES_DB: redmine
       POSTGRES_USER: redmine
       POSTGRES_PASSWORD: ${REDMINE_DB_PASSWORD:?Set REDMINE_DB_PASSWORD in .env}
-      # Used only by postgres-init/10-esa-database.sh, run once by hand.
-      ESA_DB_PASSWORD: ${ESA_DB_PASSWORD:-}
       TZ: Asia/Shanghai
     volumes:
       - database:/var/lib/postgresql/data
@@ -50,6 +48,24 @@ services:
       retries: 20
       start_period: 180s
 
+  # Creates ESA's role and database in db, or updates the role's password,
+  # before every ESA start (postgres-init/10-esa-database.sh), then exits.
+  esa-db-init:
+    image: esa-db-init-local:17
+    build:
+      context: ../..
+      dockerfile: deploy/redmine/Dockerfile.esa-db-init
+    restart: "no"
+    environment:
+      PGHOST: db
+      PGPASSWORD: ${REDMINE_DB_PASSWORD:?Set REDMINE_DB_PASSWORD in .env}
+      POSTGRES_USER: redmine
+      POSTGRES_DB: redmine
+      ESA_DB_PASSWORD: ${ESA_DB_PASSWORD:?Set ESA_DB_PASSWORD in .env (openssl rand -hex 24)}
+    depends_on:
+      db:
+        condition: service_healthy
+
   esa:
     image: esa-local:0.1.0
     user: "${ESA_UID:-1000}:${ESA_GID:-1000}"
@@ -60,16 +76,18 @@ services:
     environment:
       ESA_API_TOKEN: ${ESA_API_TOKEN:?Set ESA_API_TOKEN in .env}
       ESA_REDMINE_URL: http://redmine:3000
-      # Postgres state store; empty keeps the JSON store in the esa_state volume.
-      ESA_DATABASE_URL: ${ESA_DATABASE_URL:-}
+      # ESA's state store, provisioned by esa-db-init. Use a hex password so
+      # it needs no URL encoding.
+      ESA_DATABASE_URL: postgres://esa:${ESA_DB_PASSWORD:?Set ESA_DB_PASSWORD in .env (openssl rand -hex 24)}@db:5432/esa?sslmode=disable
       # Removed setting; passed through so a leftover value stops ESA with a clear error.
       ESA_STATE_URL: ${ESA_STATE_URL:-}
       ESA_ANALYZER_URL: ${ESA_ANALYZER_URL:-}
       ESA_ANALYZER_TOKEN: ${ESA_API_TOKEN:?Set ESA_API_TOKEN in .env}
     depends_on:
-      db:
-        condition: service_healthy
+      esa-db-init:
+        condition: service_completed_successfully
     volumes:
+      # Holds a JSON store from before Postgres until it is imported.
       - esa_state:/var/lib/esa
       - ${ESA_ISSUES_DIRECTORY:-../../runtime/esa/issues}:/var/lib/esa/issues
     healthcheck:

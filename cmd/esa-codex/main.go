@@ -233,9 +233,7 @@ func run() error {
 		if err = json.Unmarshal(b, &config); err != nil {
 			return err
 		}
-		store, _ := esa.OpenStore("")
-		_, err = esa.NewEngine(store, config)
-		if err != nil {
+		if err = esa.ValidateConfig(config); err != nil {
 			return err
 		}
 		if *runID == "" {

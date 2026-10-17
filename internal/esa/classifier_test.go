@@ -35,11 +35,7 @@ func classifierEngine(t *testing.T) *Engine {
 	}
 	c := e.Config
 	c.Classifier = ClassifierConfig{Enabled: true, Models: map[string]string{"1": path}}
-	store, err := OpenStore(filepath.Join(t.TempDir(), "state.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	engine, err := NewEngine(store, c)
+	engine, err := NewEngine(newTestStore(t), c)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -131,9 +127,9 @@ func TestClassifierPredictionHumanFeedbackExportAndPersistence(t *testing.T) {
 	if w.Code != 200 || !strings.Contains(w.Body.String(), `"reviewer":"engineer"`) {
 		t.Fatal("ticket view missing human feedback", w.Body)
 	}
-	loaded, err := OpenStore(e.Store.persister.(*jsonPersister).path)
-	if err != nil || loaded.Snapshot().ClassifierFeedback.Len() != 1 {
-		t.Fatal("feedback not durable", err)
+	e.Store = reopenTestStore(t, e.Store)
+	if e.Store.Snapshot().ClassifierFeedback.Len() != 1 {
+		t.Fatal("feedback not durable")
 	}
 	req.Labels = []string{"unsupported"}
 	b, _ = json.Marshal(req)

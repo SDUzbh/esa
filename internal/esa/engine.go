@@ -52,10 +52,39 @@ func (e *Engine) WorkSignal() <-chan struct{} { return e.Store.WorkSignal() }
 // NewEngine validates budgets, worker limits and optional project models.
 // It initializes replay time only when explicitly configured and enforces Issue retention.
 func NewEngine(store *Store, config Config) (*Engine, error) {
+	e, err := configuredEngine(config)
+	if err != nil {
+		return nil, err
+	}
+	e.Store = store
+	if config.Replay.Enabled {
+		at := store.Snapshot().ReplayClock
+		if at.IsZero() {
+			at = config.Replay.InitialTime
+		}
+		e.clock.Store(at.UnixNano())
+		e.Now = func() time.Time { return time.Unix(0, e.clock.Load()).UTC() }
+	}
+	if err := e.update(func(*State) error { return nil }); err != nil {
+		return nil, err
+	}
+	return e, nil
+}
+
+// ValidateConfig reports whether NewEngine would accept the configuration,
+// loading any classifier models, without a store.
+func ValidateConfig(config Config) error {
+	_, err := configuredEngine(config)
+	return err
+}
+
+// configuredEngine validates the configuration, applies its defaults and
+// loads classifier models; NewEngine then binds the store.
+func configuredEngine(config Config) (*Engine, error) {
 	if config.Version == "" || config.Budget.MaxCalls < 0 || config.Budget.MaxCalls > 1 || config.Budget.TimeoutSeconds < 1 || config.Budget.MaxInputTokens < 1 || config.Budget.MaxOutputTokens < 1 || !config.Budget.validWeights() {
 		return nil, fmt.Errorf("%w: invalid workflow configuration or budget", ErrInvalid)
 	}
-	e := &Engine{Store: store, Config: config, Now: func() time.Time { return time.Now().UTC() }, classifiers: map[string]*classifier.Model{}}
+	e := &Engine{Config: config, Now: func() time.Time { return time.Now().UTC() }, classifiers: map[string]*classifier.Model{}}
 	if config.Classifier.Enabled {
 		if len(config.Classifier.Models) == 0 {
 			return nil, fmt.Errorf("%w: enabled classifier requires project models", ErrInvalid)
@@ -89,21 +118,10 @@ func NewEngine(store *Store, config Config) (*Engine, error) {
 	if e.Config.Worker.MaxQueueWaitSeconds < 1 || e.Config.Worker.MaxQueueWaitSeconds > 86400 {
 		return nil, fmt.Errorf("%w: max_queue_wait_seconds must be 1..86400", ErrInvalid)
 	}
+	if config.Replay.Enabled && (config.Replay.InitialTime.IsZero() || len(config.Replay.Projects) == 0) {
+		return nil, fmt.Errorf("%w: replay clock requires initial_time and clock_projects", ErrInvalid)
+	}
 	e.workerID = randomID("worker_")
-	if config.Replay.Enabled {
-		if config.Replay.InitialTime.IsZero() || len(config.Replay.Projects) == 0 {
-			return nil, fmt.Errorf("%w: replay clock requires initial_time and clock_projects", ErrInvalid)
-		}
-		at := store.Snapshot().ReplayClock
-		if at.IsZero() {
-			at = config.Replay.InitialTime
-		}
-		e.clock.Store(at.UnixNano())
-		e.Now = func() time.Time { return time.Unix(0, e.clock.Load()).UTC() }
-	}
-	if err := e.update(func(*State) error { return nil }); err != nil {
-		return nil, err
-	}
 	return e, nil
 }
 

@@ -12,15 +12,18 @@ Requirements are Go matching `go.mod`, a C compiler for the race detector,
 Python 3.9+, Ruby with Minitest, Node.js 18+, and Git. Go modules are
 downloaded through the module proxy and checked with `go mod verify`. Docker,
 Redmine, Jira data, Kafka source, Agent authentication and API credentials are
-not required.
+not required; a disposable Postgres is (below).
 
-The Postgres store tests need `ESA_TEST_DATABASE_URL`. CI provides it through a
-digest-pinned `postgres:17-alpine` service container and also reruns the
-`internal/esa` suite with `ESA_TEST_STORE=postgres`: every `testEngine`-based
-test then runs on its own schema and reloads and compares the state after every
-commit. Locally the Postgres tests skip unless the variable is set; outside CI
-any disposable Postgres 17 works, for example
-`postgres://esa:<password>@127.0.0.1:55432/esa_test?sslmode=disable`.
+ESA keeps its state only in Postgres, so the store-backed tests, the replay
+fixtures and `scripts/check_workflow.sh` need `ESA_TEST_DATABASE_URL`; without
+it `internal/esa` and the workflow check stop before running anything. CI
+provides it through a digest-pinned `postgres:17-alpine` service container.
+Every `testEngine`-based test runs on its own schema and reloads and compares
+the state after every commit; replay targets run ESA with `-ephemeral-schema`.
+Locally, `sh scripts/test_postgres.sh && . .tools/test-postgres/env` starts the
+same image in Docker (data in tmpfs, `127.0.0.1:55432`) and loads the URL from
+a private file; `sh scripts/test_postgres.sh stop` removes it. Any disposable
+Postgres 17 works.
 
 The entry point reuses:
 

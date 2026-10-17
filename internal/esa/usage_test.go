@@ -49,8 +49,7 @@ func TestTokenWeightsValidatedAndAggregateAlertsRefreshed(t *testing.T) {
 	for _, weight := range []float64{-1, math.NaN(), math.Inf(1)} {
 		config := testEngine(t).Config
 		config.Budget.TokenWeights = &TokenWeights{Input: 1, CachedInput: weight, Output: 1}
-		store, _ := OpenStore("")
-		if _, err := NewEngine(store, config); err == nil {
+		if err := ValidateConfig(config); err == nil {
 			t.Fatal("invalid weight accepted", weight)
 		}
 	}

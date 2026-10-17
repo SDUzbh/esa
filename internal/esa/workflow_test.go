@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -234,19 +233,15 @@ func TestAnalyzerGatesBudgetRecoveryAndStaleResults(t *testing.T) {
 	})
 }
 func TestDurableStoreAndRollback(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "state.json")
-	store, err := OpenStore(path)
-	if err != nil {
+	store := newTestStore(t)
+	if err := store.Update(func(s *State) error { s.LastClaimedProject = "3"; return nil }); err != nil {
 		t.Fatal(err)
 	}
-	if err = store.Update(func(s *State) error { s.LastClaimedProject = "3"; return nil }); err != nil {
-		t.Fatal(err)
+	loaded := reopenTestStore(t, store)
+	if loaded.Snapshot().LastClaimedProject != "3" {
+		t.Fatal("committed Update lost across a restart")
 	}
-	loaded, err := OpenStore(path)
-	if err != nil || loaded.Snapshot().LastClaimedProject != "3" {
-		t.Fatal(err)
-	}
-	if err = loaded.Update(func(s *State) error { s.LastClaimedProject = "4"; return ErrConflict }); !errors.Is(err, ErrConflict) || loaded.Snapshot().LastClaimedProject != "3" {
+	if err := loaded.Update(func(s *State) error { s.LastClaimedProject = "4"; return ErrConflict }); !errors.Is(err, ErrConflict) || loaded.Snapshot().LastClaimedProject != "3" {
 		t.Fatal("failed transaction committed")
 	}
 	// Snapshot is read-only and shared; Clone is the detached copy to edit.

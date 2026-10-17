@@ -19,7 +19,7 @@ func TestSharedInvestigationsResumesNeverInvokedTaskWhenProviderAppears(t *testi
 	if _, err := e.ProcessOne(context.Background(), analyzerFunc(func(context.Context, AnalyzeRequest) (Report, error) { calls++; return diagnosticReport(), nil })); err != nil {
 		t.Fatal(err)
 	}
-	if calls != 1 || len(e.Store.Snapshot().Investigations) != 1 {
+	if calls != 1 || e.Store.Snapshot().Investigations.Len() != 1 {
 		t.Fatal("provider change duplicated or suppressed the queued task")
 	}
 }
@@ -33,7 +33,7 @@ func TestSharedInvestigationsProjectRotationRetainsTaskOrder(t *testing.T) {
 	receive(t, e, "b", b)
 	s := e.Store.Snapshot()
 	s.LastClaimedProject = "1"
-	ordered := fairInvestigations(s)
+	ordered := fairInvestigations(s, "queued")
 	if ordered[0].ProjectID != "2" {
 		t.Fatal("project rotation failed")
 	}

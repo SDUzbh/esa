@@ -300,26 +300,19 @@ type pgTable struct {
 	decode func(*State, string, []byte) error
 }
 
-func mapTable[V any](name string, field func(*State) *map[string]V) pgTable {
+func mapTable[V any](name string, field func(*State) *Table[V]) pgTable {
 	return pgTable{
 		name: name,
-		ids: func(s *State) []string {
-			ids := make([]string, 0, len(*field(s)))
-			for id := range *field(s) {
-				ids = append(ids, id)
-			}
-			return ids
+		ids:  func(s *State) []string { return field(s).Keys() },
+		encode: func(s *State, id string) ([]byte, error) {
+			return json.Marshal(field(s).Get(id))
 		},
-		encode: func(s *State, id string) ([]byte, error) { return json.Marshal((*field(s))[id]) },
 		decode: func(s *State, id string, payload []byte) error {
 			var v V
 			if err := json.Unmarshal(payload, &v); err != nil {
 				return fmt.Errorf("%s %s: %w", name, id, err)
 			}
-			if *field(s) == nil {
-				*field(s) = map[string]V{}
-			}
-			(*field(s))[id] = v
+			field(s).Put(id, v)
 			return nil
 		},
 	}
@@ -327,30 +320,30 @@ func mapTable[V any](name string, field func(*State) *map[string]V) pgTable {
 
 // pgTables lists every State map; TestPostgresTablesCoverEveryMap enforces it.
 var pgTables = []pgTable{
-	mapTable("latest_snapshot", func(s *State) *map[string]string { return &s.LatestSnapshot }),
-	mapTable("snapshots", func(s *State) *map[string]TicketSnapshot { return &s.Snapshots }),
-	mapTable("engineering_issues", func(s *State) *map[string]EngineeringIssue { return &s.Issues }),
-	mapTable("issue_ticket_links", func(s *State) *map[string]IssueTicketLink { return &s.Memberships }),
-	mapTable("issue_overrides", func(s *State) *map[string]string { return &s.IssueOverrides }),
-	mapTable("investigations", func(s *State) *map[string]Investigation { return &s.Investigations }),
-	mapTable("investigation_groups", func(s *State) *map[string]InvestigationGroup { return &s.Groups }),
-	mapTable("solution_revisions", func(s *State) *map[string]SolutionRevision { return &s.Solutions }),
-	mapTable("classifier_predictions", func(s *State) *map[string]ClassifierPrediction { return &s.ClassifierPredictions }),
-	mapTable("classifier_feedback", func(s *State) *map[string]ClassifierFeedback { return &s.ClassifierFeedback }),
-	mapTable("tickets", func(s *State) *map[string]Ticket { return &s.Tickets }),
+	mapTable("latest_snapshot", func(s *State) *Table[string] { return &s.LatestSnapshot }),
+	mapTable("snapshots", func(s *State) *Table[TicketSnapshot] { return &s.Snapshots }),
+	mapTable("engineering_issues", func(s *State) *Table[EngineeringIssue] { return &s.Issues }),
+	mapTable("issue_ticket_links", func(s *State) *Table[IssueTicketLink] { return &s.Memberships }),
+	mapTable("issue_overrides", func(s *State) *Table[string] { return &s.IssueOverrides }),
+	mapTable("investigations", func(s *State) *Table[Investigation] { return &s.Investigations }),
+	mapTable("investigation_groups", func(s *State) *Table[InvestigationGroup] { return &s.Groups }),
+	mapTable("solution_revisions", func(s *State) *Table[SolutionRevision] { return &s.Solutions }),
+	mapTable("classifier_predictions", func(s *State) *Table[ClassifierPrediction] { return &s.ClassifierPredictions }),
+	mapTable("classifier_feedback", func(s *State) *Table[ClassifierFeedback] { return &s.ClassifierFeedback }),
+	mapTable("tickets", func(s *State) *Table[Ticket] { return &s.Tickets }),
 	eventsTable(),
-	mapTable("receipts", func(s *State) *map[string]Receipt { return &s.Receipts }),
-	mapTable("event_rejections", func(s *State) *map[string]EventRejection { return &s.Rejections }),
+	mapTable("receipts", func(s *State) *Table[Receipt] { return &s.Receipts }),
+	mapTable("event_rejections", func(s *State) *Table[EventRejection] { return &s.Rejections }),
 	runsTable(),
-	mapTable("latest", func(s *State) *map[string]string { return &s.Latest }),
-	mapTable("cases", func(s *State) *map[string]Case { return &s.Cases }),
+	mapTable("latest", func(s *State) *Table[string] { return &s.Latest }),
+	mapTable("cases", func(s *State) *Table[Case] { return &s.Cases }),
 }
 
 // eventsTable stores records without Raw; Raw goes to the cold event_raw table.
 func eventsTable() pgTable {
-	t := mapTable("events", func(s *State) *map[string]EventRecord { return &s.Events })
+	t := mapTable("events", func(s *State) *Table[EventRecord] { return &s.Events })
 	t.encode = func(s *State, id string) ([]byte, error) {
-		r := s.Events[id]
+		r := s.Events.Get(id)
 		r.Raw = nil
 		return json.Marshal(r)
 	}
@@ -360,14 +353,14 @@ func eventsTable() pgTable {
 // runsTable omits a run's input when its snapshot holds the identical ticket;
 // Load restores it from that snapshot, which is always loaded.
 func runsTable() pgTable {
-	t := mapTable("runs", func(s *State) *map[string]Run { return &s.Runs })
+	t := mapTable("runs", func(s *State) *Table[Run] { return &s.Runs })
 	t.encode = func(s *State, id string) ([]byte, error) {
-		run := s.Runs[id]
+		run := s.Runs.Get(id)
 		b, err := json.Marshal(run)
 		if err != nil || run.SnapshotID == "" {
 			return b, err
 		}
-		if snap, ok := s.Snapshots[run.SnapshotID]; !ok || hash(run.Input) != snap.Hash {
+		if snap, ok := s.Snapshots.Lookup(run.SnapshotID); !ok || hash(run.Input) != snap.Hash {
 			return b, nil
 		}
 		var fields map[string]json.RawMessage
@@ -417,7 +410,6 @@ func (p *PostgresPersister) load() (State, uint64, int64, error) {
 func (p *PostgresPersister) readState(ctx context.Context, tx pgx.Tx, full bool) (State, uint64, int64, error) {
 	var err error
 	state := initialState()
-	prepareInvestigations(&state)
 	var revision int64
 	var frameText []byte
 	if err = tx.QueryRow(ctx, "SELECT revision, frame FROM "+p.table("meta")).Scan(&revision, &frameText); err != nil {
@@ -464,16 +456,16 @@ func (p *PostgresPersister) readState(ctx context.Context, tx pgx.Tx, full bool)
 	if err != nil {
 		return State{}, 0, 0, err
 	}
-	for id, run := range state.Runs {
+	for id, run := range state.Runs.All() {
 		if run.SnapshotID == "" || run.Input.ID != "" {
 			continue
 		}
-		snap, ok := state.Snapshots[run.SnapshotID]
+		snap, ok := state.Snapshots.Lookup(run.SnapshotID)
 		if !ok {
 			return State{}, 0, 0, fmt.Errorf("run %s: snapshot %s for its input is missing", id, run.SnapshotID)
 		}
 		run.Input = snap.Ticket
-		state.Runs[id] = run
+		state.Runs.Put(id, run)
 	}
 	rows, err := tx.Query(ctx, "SELECT payload FROM "+p.table("case_history")+" ORDER BY seq")
 	if err != nil {
@@ -539,12 +531,12 @@ func (p *PostgresPersister) readColdRows(ctx context.Context, tx pgx.Tx, state *
 		if err = rows.Scan(&id, &raw); err != nil {
 			return err
 		}
-		r, ok := state.Events[id]
+		r, ok := state.Events.Lookup(id)
 		if !ok {
 			return fmt.Errorf("raw payload for unknown event %s", id)
 		}
 		r.Raw = json.RawMessage(raw)
-		state.Events[id] = r
+		state.Events.Put(id, r)
 	}
 	return rows.Err()
 }
@@ -553,13 +545,13 @@ func (p *PostgresPersister) readColdRows(ctx context.Context, tx pgx.Tx, state *
 // runs, investigation contracts and memberships that are not detached.
 func hotSnapshotIDs(s *State) []string {
 	hot := map[string]bool{}
-	for _, run := range s.Runs {
+	for _, run := range s.Runs.All() {
 		hot[run.SnapshotID] = true
 	}
-	for _, task := range s.Investigations {
+	for _, task := range s.Investigations.All() {
 		hot[task.Contract.SnapshotID] = true
 	}
-	for _, link := range s.Memberships {
+	for _, link := range s.Memberships.All() {
 		if link.State != "detached" {
 			hot[link.SnapshotID] = true
 		}
@@ -600,8 +592,8 @@ func (p *PostgresPersister) Apply(c Commit) (uint64, error) {
 			// Unchanged text is skipped, so an equal-content replacement never
 			// trips the immutability triggers.
 			batch.Queue("INSERT INTO "+name+" (id, payload, revision) VALUES ($1, $2::json, $3) ON CONFLICT (id) DO UPDATE SET payload = EXCLUDED.payload, revision = EXCLUDED.revision WHERE "+name+".payload::text IS DISTINCT FROM EXCLUDED.payload::text", id, string(payload), next)
-			if table.name == "events" && len(c.State.Events[id].Raw) > 0 {
-				batch.Queue("INSERT INTO "+p.table("event_raw")+" (event_id, raw) VALUES ($1, $2::json) ON CONFLICT (event_id) DO NOTHING", id, string(c.State.Events[id].Raw))
+			if table.name == "events" && len(c.State.Events.Get(id).Raw) > 0 {
+				batch.Queue("INSERT INTO "+p.table("event_raw")+" (event_id, raw) VALUES ($1, $2::json) ON CONFLICT (event_id) DO NOTHING", id, string(c.State.Events.Get(id).Raw))
 			}
 		}
 		if len(changes.Deleted) > 0 {

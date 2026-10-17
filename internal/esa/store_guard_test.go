@@ -21,7 +21,7 @@ func TestPublishedStateGuardDetectsInPlaceMutation(t *testing.T) {
 	}
 	e := testEngine(t)
 	receive(t, e, "seed", fixture(e, "T1"))
-	shared := e.Store.state.Tickets["T1"].Environment
+	shared := e.Store.state.Tickets.Get("T1").Environment
 	original := shared["details"]
 	// Simulate code that edits a nested map shared with the published state.
 	shared["details"] = "edited in place"
@@ -39,7 +39,7 @@ func TestPublishedStateGuardDetectsCallbackEditingSharedValue(t *testing.T) {
 	}
 	e := testEngine(t)
 	receive(t, e, "seed", fixture(e, "T1"))
-	shared := e.Store.state.Tickets["T1"].Environment
+	shared := e.Store.state.Tickets.Get("T1").Environment
 	original := shared["details"]
 	expectGuardPanic(t, func() {
 		_ = e.Store.Update(func(*State) error {

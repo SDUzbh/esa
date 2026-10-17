@@ -97,7 +97,7 @@ func visibleRun(r *http.Request, s State, run Run) Run {
 	// The frozen provider request is internal resume state, not public output.
 	run.PipelineInput = nil
 	if run.SourceTicketID != "" {
-		source, ok := s.Tickets[run.SourceTicketID]
+		source, ok := s.Tickets.Lookup(run.SourceTicketID)
 		if !ok || source.Private || !ticketAllowed(r, run.SourceTicketID) || !allowed(r, source.ProjectID) {
 			run.SourceTicketID = ""
 			run.Report = Report{Summary: "Shared investigation evidence is outside your issue visibility. Ask an authorized engineer to review it."}
@@ -185,24 +185,24 @@ type TicketRow struct {
 }
 
 func rowFor(s State, t Ticket) TicketRow {
-	row := TicketRow{Ticket: t, SnapshotID: s.LatestSnapshot[t.ID]}
-	if run, ok := s.Runs[s.Latest[t.ID]]; ok {
+	row := TicketRow{Ticket: t, SnapshotID: s.LatestSnapshot.Get(t.ID)}
+	if run, ok := s.Runs.Lookup(s.Latest.Get(t.ID)); ok {
 		run = runForTicket(run, t)
 		row.LatestRun = &run
-		if task, ok := s.Investigations[run.InvestigationID]; ok {
+		if task, ok := s.Investigations.Lookup(run.InvestigationID); ok {
 			row.Investigation = &task
 			row.Application = task.Application
 			if solution, ok := taskSolution(s, task); ok {
 				row.Solution = &solution
 			}
-			if issue, ok := s.Issues[task.IssueID]; ok {
+			if issue, ok := s.Issues.Lookup(task.IssueID); ok {
 				row.EngineeringIssue = &issue
 			}
 		}
 	}
 	if link, ok := activeMembership(s, t.ID); ok {
 		row.Membership = &link
-		if issue, exists := s.Issues[link.IssueID]; exists {
+		if issue, exists := s.Issues.Lookup(link.IssueID); exists {
 			row.EngineeringIssue = &issue
 		}
 		if row.Investigation != nil && link.IssueID != row.Investigation.IssueID {
@@ -218,14 +218,12 @@ func rowFor(s State, t Ticket) TicketRow {
 			}
 		}
 	}
-	for _, c := range s.Cases {
-		if c.TicketID == t.ID {
-			row.Case = &c
-			break
-		}
+	if ids := s.casesOfTicket(t.ID); len(ids) > 0 {
+		c := s.Cases.Get(ids[0])
+		row.Case = &c
 	}
 	if row.Investigation != nil && row.Investigation.IssueID != "" {
-		if _, exists := s.Issues[row.Investigation.IssueID]; !exists {
+		if _, exists := s.Issues.Lookup(row.Investigation.IssueID); !exists {
 			row.Investigation, row.Solution, row.Application = nil, nil, nil
 			if row.LatestRun != nil {
 				copy := *row.LatestRun
@@ -245,7 +243,7 @@ func (api *API) tickets(w http.ResponseWriter, r *http.Request) {
 	s := api.Engine.Store.Snapshot()
 	q := r.URL.Query()
 	rows := []TicketRow{}
-	for _, t := range s.Tickets {
+	for _, t := range s.Tickets.All() {
 		if t.ForwardedBy == "" || t.ForwardedAt.IsZero() || t.Private || !ticketAllowed(r, t.ID) || !allowed(r, t.ProjectID) || !queryMatches(t.ProjectID, q.Get("project_id")) || !queryMatches(t.Tracker, q.Get("tracker")) || !queryMatches(t.Status, q.Get("status")) || !queryMatches(t.Assignee, q.Get("assignee")) || !queryMatches(t.Source, q.Get("source")) {
 			continue
 		}
@@ -377,7 +375,7 @@ func (api *API) tickets(w http.ResponseWriter, r *http.Request) {
 
 func (api *API) ticket(w http.ResponseWriter, r *http.Request) {
 	s := api.Engine.Store.Snapshot()
-	t, ok := s.Tickets[r.PathValue("id")]
+	t, ok := s.Tickets.Lookup(r.PathValue("id"))
 	if !ok || t.ForwardedBy == "" || t.ForwardedAt.IsZero() || !ticketAllowed(r, t.ID) || !allowed(r, t.ProjectID) {
 		writeError(w, ErrNotFound)
 		return
@@ -386,7 +384,7 @@ func (api *API) ticket(w http.ResponseWriter, r *http.Request) {
 	// re-encodes the whole state, so plain reads must not pay for one.
 	if !t.Private && ticketTouchTarget(s, t.ID, api.Engine.Now()) != "" {
 		if err := api.Engine.update(func(state *State) error {
-			current := state.Tickets[t.ID]
+			current := state.Tickets.Get(t.ID)
 			if !current.Private && ticketAllowed(r, current.ID) && allowed(r, current.ProjectID) {
 				touchTicketIssue(state, current.ID, api.Engine.Now())
 			}
@@ -396,20 +394,20 @@ func (api *API) ticket(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s = api.Engine.Store.Snapshot()
-		t = s.Tickets[t.ID]
+		t = s.Tickets.Get(t.ID)
 	}
 	history := []Run{}
 	seen := map[string]bool{}
-	for _, run := range s.Runs {
-		if run.TicketID == t.ID {
-			history = append(history, visibleRun(r, s, run))
-			seen[run.ID] = true
-		}
+	for _, id := range s.runsOfTicket(t.ID) {
+		run := s.Runs.Get(id)
+		history = append(history, visibleRun(r, s, run))
+		seen[run.ID] = true
 	}
-	for _, link := range s.Memberships {
-		task := s.Investigations[link.InvestigationID]
-		run, ok := s.Runs[task.RunID]
-		if ok && link.TicketID == t.ID && !seen[run.ID] {
+	for _, id := range s.membershipsOfTicket(t.ID) {
+		link := s.Memberships.Get(id)
+		task := s.Investigations.Get(link.InvestigationID)
+		run, ok := s.Runs.Lookup(task.RunID)
+		if ok && !seen[run.ID] {
 			history = append(history, visibleRun(r, s, runForTicket(run, t)))
 			seen[run.ID] = true
 		}
@@ -429,7 +427,7 @@ func (api *API) ticket(w http.ResponseWriter, r *http.Request) {
 }
 
 func (api *API) analyze(w http.ResponseWriter, r *http.Request) {
-	t, ok := api.Engine.Store.Snapshot().Tickets[r.PathValue("id")]
+	t, ok := api.Engine.Store.Snapshot().Tickets.Lookup(r.PathValue("id"))
 	if !ok || t.ForwardedBy == "" || t.ForwardedAt.IsZero() || !ticketAllowed(r, t.ID) || !allowed(r, t.ProjectID) {
 		writeError(w, ErrNotFound)
 		return
@@ -451,7 +449,7 @@ func (api *API) analyze(w http.ResponseWriter, r *http.Request) {
 }
 
 func (api *API) run(w http.ResponseWriter, r *http.Request) {
-	run, ok := api.Engine.Store.Snapshot().Runs[r.PathValue("id")]
+	run, ok := api.Engine.Store.Snapshot().Runs.Lookup(r.PathValue("id"))
 	if !ok || !ticketAllowed(r, run.TicketID) || !allowed(r, run.ProjectID) {
 		writeError(w, ErrNotFound)
 		return
@@ -460,7 +458,7 @@ func (api *API) run(w http.ResponseWriter, r *http.Request) {
 }
 func (api *API) cases(w http.ResponseWriter, r *http.Request) {
 	rows := []Case{}
-	for _, c := range api.Engine.Store.Snapshot().Cases {
+	for _, c := range api.Engine.Store.Snapshot().Cases.All() {
 		if ticketAllowed(r, c.TicketID) && allowed(r, c.ProjectID) && queryMatches(c.ProjectID, r.URL.Query().Get("project_id")) && queryMatches(c.State, r.URL.Query().Get("state")) {
 			rows = append(rows, c)
 		}
@@ -469,7 +467,7 @@ func (api *API) cases(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{"cases": rows, "total_count": len(rows)})
 }
 func (api *API) reviewCase(w http.ResponseWriter, r *http.Request) {
-	c, ok := api.Engine.Store.Snapshot().Cases[r.PathValue("id")]
+	c, ok := api.Engine.Store.Snapshot().Cases.Lookup(r.PathValue("id"))
 	if !ok || !ticketAllowed(r, c.TicketID) || !allowed(r, c.ProjectID) {
 		writeError(w, ErrNotFound)
 		return

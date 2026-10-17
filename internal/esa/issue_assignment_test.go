@@ -12,14 +12,14 @@ func TestIssueCreationWaitsForAcceptedAnalysis(t *testing.T) {
 	e := testEngine(t)
 	r := receive(t, e, "first", fixture(e, "first"))
 	s := e.Store.Snapshot()
-	run := s.Runs[r.RunID]
-	if len(s.Issues) != 0 || run.IssueID != "" || s.Investigations[run.InvestigationID].Contract.IssueID != "" {
+	run := s.Runs.Get(r.RunID)
+	if s.Issues.Len() != 0 || run.IssueID != "" || s.Investigations.Get(run.InvestigationID).Contract.IssueID != "" {
 		t.Fatal("intake created or assigned an issue")
 	}
 	if _, err := e.ReviewMembership("first", MembershipReview{ExpectedSnapshotID: run.SnapshotID, Reviewer: "engineer", Reason: "Premature split"}); !errors.Is(err, ErrConflict) {
 		t.Fatal("membership review created an issue before analysis", err)
 	}
-	if _, err := e.ProcessOne(context.Background(), nil); err != nil || len(e.Store.Snapshot().Issues) != 0 {
+	if _, err := e.ProcessOne(context.Background(), nil); err != nil || e.Store.Snapshot().Issues.Len() != 0 {
 		t.Fatal("missing provider created an issue", err)
 	}
 	later := e.Now().Add(time.Hour)
@@ -35,9 +35,9 @@ func TestIssueCreationWaitsForAcceptedAnalysis(t *testing.T) {
 		t.Fatal(err)
 	}
 	s = e.Store.Snapshot()
-	run = s.Runs[r.RunID]
-	issue := s.Issues[run.IssueID]
-	if len(s.Issues) != 1 || issue.Title != "Agent identified empty assignment" || !issue.CreatedAt.Equal(later) || s.Investigations[run.InvestigationID].Contract.IssueID != "" {
+	run = s.Runs.Get(r.RunID)
+	issue := s.Issues.Get(run.IssueID)
+	if s.Issues.Len() != 1 || issue.Title != "Agent identified empty assignment" || !issue.CreatedAt.Equal(later) || s.Investigations.Get(run.InvestigationID).Contract.IssueID != "" {
 		t.Fatal("accepted result did not assign an issue at publication time", issue)
 	}
 }
@@ -68,7 +68,7 @@ func TestUnsuccessfulAnalysisCreatesNoIssue(t *testing.T) {
 				t.Fatal(err)
 			}
 			s := e.Store.Snapshot()
-			if len(s.Issues) != 0 || len(s.Solutions) != 0 || s.Runs[r.RunID].IssueID != "" {
+			if s.Issues.Len() != 0 || s.Solutions.Len() != 0 || s.Runs.Get(r.RunID).IssueID != "" {
 				t.Fatal("unsuccessful work created an issue or proposal")
 			}
 		})
@@ -82,7 +82,7 @@ func TestCandidateIssueMustRemainVisibleWhenResultArrives(t *testing.T) {
 	if _, err := e.ProcessOne(context.Background(), analyzerFunc(func(context.Context, AnalyzeRequest) (Report, error) { return diagnosticReport(), nil })); err != nil {
 		t.Fatal(err)
 	}
-	old := e.Store.Snapshot().Runs[a.RunID]
+	old := e.Store.Snapshot().Runs.Get(a.RunID)
 	second := fixture(e, "second")
 	second.Description += " Another reproduction"
 	b := receive(t, e, "second", second)
@@ -99,7 +99,7 @@ func TestCandidateIssueMustRemainVisibleWhenResultArrives(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := e.Store.Snapshot()
-	if s.Runs[b.RunID].State != "failed" || s.Runs[b.RunID].IssueID != "" || len(s.Issues) != 0 {
+	if s.Runs.Get(b.RunID).State != "failed" || s.Runs.Get(b.RunID).IssueID != "" || s.Issues.Len() != 0 {
 		t.Fatal("withdrawn candidate was assigned or replaced by a fabricated issue")
 	}
 }
@@ -121,7 +121,7 @@ func TestFutureIssuePublicationDoesNotEnterEarlierTask(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := e.Store.Snapshot()
-	task := s.Investigations[s.Runs[r.RunID].InvestigationID]
+	task := s.Investigations.Get(s.Runs.Get(r.RunID).InvestigationID)
 	if len(issueRecords(s, task, ticket)) != 0 {
 		t.Fatal("future analysis leaked into candidate context")
 	}
@@ -143,8 +143,8 @@ func TestReusedConclusionRetainsSourceVisibilityAndWithdrawal(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := e.Store.Snapshot()
-	task := s.Investigations[s.Runs[r.RunID].InvestigationID]
-	if s.Runs[r.RunID].SourceTicketID != first.ID || task.Application == nil || task.Application.SourceTicketID != first.ID || len(s.Solutions) != 1 {
+	task := s.Investigations.Get(s.Runs.Get(r.RunID).InvestigationID)
+	if s.Runs.Get(r.RunID).SourceTicketID != first.ID || task.Application == nil || task.Application.SourceTicketID != first.ID || s.Solutions.Len() != 1 {
 		t.Fatal("reuse lost its original evidence source")
 	}
 	for _, path := range []string{"/v1/tickets/consumer", "/v1/investigations/" + task.ID, "/v1/investigations/" + task.ID + "/solutions"} {
@@ -156,7 +156,7 @@ func TestReusedConclusionRetainsSourceVisibilityAndWithdrawal(t *testing.T) {
 	first.Private = true
 	receive(t, e, "private", first)
 	s = e.Store.Snapshot()
-	task = s.Investigations[task.ID]
+	task = s.Investigations.Get(task.ID)
 	if task.State != "withdrawn" || task.Application == nil || task.Application.State != "withdrawn" {
 		t.Fatal("source privacy failed to withdraw reused proposal")
 	}
@@ -169,16 +169,16 @@ func TestReplacementTaskDoesNotPreassignOrRetainOldMembership(t *testing.T) {
 	if _, err := e.ProcessOne(context.Background(), analyzerFunc(func(context.Context, AnalyzeRequest) (Report, error) { return diagnosticReport(), nil })); err != nil {
 		t.Fatal(err)
 	}
-	oldIssue := e.Store.Snapshot().Runs[first.RunID].IssueID
+	oldIssue := e.Store.Snapshot().Runs.Get(first.RunID).IssueID
 	r, err := e.Receive(Event{ID: "force", Origin: "test", Force: true, ForwardedBy: "human", ForwardedAt: e.Now(), Ticket: ticket})
 	if err != nil {
 		t.Fatal(err)
 	}
 	s := e.Store.Snapshot()
-	if s.Runs[r.RunID].IssueID != "" || len(s.Issues) != 1 {
+	if s.Runs.Get(r.RunID).IssueID != "" || s.Issues.Len() != 1 {
 		t.Fatal("replacement task was classified at intake")
 	}
-	for _, link := range s.Memberships {
+	for _, link := range s.Memberships.All() {
 		if link.TicketID == ticket.ID && link.State == "tentative" && link.IssueID != "" {
 			t.Fatal("old issue membership remained active")
 		}
@@ -191,7 +191,7 @@ func TestReplacementTaskDoesNotPreassignOrRetainOldMembership(t *testing.T) {
 		t.Fatal(err)
 	}
 	s = e.Store.Snapshot()
-	if s.Runs[r.RunID].IssueID != oldIssue || len(s.Issues) != 1 {
+	if s.Runs.Get(r.RunID).IssueID != oldIssue || s.Issues.Len() != 1 {
 		t.Fatal("existing issue was duplicated after analysis")
 	}
 }
@@ -203,7 +203,7 @@ func TestAgentReceivesIssuesAcrossScopesWithoutHostRelevanceGate(t *testing.T) {
 	if _, err := e.ProcessOne(context.Background(), analyzerFunc(func(context.Context, AnalyzeRequest) (Report, error) { return diagnosticReport(), nil })); err != nil {
 		t.Fatal(err)
 	}
-	original := e.Store.Snapshot().Runs[first.RunID]
+	original := e.Store.Snapshot().Runs.Get(first.RunID)
 	query := fixture(e, "query")
 	query.Subject, query.Description = "Unrelated wording", "Another failure report"
 	query.Components = []string{"broker"}
@@ -228,7 +228,7 @@ func TestAgentReceivesIssuesAcrossScopesWithoutHostRelevanceGate(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := e.Store.Snapshot()
-	if calls != 1 || len(s.Issues) != 2 || s.Runs[receipt.RunID].IssueID == original.IssueID {
+	if calls != 1 || s.Issues.Len() != 2 || s.Runs.Get(receipt.RunID).IssueID == original.IssueID {
 		t.Fatal("Agent assignment was not honored")
 	}
 }

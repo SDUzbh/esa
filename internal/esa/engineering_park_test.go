@@ -45,7 +45,7 @@ func runWorkers(t *testing.T, e *Engine, provider Analyzer, fallback time.Durati
 }
 
 func taskOf(s State, runID string) Investigation {
-	return s.Investigations[s.Runs[runID].InvestigationID]
+	return s.Investigations.Get(s.Runs.Get(runID).InvestigationID)
 }
 
 func TestParkedTaskFreesWorkerForRouting(t *testing.T) {
@@ -96,7 +96,7 @@ func TestParkedTaskFreesWorkerForRouting(t *testing.T) {
 	var parkedRun string
 	waitPipeline(t, func() bool {
 		s := e.Store.Snapshot()
-		for _, task := range s.Investigations {
+		for _, task := range s.Investigations.All() {
 			if parked(task) {
 				parkedRun = task.RunID
 			}
@@ -110,12 +110,12 @@ func TestParkedTaskFreesWorkerForRouting(t *testing.T) {
 	receipt := receive(t, e, cheap.ID, cheap)
 	waitPipeline(t, func() bool { return taskOf(e.Store.Snapshot(), receipt.RunID).State == "returned_to_support" })
 	s := e.Store.Snapshot()
-	if !parked(taskOf(s, parkedRun)) || engineering.Load() != EngineeringConcurrency || s.Runs[parkedRun].PipelineInput == nil {
+	if !parked(taskOf(s, parkedRun)) || engineering.Load() != EngineeringConcurrency || s.Runs.Get(parkedRun).PipelineInput == nil {
 		t.Fatal("routing the ticket disturbed the parked task or the engineering slots")
 	}
 	once.Do(func() { close(release) })
 	waitPipeline(t, func() bool {
-		for _, task := range e.Store.Snapshot().Investigations {
+		for _, task := range e.Store.Snapshot().Investigations.All() {
 			if task.State != "agent_proposed" && task.State != "returned_to_support" {
 				return false
 			}
@@ -123,8 +123,8 @@ func TestParkedTaskFreesWorkerForRouting(t *testing.T) {
 		return true
 	})
 	s = e.Store.Snapshot()
-	for _, task := range s.Investigations {
-		run := s.Runs[task.RunID]
+	for _, task := range s.Investigations.All() {
+		run := s.Runs.Get(task.RunID)
 		if run.Error != "" || run.PipelineInput != nil || run.Report.Envelope == nil {
 			t.Fatal("finished task kept resume state or lost its audit", task.State, run.Error)
 		}
@@ -132,8 +132,8 @@ func TestParkedTaskFreesWorkerForRouting(t *testing.T) {
 	if engineering.Load() != EngineeringConcurrency+1 || staleEpochAccepted.Load() {
 		t.Fatal("parked task was not resumed under a new epoch", engineering.Load())
 	}
-	if task := taskOf(s, parkedRun); task.Epoch != 2 || s.Runs[parkedRun].Report.Usage.Calls != 3 {
-		t.Fatal("parked task did not complete all stages", task.Epoch, s.Runs[parkedRun].Report.Usage)
+	if task := taskOf(s, parkedRun); task.Epoch != 2 || s.Runs.Get(parkedRun).Report.Usage.Calls != 3 {
+		t.Fatal("parked task did not complete all stages", task.Epoch, s.Runs.Get(parkedRun).Report.Usage)
 	}
 	mu.Lock()
 	defer mu.Unlock()
@@ -168,7 +168,7 @@ func TestFreedSlotWakesIdleWorkersWithoutPolling(t *testing.T) {
 	defer func() { close(stop); wg.Wait() }()
 	waitPipeline(t, func() bool {
 		waiting := 0
-		for _, task := range e.Store.Snapshot().Investigations {
+		for _, task := range e.Store.Snapshot().Investigations.All() {
 			if parked(task) {
 				waiting++
 			}
@@ -177,7 +177,7 @@ func TestFreedSlotWakesIdleWorkersWithoutPolling(t *testing.T) {
 	})
 	close(release)
 	waitPipeline(t, func() bool {
-		for _, task := range e.Store.Snapshot().Investigations {
+		for _, task := range e.Store.Snapshot().Investigations.All() {
 			if task.State != "agent_proposed" {
 				return false
 			}
@@ -188,12 +188,12 @@ func TestFreedSlotWakesIdleWorkersWithoutPolling(t *testing.T) {
 
 func TestParkedTasksResumeOldestFirstAcrossProjects(t *testing.T) {
 	at := time.Date(2026, 10, 11, 1, 0, 0, 0, time.UTC)
-	s := State{LastClaimedProject: "1", Investigations: map[string]Investigation{}}
+	s := State{LastClaimedProject: "1"}
 	for i, project := range []string{"1", "1", "2", "3", "2"} {
 		id := fmt.Sprint("task-", i)
-		s.Investigations[id] = Investigation{ID: id, ProjectID: project, State: "investigating", Phase: "waiting_engineering", WaitingSince: at.Add(time.Duration(i) * time.Second)}
+		s.Investigations.Put(id, Investigation{ID: id, ProjectID: project, State: "investigating", Phase: "waiting_engineering", WaitingSince: at.Add(time.Duration(i) * time.Second)})
 	}
-	s.Investigations["owned"] = Investigation{ID: "owned", ProjectID: "2", State: "investigating", Phase: "waiting_engineering", Owner: "worker", WaitingSince: at.Add(-time.Hour)}
+	s.Investigations.Put("owned", Investigation{ID: "owned", ProjectID: "2", State: "investigating", Phase: "waiting_engineering", Owner: "worker", WaitingSince: at.Add(-time.Hour)})
 	var order []string
 	for _, task := range fairParked(s) {
 		order = append(order, task.ID)
@@ -208,11 +208,11 @@ func TestQueueWaitIsMeasuredFromParking(t *testing.T) {
 	e.Config.Worker.MaxQueueWaitSeconds = 60
 	var id string
 	if err := e.update(func(s *State) error {
-		for _, task := range s.Investigations {
+		for _, task := range s.Investigations.All() {
 			// Queued long ago, but parked only now.
 			task.CreatedAt = e.Now().Add(-24 * time.Hour)
 			task.State, task.Phase, task.WaitingSince = "investigating", "waiting_engineering", time.Now().UTC()
-			s.Investigations[task.ID] = task
+			s.Investigations.Put(task.ID, task)
 			id = task.ID
 		}
 		return nil
@@ -223,20 +223,20 @@ func TestQueueWaitIsMeasuredFromParking(t *testing.T) {
 		if err := e.update(func(s *State) error { e.settleParked(s); return nil }); err != nil {
 			t.Fatal(err)
 		}
-		return e.Store.Snapshot().Investigations[id]
+		return e.Store.Snapshot().Investigations.Get(id)
 	}
 	if task := settle(); !parked(task) {
 		t.Fatal("queue wait counted time before parking", task.State)
 	}
 	if err := e.update(func(s *State) error {
-		task := s.Investigations[id]
+		task := s.Investigations.Get(id)
 		task.WaitingSince = time.Now().UTC().Add(-61 * time.Second)
-		s.Investigations[id] = task
+		s.Investigations.Put(id, task)
 		return nil
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if task := settle(); task.State != "failed" || e.Store.Snapshot().Runs[task.RunID].PipelineInput != nil {
+	if task := settle(); task.State != "failed" || e.Store.Snapshot().Runs.Get(task.RunID).PipelineInput != nil {
 		t.Fatal("expired queue wait did not fail the parked task", task.State)
 	}
 }
@@ -292,7 +292,7 @@ func occupyEngineering(t *testing.T, e *Engine) []string {
 	if err := e.update(func(s *State) error {
 		for i := 0; i < EngineeringConcurrency; i++ {
 			id := fmt.Sprint("investigation_busy_", i)
-			s.Investigations[id] = Investigation{ID: id, ProjectID: "busy", State: "investigating", Phase: "investigating", Owner: "other-process", Epoch: 1, LeaseUntil: e.Now().Add(time.Hour)}
+			s.Investigations.Put(id, Investigation{ID: id, ProjectID: "busy", State: "investigating", Phase: "investigating", Owner: "other-process", Epoch: 1, LeaseUntil: e.Now().Add(time.Hour)})
 			ids = append(ids, id)
 		}
 		return nil
@@ -306,9 +306,9 @@ func freeEngineering(t *testing.T, e *Engine, ids []string) {
 	t.Helper()
 	if err := e.update(func(s *State) error {
 		for _, id := range ids {
-			task := s.Investigations[id]
+			task := s.Investigations.Get(id)
 			task.State = "failed"
-			s.Investigations[id] = task
+			s.Investigations.Put(id, task)
 		}
 		return nil
 	}); err != nil {
@@ -338,7 +338,7 @@ func TestParkedTaskResumesAfterProviderRestart(t *testing.T) {
 				t.Fatal("lead was not routed", worked, err)
 			}
 			s := e.Store.Snapshot()
-			task, run := taskOf(s, lead.RunID), s.Runs[lead.RunID]
+			task, run := taskOf(s, lead.RunID), s.Runs.Get(lead.RunID)
 			if !parked(task) || run.PipelineInput == nil || run.Report.Usage.Calls != 1 || !task.LeaseUntil.IsZero() {
 				t.Fatal("full capacity did not park the routed task", task.State, task.Phase, task.Owner)
 			}
@@ -369,7 +369,7 @@ func TestParkedTaskResumesAfterProviderRestart(t *testing.T) {
 				}
 			}
 			s = e.Store.Snapshot()
-			task, run = taskOf(s, lead.RunID), s.Runs[lead.RunID]
+			task, run = taskOf(s, lead.RunID), s.Runs.Get(lead.RunID)
 			if keepsState {
 				if task.State != "agent_proposed" || run.Error != "" || run.Report.Usage.Calls != 3 || task.Epoch != 2 || taskOf(s, next.RunID).State != "agent_proposed" {
 					t.Fatal("restart lost the resumed run", task.State, run.Error, run.Report.Usage.Calls, task.Epoch)

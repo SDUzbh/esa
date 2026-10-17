@@ -111,7 +111,7 @@ func TestPipelineThreeEngineersAndFourthWaitsAcrossWorkers(t *testing.T) {
 				if !worked {
 					time.Sleep(5 * time.Millisecond)
 				}
-				if len(engine.Store.Snapshot().Solutions) == 4 {
+				if engine.Store.Snapshot().Solutions.Len() == 4 {
 					return
 				}
 			}
@@ -121,7 +121,7 @@ func TestPipelineThreeEngineersAndFourthWaitsAcrossWorkers(t *testing.T) {
 		if len(started) != 3 || routes.Load() != 4 {
 			return false
 		}
-		for _, task := range a.Store.Snapshot().Investigations {
+		for _, task := range a.Store.Snapshot().Investigations.All() {
 			if task.Phase == "waiting_engineering" {
 				return true
 			}
@@ -130,23 +130,23 @@ func TestPipelineThreeEngineersAndFourthWaitsAcrossWorkers(t *testing.T) {
 	})
 	s := a.Store.Snapshot()
 	waiting, investigating := 0, 0
-	for _, task := range s.Investigations {
+	for _, task := range s.Investigations.All() {
 		if task.Phase == "waiting_engineering" {
 			waiting++
 		}
 		if task.Phase == "investigating" {
 			investigating++
 		}
-		if s.Runs[task.RunID].State != "investigating" || s.Runs[task.RunID].Report.Usage.Calls != 1 {
+		if s.Runs.Get(task.RunID).State != "investigating" || s.Runs.Get(task.RunID).Report.Usage.Calls != 1 {
 			t.Fatal("missing durable claim/routing audit", task)
 		}
 	}
-	if waiting != 1 || investigating != 3 || len(s.Issues) != 0 || peak.Load() != 3 {
-		t.Fatal("invalid pipeline capacity", waiting, investigating, peak.Load(), len(s.Issues))
+	if waiting != 1 || investigating != 3 || s.Issues.Len() != 0 || peak.Load() != 3 {
+		t.Fatal("invalid pipeline capacity", waiting, investigating, peak.Load(), s.Issues.Len())
 	}
 	once.Do(func() { close(release) })
 	wg.Wait()
-	if len(a.Store.Snapshot().Solutions) != 4 || peak.Load() != 3 || len(started) != 4 {
+	if a.Store.Snapshot().Solutions.Len() != 4 || peak.Load() != 3 || len(started) != 4 {
 		t.Fatal("queued task did not drain")
 	}
 }
@@ -197,8 +197,8 @@ func TestPipelineRoutingJoinsPendingWithoutEarlyIssueOrSecondEngineer(t *testing
 		t.Fatal(err)
 	}
 	s := e.Store.Snapshot()
-	joined := s.Investigations[s.Runs[second.RunID].InvestigationID]
-	if joined.State != "joined" || joined.JoinedInvestigationID != s.Runs[first.RunID].InvestigationID || s.Latest[variant.ID] != first.RunID || s.Runs[second.RunID].Report.Usage.Calls != 1 || len(s.Issues) != 0 || engineers.Load() != 1 {
+	joined := s.Investigations.Get(s.Runs.Get(second.RunID).InvestigationID)
+	if joined.State != "joined" || joined.JoinedInvestigationID != s.Runs.Get(first.RunID).InvestigationID || s.Latest.Get(variant.ID) != first.RunID || s.Runs.Get(second.RunID).Report.Usage.Calls != 1 || s.Issues.Len() != 0 || engineers.Load() != 1 {
 		t.Fatal("duplicate engineering or missing routing audit", joined)
 	}
 	response := classifierRequest(e, "GET", "/v1/tickets/"+variant.ID, "", "1", variant.ID)
@@ -215,12 +215,12 @@ func TestPipelineRoutingJoinsPendingWithoutEarlyIssueOrSecondEngineer(t *testing
 		t.Fatal(err)
 	}
 	s = e.Store.Snapshot()
-	if len(s.Issues) != 1 || len(s.Solutions) != 1 || engineers.Load() != 1 {
+	if s.Issues.Len() != 1 || s.Solutions.Len() != 1 || engineers.Load() != 1 {
 		t.Fatal("duplicate issue/solution")
 	}
 	for _, ticket := range []string{"lead", "variant", "third"} {
 		link, ok := activeMembership(s, ticket)
-		if !ok || link.IssueID != s.Runs[first.RunID].IssueID || link.InvestigationID != joined.JoinedInvestigationID {
+		if !ok || link.IssueID != s.Runs.Get(first.RunID).IssueID || link.InvestigationID != joined.JoinedInvestigationID {
 			t.Fatal("joined member lost final assignment", ticket, link)
 		}
 	}
@@ -255,10 +255,10 @@ func TestPipelineRoutingLeaseBlocksIntakeAndExpiredClaimIsReleased(t *testing.T)
 	}
 	// Expire the owner while it is still returning a result: the result is fenced.
 	if err := e.update(func(s *State) error {
-		for id, task := range s.Investigations {
+		for id, task := range s.Investigations.All() {
 			if task.State == "running" {
 				task.LeaseUntil = e.Now().Add(-time.Second)
-				s.Investigations[id] = task
+				s.Investigations.Put(id, task)
 			}
 		}
 		return nil
@@ -327,7 +327,7 @@ func TestPipelineQueuedTicketJoinsCompletionBeyondItsCutoff(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := e.Store.Snapshot()
-	if s.Latest[ticket.ID] != lead.RunID || s.Runs[queued.RunID].State != "joined" || len(s.Solutions) != 1 {
+	if s.Latest.Get(ticket.ID) != lead.RunID || s.Runs.Get(queued.RunID).State != "joined" || s.Solutions.Len() != 1 {
 		t.Fatal("queue delay caused duplicate analysis")
 	}
 }
@@ -353,13 +353,13 @@ func TestPipelineJoinRechecksLeaseAndSourceVisibility(t *testing.T) {
 					r.Routing.RecordPath, r.Routing.RecordHash = recordPath(records[0]), issueRecordHash(records[0])
 					err := e.update(func(s *State) error {
 						if change == "expired" {
-							task := s.Investigations[s.Runs[lead.RunID].InvestigationID]
+							task := s.Investigations.Get(s.Runs.Get(lead.RunID).InvestigationID)
 							task.LeaseUntil = e.Now().Add(-time.Second)
-							s.Investigations[task.ID] = task
+							s.Investigations.Put(task.ID, task)
 						} else {
-							ticket := s.Tickets["lead"]
+							ticket := s.Tickets.Get("lead")
 							ticket.Private = true
-							s.Tickets["lead"] = ticket
+							s.Tickets.Put("lead", ticket)
 						}
 						return nil
 					})
@@ -388,8 +388,8 @@ func TestPipelineJoinRechecksLeaseAndSourceVisibility(t *testing.T) {
 				t.Fatal(err)
 			}
 			s := e.Store.Snapshot()
-			if s.Runs[next.RunID].State != "failed" || s.Latest[ticket.ID] != next.RunID || s.Runs[next.RunID].Report.Usage.Calls != 1 {
-				t.Fatal("invalid source/lease was joined or audit lost", s.Runs[next.RunID])
+			if s.Runs.Get(next.RunID).State != "failed" || s.Latest.Get(ticket.ID) != next.RunID || s.Runs.Get(next.RunID).Report.Usage.Calls != 1 {
+				t.Fatal("invalid source/lease was joined or audit lost", s.Runs.Get(next.RunID))
 			}
 			once.Do(func() { close(release) })
 			<-done
@@ -445,7 +445,7 @@ func TestPipelineReleasesEngineeringSlotBeforeAssignment(t *testing.T) {
 		}()
 	}
 	waitPipeline(t, func() bool { return assignments.Load() == 4 })
-	for _, task := range e.Store.Snapshot().Investigations {
+	for _, task := range e.Store.Snapshot().Investigations.All() {
 		if task.Phase != "assignment" || task.State != "investigating" {
 			t.Fatal("engineering capacity remained occupied during assignment", task)
 		}
@@ -459,13 +459,13 @@ func TestPipelineExpiredInvestigatingPhasesDoNotRetainClaims(t *testing.T) {
 		t.Run(phase, func(t *testing.T) {
 			e := testEngine(t)
 			receipt := receive(t, e, "abandoned", fixture(e, "abandoned"))
-			id := e.Store.Snapshot().Runs[receipt.RunID].InvestigationID
+			id := e.Store.Snapshot().Runs.Get(receipt.RunID).InvestigationID
 			if err := e.update(func(s *State) error {
-				task := s.Investigations[id]
+				task := s.Investigations.Get(id)
 				task.State, task.Phase, task.Owner, task.Epoch = "investigating", phase, "abandoned-worker", 1
 				task.InvocationStarted = true
 				task.LeaseUntil = e.Now().Add(-time.Second)
-				s.Investigations[id] = task
+				s.Investigations.Put(id, task)
 				return nil
 			}); err != nil {
 				t.Fatal(err)
@@ -476,7 +476,7 @@ func TestPipelineExpiredInvestigatingPhasesDoNotRetainClaims(t *testing.T) {
 			if err := e.Recover(); err != nil {
 				t.Fatal(err)
 			}
-			if task := e.Store.Snapshot().Investigations[id]; task.State != "failed" || task.Epoch != 2 {
+			if task := e.Store.Snapshot().Investigations.Get(id); task.State != "failed" || task.Epoch != 2 {
 				t.Fatal("investigating lease remained active", task)
 			}
 			ticket := fixture(e, "next")
@@ -516,7 +516,7 @@ func TestPipelineAssignmentCannotRewriteEngineeringFindings(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := e.Store.Snapshot()
-	if s.Runs[r.RunID].State != "failed" || len(s.Solutions) != 0 || len(s.Issues) != 0 || s.Runs[r.RunID].Report.Usage.Calls != 3 {
+	if s.Runs.Get(r.RunID).State != "failed" || s.Solutions.Len() != 0 || s.Issues.Len() != 0 || s.Runs.Get(r.RunID).Report.Usage.Calls != 3 {
 		t.Fatal("assignment rewrote the diagnosis or lost spend")
 	}
 }
@@ -540,8 +540,8 @@ func TestPipelineReturnToSupportCreatesNoIssueAndIsIdempotent(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := e.Store.Snapshot()
-	run := s.Runs[receipt.RunID]
-	if run.State != "returned_to_support" || run.Route != "customer_support" || len(s.Issues) != 0 || len(s.Solutions) != 0 || calls != 1 || len(run.Report.Recommendations) != 1 {
+	run := s.Runs.Get(receipt.RunID)
+	if run.State != "returned_to_support" || run.Route != "customer_support" || s.Issues.Len() != 0 || s.Solutions.Len() != 0 || calls != 1 || len(run.Report.Recommendations) != 1 {
 		t.Fatal("incorrect customer support outcome", run)
 	}
 	if again := receive(t, e, "invoice-again", ticket); again.RunID != receipt.RunID {

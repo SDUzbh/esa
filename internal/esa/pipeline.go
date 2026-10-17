@@ -27,8 +27,8 @@ func parked(task Investigation) bool {
 // engineeringActive counts reserved engineering slots, including single-call runs.
 func engineeringActive(s State) int {
 	active := 0
-	for _, task := range s.Investigations {
-		if activeInvestigation(task) && (task.Phase == "investigating" || task.Phase == "") {
+	for _, task := range s.investigationsIn("running", "investigating") {
+		if task.Phase == "investigating" || task.Phase == "" {
 			active++
 		}
 	}
@@ -38,7 +38,7 @@ func engineeringActive(s State) int {
 // fairParked orders parked tasks oldest first, rotating across projects.
 func fairParked(s State) []Investigation {
 	var rows []Investigation
-	for _, task := range s.Investigations {
+	for _, task := range s.investigationsIn("investigating") {
 		if parked(task) {
 			rows = append(rows, task)
 		}
@@ -56,8 +56,8 @@ func fairParked(s State) []Investigation {
 // Intake routing is serialized per project until its claim is committed. The
 // durable phase/lease is shared by all workers, including other ESA processes.
 func routingBusy(s State, project string) bool {
-	for _, task := range s.Investigations {
-		if task.ProjectID == project && task.State == "running" && task.Phase == "routing" {
+	for _, task := range s.investigationsIn("running") {
+		if task.ProjectID == project && task.Phase == "routing" {
 			return true
 		}
 	}
@@ -112,11 +112,11 @@ func (e *Engine) pipeline(ctx context.Context, provider PipelineAnalyzer, input 
 	// A task never overtakes one already parked, so slots go out in order.
 	parkedNow := false
 	err = e.update(func(s *State) error {
-		current := s.Investigations[task.ID]
+		current := s.Investigations.Get(task.ID)
 		if !ownsInvestigation(current, task) || !taskHasActiveMembers(*s, current) {
 			return ErrConflict
 		}
-		run := s.Runs[task.RunID]
+		run := s.Runs.Get(task.RunID)
 		run.Report, run.UpdatedAt = routed, e.Now()
 		current.State, current.Phase, current.UpdatedAt = "investigating", "investigating", e.Now()
 		parkedNow = engineeringActive(*s) >= EngineeringConcurrency || len(fairParked(*s)) > 0
@@ -127,8 +127,8 @@ func (e *Engine) pipeline(ctx context.Context, provider PipelineAnalyzer, input 
 			current.WaitingSince = time.Now().UTC()
 			current.ElapsedMS = time.Since(started).Milliseconds()
 		}
-		s.Investigations[task.ID] = current
-		s.Runs[run.ID] = run
+		s.Investigations.Put(task.ID, current)
+		s.Runs.Put(run.ID, run)
 		return nil
 	})
 	if err != nil {
@@ -161,15 +161,15 @@ func (e *Engine) engineer(ctx context.Context, provider PipelineAnalyzer, input 
 	// Runtime cleanup has finished when the engineering stage returns. Release
 	// its durable slot before Routing Agent reviews the grouping request.
 	err = e.update(func(s *State) error {
-		current := s.Investigations[task.ID]
+		current := s.Investigations.Get(task.ID)
 		if !ownsInvestigation(current, task) || !taskHasActiveMembers(*s, current) {
 			return ErrConflict
 		}
 		current.Phase, current.UpdatedAt = "assignment", e.Now()
-		s.Investigations[task.ID] = current
-		run := s.Runs[task.RunID]
+		s.Investigations.Put(task.ID, current)
+		run := s.Runs.Get(task.RunID)
 		run.Report, run.UpdatedAt = engineered, e.Now()
-		s.Runs[run.ID] = run
+		s.Runs.Put(run.ID, run)
 		return nil
 	})
 	if err != nil {
@@ -211,10 +211,10 @@ func (e *Engine) joinInvestigation(s *State, task *Investigation, report Report,
 	if selected == nil {
 		return fmt.Errorf("%w: join requires an eligible investigating record", ErrInvalid)
 	}
-	target, ok := s.Investigations[selected.InvestigationID]
-	source := s.Tickets[selected.SourceTicketID]
-	input := s.Runs[task.RunID].Input
-	if !ok || target.ID == task.ID || target.ProjectID != task.ProjectID || source.Private || source.Closed || target.RunID != selected.RunID || s.Groups[target.GroupID].CurrentTaskID != target.ID || !taskHasActiveMembers(*s, target) || investigationSignature(source) != investigationSignature(s.Runs[target.RunID].Input) || investigationScope(input) != selected.ScopeHash || target.Contract.IssueID != task.Contract.IssueID || target.Contract.ObservationCutoff.After(task.Contract.ObservationCutoff) {
+	target, ok := s.Investigations.Lookup(selected.InvestigationID)
+	source := s.Tickets.Get(selected.SourceTicketID)
+	input := s.Runs.Get(task.RunID).Input
+	if !ok || target.ID == task.ID || target.ProjectID != task.ProjectID || source.Private || source.Closed || target.RunID != selected.RunID || s.Groups.Get(target.GroupID).CurrentTaskID != target.ID || !taskHasActiveMembers(*s, target) || investigationSignature(source) != investigationSignature(s.Runs.Get(target.RunID).Input) || investigationScope(input) != selected.ScopeHash || target.Contract.IssueID != task.Contract.IssueID || target.Contract.ObservationCutoff.After(task.Contract.ObservationCutoff) {
 		return fmt.Errorf("%w: investigation source or scope changed", ErrConflict)
 	}
 	live := activeInvestigation(target) && (target.LeaseUntil.After(e.Now()) || parked(target)) && (target.Phase == "waiting_engineering" || target.Phase == "investigating" || target.Phase == "assignment")
@@ -223,24 +223,24 @@ func (e *Engine) joinInvestigation(s *State, task *Investigation, report Report,
 	if !live && target.State != "agent_proposed" && target.State != "trusted" {
 		return fmt.Errorf("%w: investigation is no longer available", ErrConflict)
 	}
-	for id, link := range s.Memberships {
+	for id, link := range s.Memberships.All() {
 		if link.InvestigationID != task.ID || link.State != "tentative" {
 			continue
 		}
-		if s.IssueOverrides[link.TicketID] != "" && s.IssueOverrides[link.TicketID] != target.IssueID {
+		if s.IssueOverrides.Get(link.TicketID) != "" && s.IssueOverrides.Get(link.TicketID) != target.IssueID {
 			return fmt.Errorf("%w: reviewed membership cannot be overridden", ErrConflict)
 		}
 		link.InvestigationID, link.IssueID = target.ID, target.IssueID
 		link.Basis, link.AvailableAt = "Routing Agent joined investigation: "+decision.Reason, e.Now()
 		link.Version++
-		s.Memberships[id] = link
+		s.Memberships.Put(id, link)
 		s.MembershipHistory = append(s.MembershipHistory, link)
-		s.Latest[link.TicketID] = target.RunID
+		s.Latest.Put(link.TicketID, target.RunID)
 	}
-	for id, group := range s.Groups {
+	for id, group := range s.Groups.All() {
 		if group.CurrentTaskID == task.ID {
 			group.CurrentTaskID, group.IssueID = target.ID, target.IssueID
-			s.Groups[id] = group
+			s.Groups.Put(id, group)
 		}
 	}
 	task.State, task.JoinedInvestigationID = "joined", target.ID

@@ -319,6 +319,6 @@ func importIntoPostgres(databaseURL, jsonPath string) error {
 	if err = persister.Import(ctx, source); err != nil {
 		return err
 	}
-	slog.Info("State imported and verified; the source was not modified", "tickets", len(source.Tickets), "events", len(source.Events), "snapshots", len(source.Snapshots))
+	slog.Info("State imported and verified; the source was not modified", "tickets", source.Tickets.Len(), "events", source.Events.Len(), "snapshots", source.Snapshots.Len())
 	return nil
 }

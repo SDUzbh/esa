@@ -99,7 +99,7 @@ func TestPostgresImportVerifiesAndPreservesTheSource(t *testing.T) {
 	if err = sameStateEncoding("working set", hotProjection(want), hotProjection(got)); err != nil {
 		t.Fatal(err)
 	}
-	if string(got.StoredFields["future_field"]) != `{"kept":true}` || got.Rejections["rejected-event"].TicketID != "other" || got.Events["stale-event"].Ticket == nil {
+	if string(got.StoredFields["future_field"]) != `{"kept":true}` || got.Rejections.Get("rejected-event").TicketID != "other" || got.Events.Get("stale-event").Ticket == nil {
 		t.Fatal("imported state lost unknown fields, rejections or a stale event's ticket")
 	}
 	if n := adminQueryInt(t, url, "SELECT count(*) FROM "+pgx.Identifier{schema, "event_raw"}.Sanitize()+" WHERE raw::text = $1", `{"from":"jira","n":1}`); n != 1 {
@@ -131,7 +131,7 @@ func TestPostgresImportConvertsLegacyEvents(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if r := store.Snapshot().Events["accepted"]; r.Ticket != nil || r.SnapshotID == "" {
+	if r := store.Snapshot().Events.Get("accepted"); r.Ticket != nil || r.SnapshotID == "" {
 		t.Fatal("legacy event was imported with its ticket copy", r)
 	}
 }
@@ -268,7 +268,7 @@ func TestPostgresFailoverAcrossTwoWriters(t *testing.T) {
 	if err := b.SyncRedmine(context.Background(), srv.URL, "token", srv.Client()); err != nil {
 		t.Fatal(err)
 	}
-	if strings.Join(outbox.acked, ",") != "redmine_event_1" || b.Store.Snapshot().Tickets["T1"].ID != "T1" {
+	if strings.Join(outbox.acked, ",") != "redmine_event_1" || b.Store.Snapshot().Tickets.Get("T1").ID != "T1" {
 		t.Fatal("new writer did not receive the event exactly once", outbox.acked)
 	}
 	if status(gateB, "/v1/tickets") != 200 || status(gateB, "/healthz?role=active") != 200 {

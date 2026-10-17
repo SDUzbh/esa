@@ -17,21 +17,21 @@ func analyzedTicket(t *testing.T, e *Engine, id string) (Ticket, Run) {
 	if _, err := e.ProcessOne(context.Background(), analyzerFunc(func(context.Context, AnalyzeRequest) (Report, error) { return diagnosticReport(), nil })); err != nil {
 		t.Fatal(err)
 	}
-	return ticket, e.Store.Snapshot().Runs[r.RunID]
+	return ticket, e.Store.Snapshot().Runs.Get(r.RunID)
 }
 func TestMembershipChangesNeverScheduleWork(t *testing.T) {
 	e := testEngine(t)
 	ticket, run := analyzedTicket(t, e, "source")
 	before := e.Store.Snapshot()
 	link, _ := activeMembership(before, ticket.ID)
-	review := MembershipReview{ExpectedSnapshotID: before.LatestSnapshot[ticket.ID], ExpectedMembershipID: link.ID, IssueID: run.IssueID, Reviewer: "engineer", Reason: "Confirm grouping"}
+	review := MembershipReview{ExpectedSnapshotID: before.LatestSnapshot.Get(ticket.ID), ExpectedMembershipID: link.ID, IssueID: run.IssueID, Reviewer: "engineer", Reason: "Confirm grouping"}
 	for i := 0; i < 2; i++ {
 		if _, err := e.ReviewMembership(ticket.ID, review); err != nil {
 			t.Fatal(err)
 		}
 	}
 	after := e.Store.Snapshot()
-	if len(after.Investigations) != 1 || len(after.Runs) != 1 || len(after.Events) != len(before.Events) || len(after.Snapshots) != len(before.Snapshots) || hash(after.Runs[run.ID]) != hash(before.Runs[run.ID]) {
+	if after.Investigations.Len() != 1 || after.Runs.Len() != 1 || after.Events.Len() != before.Events.Len() || after.Snapshots.Len() != before.Snapshots.Len() || hash(after.Runs.Get(run.ID)) != hash(before.Runs.Get(run.ID)) {
 		t.Fatal("pure membership confirmation changed analysis or forwarding")
 	}
 	review.IssueID = ""
@@ -41,7 +41,7 @@ func TestMembershipChangesNeverScheduleWork(t *testing.T) {
 	}
 	after = e.Store.Snapshot()
 	current, _ := activeMembership(after, ticket.ID)
-	if split.RunID != run.ID || current.IssueID == run.IssueID || len(after.Investigations) != 1 {
+	if split.RunID != run.ID || current.IssueID == run.IssueID || after.Investigations.Len() != 1 {
 		t.Fatal("split queued work or retained issue")
 	}
 	if _, err = e.ReviewMembership(ticket.ID, review); err == nil {
@@ -65,7 +65,7 @@ func TestMembershipChangesNeverScheduleWork(t *testing.T) {
 	if _, err = e.ProcessOne(context.Background(), analyzerFunc(func(context.Context, AnalyzeRequest) (Report, error) { return diagnosticReport(), nil })); err != nil {
 		t.Fatal(err)
 	}
-	if e.Store.Snapshot().Runs[retry.RunID].IssueID != current.IssueID {
+	if e.Store.Snapshot().Runs.Get(retry.RunID).IssueID != current.IssueID {
 		t.Fatal("explicit analysis overrode reviewed membership")
 	}
 }
@@ -73,7 +73,7 @@ func TestCanonicalReviewAutoCollectsAndWithdrawsCase(t *testing.T) {
 	e := testEngine(t)
 	ticket, run := analyzedTicket(t, e, "source")
 	state := e.Store.Snapshot()
-	task := state.Investigations[run.InvestigationID]
+	task := state.Investigations.Get(run.InvestigationID)
 	resolution := Resolution{Reason: "fixed", Cause: "Confirmed cause", Solution: "Confirmed guard", Validation: "Confirmed regression"}
 	approved, err := e.ReviewSolution(task.ID, SolutionReview{ExpectedSolutionID: task.SolutionID, Action: "approve", Reviewer: "engineer", Resolution: resolution})
 	if err != nil {
@@ -86,14 +86,14 @@ func TestCanonicalReviewAutoCollectsAndWithdrawsCase(t *testing.T) {
 	ticket.UpdatedAt = at
 	closed := receive(t, e, "closed", ticket)
 	state = e.Store.Snapshot()
-	c := state.Cases[closed.CaseID]
-	if c.State != "trusted" || c.SolutionID != approved.ID || len(state.Solutions) != 2 {
+	c := state.Cases.Get(closed.CaseID)
+	if c.State != "trusted" || c.SolutionID != approved.ID || state.Solutions.Len() != 2 {
 		t.Fatal("closing a reviewed issue required a second approval", c)
 	}
 	if _, err = e.ReviewCase(c.ID, Review{Action: "approve", Reviewer: "engineer"}); err != nil {
 		t.Fatal(err)
 	}
-	if len(e.Store.Snapshot().Solutions) != 2 {
+	if e.Store.Snapshot().Solutions.Len() != 2 {
 		t.Fatal("repeated approval duplicated knowledge")
 	}
 	withdrawn, err := e.ReviewSolution(task.ID, SolutionReview{ExpectedSolutionID: approved.ID, Action: "withdraw", Reviewer: "engineer"})
@@ -101,7 +101,7 @@ func TestCanonicalReviewAutoCollectsAndWithdrawsCase(t *testing.T) {
 		t.Fatal(err)
 	}
 	state = e.Store.Snapshot()
-	if state.Cases[c.ID].State != "withdrawn" || state.Cases[c.ID].SolutionID != withdrawn.ID {
+	if state.Cases.Get(c.ID).State != "withdrawn" || state.Cases.Get(c.ID).SolutionID != withdrawn.ID {
 		t.Fatal("case retained independent trust")
 	}
 	query := fixture(e, "query")
@@ -126,14 +126,14 @@ func TestCaseReviewPublishesOneSharedCanonicalRevision(t *testing.T) {
 	second.Closed = true
 	second.Resolution = Resolution{Cause: "Reviewed cause", Solution: "Reviewed fix", Validation: "Reviewed regression"}
 	closed := receive(t, e, "close-two", second)
-	before := len(e.Store.Snapshot().Solutions)
+	before := e.Store.Snapshot().Solutions.Len()
 	c, err := e.ReviewCase(closed.CaseID, Review{Action: "approve", Reviewer: "engineer"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	state := e.Store.Snapshot()
-	ta, tb := state.Investigations[a.InvestigationID], state.Investigations[state.Runs[r.RunID].InvestigationID]
-	if len(state.Solutions) != before+1 || ta.SolutionID != tb.SolutionID || c.SolutionID != ta.SolutionID {
+	ta, tb := state.Investigations.Get(a.InvestigationID), state.Investigations.Get(state.Runs.Get(r.RunID).InvestigationID)
+	if state.Solutions.Len() != before+1 || ta.SolutionID != tb.SolutionID || c.SolutionID != ta.SolutionID {
 		t.Fatal("case review duplicated canonical knowledge")
 	}
 	records := issueRecords(state, Investigation{Contract: TaskContract{ObservationCutoff: e.Now()}}, fixture(e, "query"))
@@ -149,7 +149,7 @@ func TestCaseReviewPublishesOneSharedCanonicalRevision(t *testing.T) {
 	if _, err = e.ReviewSolution(ta.ID, SolutionReview{ExpectedSolutionID: ta.SolutionID, Action: "reject", Reviewer: "engineer"}); err != nil {
 		t.Fatal(err)
 	}
-	if e.Store.Snapshot().Cases[c.ID].State != "rejected" {
+	if e.Store.Snapshot().Cases.Get(c.ID).State != "rejected" {
 		t.Fatal("solution rejection did not reach linked case")
 	}
 	_ = first
@@ -164,8 +164,8 @@ func TestReuseCreatesApplicationWithoutNewKnowledge(t *testing.T) {
 		t.Fatal(err)
 	}
 	state := e.Store.Snapshot()
-	task := state.Investigations[state.Runs[r.RunID].InvestigationID]
-	if len(state.Solutions) != 1 || task.SolutionID != "" || task.Application == nil || task.Application.SolutionID != state.Investigations[original.InvestigationID].SolutionID {
+	task := state.Investigations.Get(state.Runs.Get(r.RunID).InvestigationID)
+	if state.Solutions.Len() != 1 || task.SolutionID != "" || task.Application == nil || task.Application.SolutionID != state.Investigations.Get(original.InvestigationID).SolutionID {
 		t.Fatal("reuse created another knowledge entity", task)
 	}
 	sourceID := task.Application.SolutionID
@@ -174,17 +174,17 @@ func TestReuseCreatesApplicationWithoutNewKnowledge(t *testing.T) {
 		t.Fatal(err)
 	}
 	state = e.Store.Snapshot()
-	if len(state.Solutions) != 1 || state.Solutions[sourceID].State != "proposed" || state.Investigations[task.ID].Application.State != "accepted" {
+	if state.Solutions.Len() != 1 || state.Solutions.Get(sourceID).State != "proposed" || state.Investigations.Get(task.ID).Application.State != "accepted" {
 		t.Fatal("applicability approval promoted source knowledge")
 	}
 	if _, err := e.ReviewSolution(task.ID, review); err == nil {
 		t.Fatal("stale application review accepted")
 	}
-	owner := state.Investigations[original.InvestigationID]
+	owner := state.Investigations.Get(original.InvestigationID)
 	if _, err := e.ReviewSolution(owner.ID, SolutionReview{ExpectedSolutionID: sourceID, Action: "withdraw", Reviewer: "engineer"}); err != nil {
 		t.Fatal(err)
 	}
-	if e.Store.Snapshot().Investigations[task.ID].Application.State != "withdrawn" {
+	if e.Store.Snapshot().Investigations.Get(task.ID).Application.State != "withdrawn" {
 		t.Fatal("source withdrawal did not invalidate application")
 	}
 	response := classifierRequest(e, "GET", "/v1/tickets/query", "", "1", "source,query")
@@ -231,17 +231,17 @@ func TestCanonicalTitleAndRepresentativeStaySeparate(t *testing.T) {
 			if row.Issue.Title != "" || !row.Issue.TitleRestricted {
 				t.Fatal("source title leaked")
 			}
-		} else if row.Issue.Title != e.Store.Snapshot().Issues[run.IssueID].Title {
+		} else if row.Issue.Title != e.Store.Snapshot().Issues.Get(run.IssueID).Title {
 			t.Fatal("canonical title was replaced")
 		}
 	}
 	state := e.Store.Clone()
 	private := fixture(e, "private-title-source")
 	private.Private = true
-	state.Tickets[private.ID] = private
-	issue := state.Issues[run.IssueID]
+	state.Tickets.Put(private.ID, private)
+	issue := state.Issues.Get(run.IssueID)
 	issue.TitleSourceTicketID = private.ID
-	state.Issues[issue.ID] = issue
+	state.Issues.Put(issue.ID, issue)
 	records := issueRecords(state, Investigation{Contract: TaskContract{ObservationCutoff: e.Now()}}, fixture(e, "query"))
 	if len(records) != 1 || records[0].Title != "" {
 		t.Fatal("directory exposed a private canonical title", records)
@@ -285,7 +285,7 @@ func TestRetiredFieldsRemainInertAndRoundTrip(t *testing.T) {
 	request.CreatedAt = e.Now()
 	request.UpdatedAt = e.Now()
 	receipt := receive(t, e, "new", request)
-	active := e.Store.Snapshot().Runs[receipt.RunID]
+	active := e.Store.Snapshot().Runs.Get(receipt.RunID)
 	if active.Route != "engineering_analysis" || len(active.Input.StoredFields) != 0 || len(active.StoredFields) != 0 {
 		t.Fatal("retired fields entered active workflow")
 	}

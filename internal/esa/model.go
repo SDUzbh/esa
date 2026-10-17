@@ -314,28 +314,30 @@ type Receipt struct {
 // State is the persistence frame for business data and immutable audit history.
 // Generated Issue-directory files are projections, never a second authority.
 type State struct {
-	IssueAccessSequence   uint64                          `json:"issue_access_sequence,omitempty"`
-	StoredFields          JSONFields                      `json:"-"`
-	LatestSnapshot        map[string]string               `json:"latest_snapshot,omitempty"`
-	Snapshots             map[string]TicketSnapshot       `json:"snapshots,omitempty"`
-	Issues                map[string]EngineeringIssue     `json:"engineering_issues,omitempty"`
-	Memberships           map[string]IssueTicketLink      `json:"issue_ticket_links,omitempty"`
-	MembershipHistory     []IssueTicketLink               `json:"issue_ticket_link_history,omitempty"`
-	IssueOverrides        map[string]string               `json:"issue_overrides,omitempty"`
-	Investigations        map[string]Investigation        `json:"investigations,omitempty"`
-	Groups                map[string]InvestigationGroup   `json:"investigation_groups,omitempty"`
-	Solutions             map[string]SolutionRevision     `json:"solution_revisions,omitempty"`
-	ReplayClock           time.Time                       `json:"replay_clock,omitempty"`
-	LastClaimedProject    string                          `json:"last_claimed_project,omitempty"`
-	ClassifierPredictions map[string]ClassifierPrediction `json:"classifier_predictions,omitempty"`
-	ClassifierFeedback    map[string]ClassifierFeedback   `json:"classifier_feedback,omitempty"`
-	SchemaVersion         int                             `json:"schema_version"`
-	Tickets               map[string]Ticket               `json:"tickets"`
-	Events                map[string]EventRecord          `json:"events"`
-	Receipts              map[string]Receipt              `json:"receipts"`
-	Rejections            map[string]EventRejection       `json:"event_rejections,omitempty"`
-	Runs                  map[string]Run                  `json:"runs"`
-	Latest                map[string]string               `json:"latest"`
-	Cases                 map[string]Case                 `json:"cases"`
-	CaseHistory           []Case                          `json:"case_history"`
+	IssueAccessSequence   uint64                      `json:"issue_access_sequence,omitempty"`
+	StoredFields          JSONFields                  `json:"-"`
+	LatestSnapshot        Table[string]               `json:"latest_snapshot,omitzero"`
+	Snapshots             Table[TicketSnapshot]       `json:"snapshots,omitzero"`
+	Issues                Table[EngineeringIssue]     `json:"engineering_issues,omitzero"`
+	Memberships           Table[IssueTicketLink]      `json:"issue_ticket_links,omitzero"`
+	MembershipHistory     []IssueTicketLink           `json:"issue_ticket_link_history,omitempty"`
+	IssueOverrides        Table[string]               `json:"issue_overrides,omitzero"`
+	Investigations        Table[Investigation]        `json:"investigations,omitzero"`
+	Groups                Table[InvestigationGroup]   `json:"investigation_groups,omitzero"`
+	Solutions             Table[SolutionRevision]     `json:"solution_revisions,omitzero"`
+	ReplayClock           time.Time                   `json:"replay_clock,omitempty"`
+	LastClaimedProject    string                      `json:"last_claimed_project,omitempty"`
+	ClassifierPredictions Table[ClassifierPrediction] `json:"classifier_predictions,omitzero"`
+	ClassifierFeedback    Table[ClassifierFeedback]   `json:"classifier_feedback,omitzero"`
+	SchemaVersion         int                         `json:"schema_version"`
+	Tickets               Table[Ticket]               `json:"tickets"`
+	Events                Table[EventRecord]          `json:"events"`
+	Receipts              Table[Receipt]              `json:"receipts"`
+	Rejections            Table[EventRejection]       `json:"event_rejections,omitzero"`
+	Runs                  Table[Run]                  `json:"runs"`
+	Latest                Table[string]               `json:"latest"`
+	Cases                 Table[Case]                 `json:"cases"`
+	CaseHistory           []Case                      `json:"case_history"`
+	// indexes are derived lookups, never persisted (see stateIndexes).
+	indexes stateIndexes
 }

@@ -85,20 +85,20 @@ func TestSyncRedminePoisonEventDoesNotBlockLaterEvents(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := e.Store.Snapshot()
-	if _, ok := s.Tickets["T2"]; !ok {
+	if _, ok := s.Tickets.Lookup("T2"); !ok {
 		t.Fatal("valid event behind a permanently rejected event was never received")
 	}
 	if strings.Join(outbox.acked, ",") != "redmine_event_1,redmine_event_2" {
 		t.Fatal("each event must be acknowledged exactly once", outbox.acked)
 	}
-	rejection, ok := s.Rejections["redmine_event_1"]
+	rejection, ok := s.Rejections.Lookup("redmine_event_1")
 	if !ok || rejection.TicketID != "T1" || rejection.ProjectID != "2" || rejection.ForwardedBy != "support-user" || !strings.Contains(rejection.Reason, "different project") || !rejection.RejectedAt.Equal(e.Now()) {
 		t.Fatal("rejection was not recorded", rejection)
 	}
-	if s.Tickets["T1"].ProjectID != "1" || len(s.Rejections) != 1 {
-		t.Fatal("a rejected event must not change accepted state", s.Tickets["T1"].ProjectID, s.Rejections)
+	if s.Tickets.Get("T1").ProjectID != "1" || s.Rejections.Len() != 1 {
+		t.Fatal("a rejected event must not change accepted state", s.Tickets.Get("T1").ProjectID, s.Rejections)
 	}
-	if _, ok := s.Events["redmine_event_1"]; ok {
+	if _, ok := s.Events.Lookup("redmine_event_1"); ok {
 		t.Fatal("a rejected event must not be stored as accepted")
 	}
 }
@@ -119,7 +119,7 @@ func TestSyncRedmineAcknowledgementReportsOutcome(t *testing.T) {
 	if rejected["event_id"] != "redmine_event_1" || rejected["status"] != "rejected" || rejected["reason"] != "conflict: ticket belongs to a different project" {
 		t.Fatal("rejected acknowledgement must carry the status and reason", rejected)
 	}
-	if rejected["reason"] != e.Store.Snapshot().Rejections["redmine_event_1"].Reason {
+	if rejected["reason"] != e.Store.Snapshot().Rejections.Get("redmine_event_1").Reason {
 		t.Fatal("acknowledged reason must match the recorded rejection", rejected)
 	}
 	if accepted["event_id"] != "redmine_event_2" || accepted["status"] != "accepted" || accepted["reason"] != "" {
@@ -136,13 +136,13 @@ func TestSyncRedmineRejectionSurvivesLostAcknowledgement(t *testing.T) {
 	if err := sync3(e, srv); err != nil {
 		t.Fatal(err)
 	}
-	first := e.Store.Snapshot().Rejections["redmine_event_1"]
+	first := e.Store.Snapshot().Rejections.Get("redmine_event_1")
 	e.Now = func() time.Time { return first.RejectedAt.Add(time.Minute) }
 	if err := e.SyncRedmine(context.Background(), srv.URL, "token", srv.Client()); err != nil {
 		t.Fatal(err)
 	}
 	s := e.Store.Snapshot()
-	if len(outbox.acked) != 4 || len(s.Rejections) != 1 || s.Rejections["redmine_event_1"] != first || !strings.Contains(first.Reason, "forwarding cutoff") {
+	if len(outbox.acked) != 4 || s.Rejections.Len() != 1 || s.Rejections.Get("redmine_event_1") != first || !strings.Contains(first.Reason, "forwarding cutoff") {
 		t.Fatal("redelivered rejection must be acknowledged again without a new record", outbox.acked, s.Rejections)
 	}
 }
@@ -160,10 +160,10 @@ func TestSyncRedmineRejectsReusedEventIDWithoutTouchingOriginal(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := e.Store.Snapshot()
-	if s.Events["redmine_event_1"].TicketHash != hash(s.Snapshots[s.Events["redmine_event_1"].SnapshotID].Ticket) || s.Snapshots[s.Events["redmine_event_1"].SnapshotID].Ticket.Subject != original.Subject || s.Receipts["redmine_event_1"].Action == "" {
+	if s.Events.Get("redmine_event_1").TicketHash != hash(s.Snapshots.Get(s.Events.Get("redmine_event_1").SnapshotID).Ticket) || s.Snapshots.Get(s.Events.Get("redmine_event_1").SnapshotID).Ticket.Subject != original.Subject || s.Receipts.Get("redmine_event_1").Action == "" {
 		t.Fatal("original accepted event or receipt changed")
 	}
-	if !strings.Contains(s.Rejections["redmine_event_1"].Reason, "reused with different content") || len(outbox.acked) != 2 {
+	if !strings.Contains(s.Rejections.Get("redmine_event_1").Reason, "reused with different content") || len(outbox.acked) != 2 {
 		t.Fatal("reused event ID was not rejected and acknowledged", s.Rejections, outbox.acked)
 	}
 }
@@ -185,10 +185,10 @@ func TestSyncRedmineTransientFailureHoldsOnlyItsTicket(t *testing.T) {
 		t.Fatal("transient failure must be reported once and must not be a rejection", err)
 	}
 	s := e.Store.Snapshot()
-	if _, ok := s.Tickets["T1"]; ok || len(s.Rejections) != 0 || strings.Join(outbox.acked, ",") != "redmine_event_3" {
+	if _, ok := s.Tickets.Lookup("T1"); ok || s.Rejections.Len() != 0 || strings.Join(outbox.acked, ",") != "redmine_event_3" {
 		t.Fatal("only other tickets may pass a transient failure", outbox.acked, s.Rejections)
 	}
-	if _, ok := s.Tickets["T2"]; !ok {
+	if _, ok := s.Tickets.Lookup("T2"); !ok {
 		t.Fatal("other ticket was blocked by a transient failure")
 	}
 	e.Now = func() time.Time { return now.Add(2 * time.Minute) }
@@ -196,8 +196,8 @@ func TestSyncRedmineTransientFailureHoldsOnlyItsTicket(t *testing.T) {
 		t.Fatal(err)
 	}
 	s = e.Store.Snapshot()
-	if strings.Join(outbox.acked, ",") != "redmine_event_3,redmine_event_1,redmine_event_2" || s.Tickets["T1"].Subject != "Later edit" || s.Receipts["redmine_event_2"].Action == "ignored_stale_event" {
-		t.Fatal("held events must be applied in their original per-ticket order", outbox.acked, s.Tickets["T1"].Subject, s.Receipts["redmine_event_2"])
+	if strings.Join(outbox.acked, ",") != "redmine_event_3,redmine_event_1,redmine_event_2" || s.Tickets.Get("T1").Subject != "Later edit" || s.Receipts.Get("redmine_event_2").Action == "ignored_stale_event" {
+		t.Fatal("held events must be applied in their original per-ticket order", outbox.acked, s.Tickets.Get("T1").Subject, s.Receipts.Get("redmine_event_2"))
 	}
 }
 

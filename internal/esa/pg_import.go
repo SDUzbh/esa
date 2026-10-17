@@ -90,7 +90,7 @@ func (p *PostgresPersister) Import(ctx context.Context, source State) error {
 		}
 	}
 	var raws [][]string
-	for id, r := range source.Events {
+	for id, r := range source.Events.All() {
 		if len(r.Raw) > 0 {
 			raws = append(raws, []string{id, string(r.Raw)})
 		}
@@ -174,17 +174,16 @@ func hotProjection(s State) State {
 	for _, id := range hotSnapshotIDs(&s) {
 		hot[id] = true
 	}
-	for id := range out.Snapshots {
+	for id := range out.Snapshots.All() {
 		if !hot[id] {
-			delete(out.Snapshots, id)
+			out.Snapshots.Delete(id)
 		}
 	}
-	for id, r := range out.Events {
+	for id, r := range out.Events.All() {
 		r.Raw = nil
-		out.Events[id] = r
+		out.Events.Put(id, r)
 	}
 	out.MembershipHistory = nil
-	prepareInvestigations(&out)
 	return out
 }
 
@@ -193,7 +192,6 @@ func hotProjection(s State) State {
 func sameStateEncoding(what string, want, got State) error {
 	normalize := func(s State) map[string]json.RawMessage {
 		s = s.detach()
-		prepareInvestigations(&s)
 		if len(s.CaseHistory) == 0 {
 			s.CaseHistory = nil
 		}

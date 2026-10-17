@@ -14,8 +14,8 @@ func TestLaterCaseReviewDoesNotRefreshOrLeakFutureContext(t *testing.T) {
 	e := testEngine(t)
 	initial := receive(t, e, "initial", fixture(e, "open"))
 	before := e.Store.Snapshot()
-	initialRun := before.Runs[initial.RunID]
-	snapshot := before.Snapshots[initialRun.SnapshotID]
+	initialRun := before.Runs.Get(initial.RunID)
+	snapshot := before.Snapshots.Get(initialRun.SnapshotID)
 	later := e.Now().Add(time.Hour)
 	e.Now = func() time.Time { return later }
 	_, closed := resolved(t, e)
@@ -23,10 +23,10 @@ func TestLaterCaseReviewDoesNotRefreshOrLeakFutureContext(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := e.Store.Snapshot()
-	if s.Latest["open"] != initialRun.ID || s.Runs[initialRun.ID].State != "queued" || len(s.Runs) != len(before.Runs) {
+	if s.Latest.Get("open") != initialRun.ID || s.Runs.Get(initialRun.ID).State != "queued" || s.Runs.Len() != before.Runs.Len() {
 		t.Fatal("case approval replaced the investigation")
 	}
-	if hash(s.Snapshots[snapshot.ID]) != hash(snapshot) || !s.Runs[initialRun.ID].ObservationCutoff.Equal(initialRun.ObservationCutoff) {
+	if hash(s.Snapshots.Get(snapshot.ID)) != hash(snapshot) || !s.Runs.Get(initialRun.ID).ObservationCutoff.Equal(initialRun.ObservationCutoff) {
 		t.Fatal("review rewrote frozen inputs")
 	}
 	calls := 0
@@ -43,7 +43,7 @@ func TestLaterCaseReviewDoesNotRefreshOrLeakFutureContext(t *testing.T) {
 	query.Description += " distinct input"
 	next := receive(t, e, "later-forward", query)
 	laterState := e.Store.Snapshot()
-	if len(issueRecords(laterState, laterState.Investigations[laterState.Runs[next.RunID].InvestigationID], query)) < 1 {
+	if len(issueRecords(laterState, laterState.Investigations.Get(laterState.Runs.Get(next.RunID).InvestigationID), query)) < 1 {
 		t.Fatal("new forwarding omitted visible case context")
 	}
 
@@ -59,8 +59,8 @@ func TestClosingOnlyMemberSupersedesUnstartedInvestigation(t *testing.T) {
 	ticket.Closed = true
 	receive(t, e, "closed", ticket)
 	s := e.Store.Snapshot()
-	run := s.Runs[r.RunID]
-	if run.State != "superseded" || s.Investigations[run.InvestigationID].State != run.State {
+	run := s.Runs.Get(r.RunID)
+	if run.State != "superseded" || s.Investigations.Get(run.InvestigationID).State != run.State {
 		t.Fatal("closed ticket retained a runnable investigation", run)
 	}
 }
@@ -79,8 +79,8 @@ func TestCaseReviewDuringAnalysisDoesNotReplaceAgentResult(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := e.Store.Snapshot()
-	run := s.Runs[r.RunID]
-	if run.State != "awaiting_review" || run.Report.Usage.InputTokens != 20 || len(s.Solutions) != 1 || s.Latest[open.ID] != r.RunID {
+	run := s.Runs.Get(r.RunID)
+	if run.State != "awaiting_review" || run.Report.Usage.InputTokens != 20 || s.Solutions.Len() != 1 || s.Latest.Get(open.ID) != r.RunID {
 		t.Fatal("late proposal overwrote advice or lost usage", run)
 	}
 }
@@ -95,8 +95,8 @@ func TestFailedAnalysisKeepsUsageAndAlerts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	run := e.Store.Snapshot().Runs[r.RunID]
-	if run.State != "failed" || run.Report.Usage.InputTokens != 123 || len(run.Report.Alerts) == 0 || len(e.Store.Snapshot().Solutions) != 0 {
+	run := e.Store.Snapshot().Runs.Get(r.RunID)
+	if run.State != "failed" || run.Report.Usage.InputTokens != 123 || len(run.Report.Alerts) == 0 || e.Store.Snapshot().Solutions.Len() != 0 {
 		t.Fatalf("failed spend or trust changed: %+v", run)
 	}
 }
@@ -119,11 +119,11 @@ func TestAgentAssignmentAndMemberCasePublishOneFamily(t *testing.T) {
 	if _, err := e.ProcessOne(context.Background(), analyzerFunc(func(context.Context, AnalyzeRequest) (Report, error) { return diagnosticReport(), nil })); err != nil {
 		t.Fatal(err)
 	}
-	firstRun := e.Store.Snapshot().Runs[first.RunID]
+	firstRun := e.Store.Snapshot().Runs.Get(first.RunID)
 	second := fixture(e, "second")
 	second.Description += " A second independently reported reproduction."
 	receipt := receive(t, e, "second", second)
-	initial := e.Store.Snapshot().Runs[receipt.RunID]
+	initial := e.Store.Snapshot().Runs.Get(receipt.RunID)
 	if _, err := e.ProcessOne(context.Background(), analyzerFunc(func(_ context.Context, input AnalyzeRequest) (Report, error) {
 		found := false
 		for _, issue := range inputIssueRecords(t, e, input) {
@@ -139,9 +139,9 @@ func TestAgentAssignmentAndMemberCasePublishOneFamily(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := e.Store.Snapshot()
-	run := s.Runs[receipt.RunID]
-	task := s.Investigations[run.InvestigationID]
-	if len(s.Issues) != 1 || initial.IssueID != "" || run.IssueID != firstRun.IssueID || task.Contract.IssueID != initial.IssueID || hash(run.Input) != hash(initial.Input) {
+	run := s.Runs.Get(receipt.RunID)
+	task := s.Investigations.Get(run.InvestigationID)
+	if s.Issues.Len() != 1 || initial.IssueID != "" || run.IssueID != firstRun.IssueID || task.Contract.IssueID != initial.IssueID || hash(run.Input) != hash(initial.Input) {
 		t.Fatal("assignment rewrote frozen input or failed to update membership")
 	}
 	second.Closed = true
@@ -151,10 +151,10 @@ func TestAgentAssignmentAndMemberCasePublishOneFamily(t *testing.T) {
 		t.Fatal(err)
 	}
 	s = e.Store.Snapshot()
-	for _, task := range s.Investigations {
+	for _, task := range s.Investigations.All() {
 		if task.IssueID == firstRun.IssueID {
-			solution := s.Solutions[task.SolutionID]
-			if solution.State != "trusted" || solution.SourceTicketID != second.ID || s.Runs[task.RunID].State != "completed" {
+			solution := s.Solutions.Get(task.SolutionID)
+			if solution.State != "trusted" || solution.SourceTicketID != second.ID || s.Runs.Get(task.RunID).State != "completed" {
 				t.Fatalf("shared reviewed solution diverged: %+v", solution)
 			}
 		}

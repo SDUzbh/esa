@@ -28,11 +28,11 @@ func TestTicketGETStillTouchesItsIssue(t *testing.T) {
 	if run.IssueID == "" {
 		t.Fatal("fixture has no Issue")
 	}
-	before := e.Store.Snapshot().Issues[run.IssueID].AccessOrder
+	before := e.Store.Snapshot().Issues.Get(run.IssueID).AccessOrder
 	if n := getTicketUpdates(t, e, ticket.ID); n != 1 {
 		t.Fatal("ticket with an Issue did not write its access order", n)
 	}
-	if after := e.Store.Snapshot().Issues[run.IssueID].AccessOrder; after <= before {
+	if after := e.Store.Snapshot().Issues.Get(run.IssueID).AccessOrder; after <= before {
 		t.Fatal("Issue access order was not advanced", before, after)
 	}
 }

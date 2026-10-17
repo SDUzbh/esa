@@ -121,7 +121,7 @@ func TestIssueDirectoryPreservesScopesAndPromotesEngineerSolution(t *testing.T) 
 	if _, err := e.ProcessOne(context.Background(), analyzerFunc(func(context.Context, AnalyzeRequest) (Report, error) { return diagnosticReport(), nil })); err != nil {
 		t.Fatal(err)
 	}
-	firstRun := e.Store.Snapshot().Runs[a.RunID]
+	firstRun := e.Store.Snapshot().Runs.Get(a.RunID)
 	second := fixture(e, "b")
 	second.Versions = []string{"4.0.0"}
 	b := receive(t, e, "b", second)
@@ -133,7 +133,7 @@ func TestIssueDirectoryPreservesScopesAndPromotesEngineerSolution(t *testing.T) 
 		t.Fatal(err)
 	}
 	state := e.Store.Snapshot()
-	task := state.Investigations[state.Runs[b.RunID].InvestigationID]
+	task := state.Investigations.Get(state.Runs.Get(b.RunID).InvestigationID)
 	if _, err := e.ReviewSolution(task.ID, SolutionReview{Action: "approve", Reviewer: "engineer", ExpectedSolutionID: task.SolutionID, Resolution: Resolution{Cause: "Reviewed scope-specific cause", Solution: "Apply reviewed guard", Validation: "Version-specific regression"}}); err != nil {
 		t.Fatal(err)
 	}
@@ -190,8 +190,8 @@ func TestDirectoryReuseRejectsWithdrawalDuringRouting(t *testing.T) {
 				t.Fatal(err)
 			}
 			state := e.Store.Snapshot()
-			if state.Runs[receipt.RunID].State != "failed" || state.Runs[receipt.RunID].IssueID != "" {
-				t.Fatal("withdrawn solution was published", state.Runs[receipt.RunID])
+			if state.Runs.Get(receipt.RunID).State != "failed" || state.Runs.Get(receipt.RunID).IssueID != "" {
+				t.Fatal("withdrawn solution was published", state.Runs.Get(receipt.RunID))
 			}
 		})
 	}
@@ -208,8 +208,8 @@ func TestDirectoryReuseCollectsStandaloneEngineerCaseOnce(t *testing.T) {
 			t.Fatal(err)
 		}
 		state := e.Store.Snapshot()
-		if state.Runs[receipt.RunID].Route != "issue_reuse" || len(state.Issues) != 1 || state.Runs[receipt.RunID].Report.Usage.Calls != 1 {
-			t.Fatal("case reuse duplicated Issue or invoked extra analysis", state.Runs[receipt.RunID])
+		if state.Runs.Get(receipt.RunID).Route != "issue_reuse" || state.Issues.Len() != 1 || state.Runs.Get(receipt.RunID).Report.Usage.Calls != 1 {
+			t.Fatal("case reuse duplicated Issue or invoked extra analysis", state.Runs.Get(receipt.RunID))
 		}
 	}
 }

@@ -19,13 +19,13 @@ func runForTicket(run Run, t Ticket) Run {
 }
 func visibleRow(r *http.Request, s State, row TicketRow, at time.Time) TicketRow {
 	if row.Membership != nil {
-		run := s.Runs[s.Investigations[row.Membership.InvestigationID].RunID]
+		run := s.Runs.Get(s.Investigations.Get(row.Membership.InvestigationID).RunID)
 		sourceID := run.SourceTicketID
 		if sourceID == "" && run.TicketID != row.Ticket.ID {
 			sourceID = run.TicketID
 		}
 		if sourceID != "" {
-			source, exists := s.Tickets[sourceID]
+			source, exists := s.Tickets.Lookup(sourceID)
 			if !exists || source.Private || !allowed(r, source.ProjectID) || !ticketAllowed(r, sourceID) {
 				copy := *row.Membership
 				copy.Basis = "Grouping evidence is outside your source visibility."
@@ -53,7 +53,7 @@ func visibleRow(r *http.Request, s State, row TicketRow, at time.Time) TicketRow
 		copy := *sol
 		copy.StoredFields = nil
 		row.Solution = &copy
-		source, ok := s.Tickets[sol.SourceTicketID]
+		source, ok := s.Tickets.Lookup(sol.SourceTicketID)
 		if !ok || source.Private || !ticketAllowed(r, source.ID) || !allowed(r, source.ProjectID) || sol.AvailableAt.After(at) {
 			row.Solution = nil
 			row.Application = nil
@@ -70,7 +70,7 @@ func visibleRow(r *http.Request, s State, row TicketRow, at time.Time) TicketRow
 	return row
 }
 func (api *API) reviewMembership(w http.ResponseWriter, r *http.Request) {
-	t, ok := api.Engine.Store.Snapshot().Tickets[r.PathValue("id")]
+	t, ok := api.Engine.Store.Snapshot().Tickets.Lookup(r.PathValue("id"))
 	if !ok || t.Private || !allowed(r, t.ProjectID) || !ticketAllowed(r, t.ID) {
 		writeError(w, ErrNotFound)
 		return
@@ -83,9 +83,10 @@ func (api *API) reviewMembership(w http.ResponseWriter, r *http.Request) {
 	if review.IssueID != "" {
 		visible := false
 		state := api.Engine.Store.Snapshot()
-		for _, link := range state.Memberships {
-			member, exists := state.Tickets[link.TicketID]
-			visible = visible || exists && !member.Private && member.ProjectID == t.ProjectID && link.IssueID == review.IssueID && link.State == "tentative" && ticketAllowed(r, link.TicketID)
+		for _, key := range state.indexes.tentativeByIssue.lookup(state.Memberships, tentativeIssue, review.IssueID) {
+			link := state.Memberships.Get(key)
+			member, exists := state.Tickets.Lookup(link.TicketID)
+			visible = visible || exists && !member.Private && member.ProjectID == t.ProjectID && ticketAllowed(r, link.TicketID)
 		}
 		if !visible {
 			writeError(w, ErrNotFound)
@@ -101,7 +102,7 @@ func (api *API) reviewMembership(w http.ResponseWriter, r *http.Request) {
 }
 func visibleTask(r *http.Request, s State, task Investigation) Investigation {
 	if task.Application != nil {
-		source, ok := s.Tickets[task.Application.SourceTicketID]
+		source, ok := s.Tickets.Lookup(task.Application.SourceTicketID)
 		if !ok || source.Private || !ticketAllowed(r, source.ID) || !allowed(r, source.ProjectID) {
 			task.Application = nil
 		}
@@ -112,12 +113,13 @@ func taskVisible(r *http.Request, s State, task Investigation) bool {
 	if !allowed(r, task.ProjectID) {
 		return false
 	}
-	if source, ok := s.Tickets[s.Runs[task.RunID].TicketID]; ok && !source.Private && ticketAllowed(r, source.ID) {
+	if source, ok := s.Tickets.Lookup(s.Runs.Get(task.RunID).TicketID); ok && !source.Private && ticketAllowed(r, source.ID) {
 		return true
 	}
-	for _, link := range s.Memberships {
-		t, ok := s.Tickets[link.TicketID]
-		if ok && link.InvestigationID == task.ID && link.State == "tentative" && !t.Private && ticketAllowed(r, t.ID) {
+	for _, id := range s.membershipsOfInvestigation(task.ID) {
+		link := s.Memberships.Get(id)
+		t, ok := s.Tickets.Lookup(link.TicketID)
+		if ok && link.State == "tentative" && !t.Private && ticketAllowed(r, t.ID) {
 			return true
 		}
 	}
@@ -125,8 +127,8 @@ func taskVisible(r *http.Request, s State, task Investigation) bool {
 }
 func (api *API) solutionHistory(w http.ResponseWriter, r *http.Request) {
 	s := api.Engine.Store.Snapshot()
-	task, ok := s.Investigations[r.PathValue("id")]
-	source := s.Tickets[s.Runs[task.RunID].TicketID]
+	task, ok := s.Investigations.Lookup(r.PathValue("id"))
+	source := s.Tickets.Get(s.Runs.Get(task.RunID).TicketID)
 	if !ok || source.Private || !allowed(r, task.ProjectID) || !ticketAllowed(r, source.ID) {
 		writeError(w, ErrNotFound)
 		return
@@ -139,10 +141,10 @@ func (api *API) solutionHistory(w http.ResponseWriter, r *http.Request) {
 	}
 	for current != "" && !lineage[current] {
 		lineage[current] = true
-		current = s.Solutions[current].Supersedes
+		current = s.Solutions.Get(current).Supersedes
 	}
-	for _, solution := range s.Solutions {
-		source, exists := s.Tickets[solution.SourceTicketID]
+	for _, solution := range s.Solutions.All() {
+		source, exists := s.Tickets.Lookup(solution.SourceTicketID)
 		if (solution.InvestigationID == task.ID || lineage[solution.ID]) && !solution.AvailableAt.After(api.Engine.Now()) && exists && !source.Private && allowed(r, source.ProjectID) && ticketAllowed(r, source.ID) {
 			solution.StoredFields = nil
 			rows = append(rows, solution)
@@ -163,7 +165,7 @@ func issueTitleSource(s State, issue EngineeringIssue) string {
 	source := issue.TitleSourceTicketID
 	if source == "" {
 		var first Run
-		for _, run := range s.Runs {
+		for _, run := range s.Runs.All() {
 			if run.IssueID == issue.ID && (first.ID == "" || run.CreatedAt.Before(first.CreatedAt) || run.CreatedAt.Equal(first.CreatedAt) && run.ID < first.ID) {
 				first = run
 			}
@@ -177,7 +179,7 @@ func issueTitleSource(s State, issue EngineeringIssue) string {
 }
 func visibleEngineeringIssue(r *http.Request, s State, issue EngineeringIssue) EngineeringIssue {
 	source := issueTitleSource(s, issue)
-	t, ok := s.Tickets[source]
+	t, ok := s.Tickets.Lookup(source)
 	if !ok || t.Private || !ticketAllowed(r, source) || !allowed(r, t.ProjectID) {
 		issue.Title = ""
 		issue.TitleSourceTicketID = ""
@@ -188,15 +190,16 @@ func visibleEngineeringIssue(r *http.Request, s State, issue EngineeringIssue) E
 func (api *API) engineeringIssues(w http.ResponseWriter, r *http.Request) {
 	s := api.Engine.Store.Snapshot()
 	rows := []map[string]any{}
-	for _, issue := range s.Issues {
+	for _, issue := range s.Issues.All() {
 		if !allowed(r, issue.ProjectID) {
 			continue
 		}
 		ids := map[string]bool{}
 		title := ""
-		for _, link := range s.Memberships {
-			t, ok := s.Tickets[link.TicketID]
-			if link.IssueID == issue.ID && link.State == "tentative" && ok && !t.Private && ticketAllowed(r, t.ID) {
+		for _, key := range s.indexes.tentativeByIssue.lookup(s.Memberships, tentativeIssue, issue.ID) {
+			link := s.Memberships.Get(key)
+			t, ok := s.Tickets.Lookup(link.TicketID)
+			if ok && !t.Private && ticketAllowed(r, t.ID) {
 				ids[t.ID] = true
 				if title == "" || t.ID < title {
 					title = t.ID
@@ -213,7 +216,7 @@ func (api *API) engineeringIssues(w http.ResponseWriter, r *http.Request) {
 		sort.Strings(members)
 		copy := visibleEngineeringIssue(r, s, issue)
 		copy.State = issueState(s, issue.ID, ids)
-		rows = append(rows, map[string]any{"issue": copy, "ticket_ids": members, "visible_ticket_count": len(members), "representative_ticket": map[string]string{"id": title, "subject": s.Tickets[title].Subject}})
+		rows = append(rows, map[string]any{"issue": copy, "ticket_ids": members, "visible_ticket_count": len(members), "representative_ticket": map[string]string{"id": title, "subject": s.Tickets.Get(title).Subject}})
 	}
 	sort.Slice(rows, func(i, j int) bool {
 		return rows[i]["issue"].(EngineeringIssue).ID < rows[j]["issue"].(EngineeringIssue).ID
@@ -222,13 +225,13 @@ func (api *API) engineeringIssues(w http.ResponseWriter, r *http.Request) {
 }
 func (api *API) investigation(w http.ResponseWriter, r *http.Request) {
 	s := api.Engine.Store.Snapshot()
-	task, ok := s.Investigations[r.PathValue("id")]
+	task, ok := s.Investigations.Lookup(r.PathValue("id"))
 	if !ok || !taskVisible(r, s, task) {
 		writeError(w, ErrNotFound)
 		return
 	}
 	if err := api.Engine.update(func(state *State) error {
-		current := state.Investigations[task.ID]
+		current := state.Investigations.Get(task.ID)
 		if taskVisible(r, *state, current) {
 			touchIssue(state, current.IssueID, api.Engine.Now())
 		}
@@ -238,14 +241,14 @@ func (api *API) investigation(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s = api.Engine.Store.Snapshot()
-	task = s.Investigations[task.ID]
+	task = s.Investigations.Get(task.ID)
 	view := visibleTask(r, s, task)
 	result := map[string]any{"investigation": view, "solution_application": view.Application}
-	source := s.Tickets[s.Runs[task.RunID].TicketID]
+	source := s.Tickets.Get(s.Runs.Get(task.RunID).TicketID)
 	if !source.Private && ticketAllowed(r, source.ID) {
-		result["run"] = visibleRun(r, s, s.Runs[task.RunID])
+		result["run"] = visibleRun(r, s, s.Runs.Get(task.RunID))
 		if sol, ok := taskSolution(s, task); ok && !sol.AvailableAt.After(api.Engine.Now()) {
-			evidenceSource, exists := s.Tickets[sol.SourceTicketID]
+			evidenceSource, exists := s.Tickets.Lookup(sol.SourceTicketID)
 			if exists && !evidenceSource.Private && allowed(r, evidenceSource.ProjectID) && ticketAllowed(r, evidenceSource.ID) {
 				sol.StoredFields = nil
 				result["solution"] = sol
@@ -256,8 +259,8 @@ func (api *API) investigation(w http.ResponseWriter, r *http.Request) {
 }
 func (api *API) reviewSolution(w http.ResponseWriter, r *http.Request) {
 	s := api.Engine.Store.Snapshot()
-	task, ok := s.Investigations[r.PathValue("id")]
-	if !ok || !allowed(r, task.ProjectID) || !ticketAllowed(r, s.Runs[task.RunID].TicketID) {
+	task, ok := s.Investigations.Lookup(r.PathValue("id"))
+	if !ok || !allowed(r, task.ProjectID) || !ticketAllowed(r, s.Runs.Get(task.RunID).TicketID) {
 		writeError(w, ErrNotFound)
 		return
 	}
@@ -287,7 +290,7 @@ func (api *API) snapshot(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "Snapshot storage is unavailable."})
 		return
 	}
-	current := s.Tickets[snap.Ticket.ID]
+	current := s.Tickets.Get(snap.Ticket.ID)
 	if !ok || snap.Ticket.Private || current.Private || !allowed(r, snap.Ticket.ProjectID) || !ticketAllowed(r, snap.Ticket.ID) || snap.AvailableAt.After(api.Engine.Now()) {
 		writeError(w, ErrNotFound)
 		return

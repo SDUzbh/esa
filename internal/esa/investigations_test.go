@@ -52,8 +52,8 @@ func TestSharedInvestigationsConcurrentReleaseIncidentSharesOneDiagnosis(t *test
 		unique[id] = true
 	}
 	s := e.Store.Snapshot()
-	if len(unique) != 1 || len(s.Investigations) != 1 || len(s.Issues) != 0 || len(s.Snapshots) != 100 || len(s.Memberships) != 100 {
-		t.Fatalf("duplicate investigations: runs=%d tasks=%d issues=%d snapshots=%d links=%d", len(unique), len(s.Investigations), len(s.Issues), len(s.Snapshots), len(s.Memberships))
+	if len(unique) != 1 || s.Investigations.Len() != 1 || s.Issues.Len() != 0 || s.Snapshots.Len() != 100 || s.Memberships.Len() != 100 {
+		t.Fatalf("duplicate investigations: runs=%d tasks=%d issues=%d snapshots=%d links=%d", len(unique), s.Investigations.Len(), s.Issues.Len(), s.Snapshots.Len(), s.Memberships.Len())
 	}
 	var calls atomic.Int64
 	provider := analyzerFunc(func(_ context.Context, in AnalyzeRequest) (Report, error) {
@@ -77,20 +77,20 @@ func TestSharedInvestigationsConcurrentReleaseIncidentSharesOneDiagnosis(t *test
 		t.Fatal("repeated engineering invocations", calls.Load())
 	}
 	s = e.Store.Snapshot()
-	if len(s.Issues) != 1 {
-		t.Fatal("analysis did not create one shared issue", len(s.Issues))
+	if s.Issues.Len() != 1 {
+		t.Fatal("analysis did not create one shared issue", s.Issues.Len())
 	}
 	task := sortedInvestigations(s)[0]
-	proposal := s.Solutions[task.SolutionID]
+	proposal := s.Solutions.Get(task.SolutionID)
 	if task.State != "agent_proposed" || proposal.State != "proposed" || proposal.Origin != "agent" {
 		t.Fatal("proposal incorrectly trusted", task, proposal)
 	}
-	frozen := s.Snapshots[task.Contract.SnapshotID]
+	frozen := s.Snapshots.Get(task.Contract.SnapshotID)
 	if frozen.Hash != task.Contract.InputHash {
 		t.Fatal("snapshot changed")
 	}
 	receive(t, e, "later", fixture(e, "later"))
-	if len(e.Store.Snapshot().Investigations) != 1 {
+	if e.Store.Snapshot().Investigations.Len() != 1 {
 		t.Fatal("pending report was not reused")
 	}
 	_, err := e.ProcessOne(context.Background(), provider)
@@ -105,7 +105,7 @@ func TestSharedInvestigationsConcurrentReleaseIncidentSharesOneDiagnosis(t *test
 	if approved.State != "trusted" || approved.Origin != "engineer" || approved.Revision != 2 || approved.Supersedes != proposal.ID {
 		t.Fatal(approved)
 	}
-	if e.Store.Snapshot().Solutions[proposal.ID].State != "proposed" {
+	if e.Store.Snapshot().Solutions.Get(proposal.ID).State != "proposed" {
 		t.Fatal("review erased proposal history")
 	}
 	if _, err = e.ReviewSolution(task.ID, review); !errors.Is(err, ErrConflict) {
@@ -124,7 +124,7 @@ func TestSharedInvestigationsNoveltyAndContextAreNotMerged(t *testing.T) {
 			t.Fatal("incompatible context merged")
 		}
 	}
-	if len(e.Store.Snapshot().Investigations) != 5 {
+	if e.Store.Snapshot().Investigations.Len() != 5 {
 		t.Fatal("missing independent investigations")
 	}
 }
@@ -142,8 +142,8 @@ func TestSharedInvestigationsVisibilityAndFrozenSnapshots(t *testing.T) {
 		t.Fatal("issue members crossed visibility", w.Body)
 	}
 	s := e.Store.Snapshot()
-	task := s.Investigations[s.Runs[r.RunID].InvestigationID]
-	snap := s.Snapshots[task.Contract.SnapshotID]
+	task := s.Investigations.Get(s.Runs.Get(r.RunID).InvestigationID)
+	snap := s.Snapshots.Get(task.Contract.SnapshotID)
 	w = classifierRequest(e, "GET", "/v1/snapshots/"+snap.ID, "", "1", "member")
 	if w.Code != 404 {
 		t.Fatal("private owner snapshot exposed", w.Code)
@@ -151,7 +151,7 @@ func TestSharedInvestigationsVisibilityAndFrozenSnapshots(t *testing.T) {
 	changed := fixture(e, "owner")
 	changed.Private = true
 	receive(t, e, "owner-private", changed)
-	if e.Store.Snapshot().Snapshots[snap.ID].Hash != snap.Hash {
+	if e.Store.Snapshot().Snapshots.Get(snap.ID).Hash != snap.Hash {
 		t.Fatal("mutable original snapshot")
 	}
 	w = classifierRequest(e, "GET", "/v1/investigations/"+task.ID, "", "1", "member")
@@ -186,7 +186,7 @@ func TestSharedInvestigationsLeaseFencesStaleResults(t *testing.T) {
 		t.Fatal("stale worker published a report", err)
 	}
 	task := sortedInvestigations(e.Store.Snapshot())[0]
-	if task.State != "failed" || task.Epoch != 2 || len(e.Store.Snapshot().Solutions) != 0 {
+	if task.State != "failed" || task.Epoch != 2 || e.Store.Snapshot().Solutions.Len() != 0 {
 		t.Fatal("lease failure was not fenced", task)
 	}
 	calls := 0
@@ -232,5 +232,64 @@ func TestSharedInvestigationsReplayClockAndFutureCaseIsolation(t *testing.T) {
 	(&API{Engine: e, Token: "token"}).Handler().ServeHTTP(out, req)
 	if out.Code != 403 {
 		t.Fatal("clock scope bypassed", out.Code)
+	}
+}
+
+// The Issue list reports the state of the Issue's current investigation, and
+// a membership review may name only an Issue with a visible tentative member.
+func TestIssueListStateAndReviewTargetVisibility(t *testing.T) {
+	e := sharedInvestigationEngine(t)
+	receive(t, e, "owner-event", fixture(e, "owner"))
+	e.ProcessOne(context.Background(), analyzerFunc(func(context.Context, AnalyzeRequest) (Report, error) { return diagnosticReport(), nil }))
+	other := fixture(e, "other")
+	other.Description = "Different NullPointerException while validating a configuration"
+	receive(t, e, "other-event", other)
+	s := e.Store.Snapshot()
+	link, _ := activeMembership(s, "owner")
+	want := ""
+	for _, group := range s.Groups.All() {
+		if group.IssueID == link.IssueID {
+			want = s.Investigations.Get(group.CurrentTaskID).State
+		}
+	}
+	if link.IssueID == "" || want == "" || want == "tentative" {
+		t.Fatalf("analysis left Issue %q with group state %q", link.IssueID, want)
+	}
+	w := classifierRequest(e, "GET", "/v1/engineering-issues", "", "1", "owner,other")
+	var list struct {
+		Issues []struct {
+			Issue EngineeringIssue `json:"issue"`
+		} `json:"issues"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &list); err != nil || len(list.Issues) != 1 || list.Issues[0].Issue.State != want {
+		t.Fatalf("issue list = %s, want state %q", w.Body, want)
+	}
+
+	target, _ := activeMembership(s, "other")
+	body, _ := json.Marshal(MembershipReview{ExpectedMembershipID: target.ID, ExpectedSnapshotID: s.LatestSnapshot.Get("other"), IssueID: link.IssueID, Reviewer: "engineer", Reason: "Same cause"})
+	review := func() int {
+		return classifierRequest(e, "POST", "/v1/tickets/other/membership/review", string(body), "1", "owner,other").Code
+	}
+	if err := e.Store.Update(func(s *State) error {
+		owner := s.Tickets.Get("owner")
+		owner.Private = true
+		s.Tickets.Put(owner.ID, owner)
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if code := review(); code != 404 {
+		t.Fatalf("review into an Issue whose only member is private: %d, want 404", code)
+	}
+	if err := e.Store.Update(func(s *State) error {
+		owner := s.Tickets.Get("owner")
+		owner.Private = false
+		s.Tickets.Put(owner.ID, owner)
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if code := review(); code == 404 {
+		t.Fatal("review into a visible Issue was hidden")
 	}
 }

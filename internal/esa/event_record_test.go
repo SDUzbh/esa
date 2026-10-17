@@ -22,9 +22,9 @@ func TestReceiveStoresEventRecordWithoutTicketCopy(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := e.Store.Snapshot()
-	r := s.Events["e1"]
-	snap, ok := s.Snapshots[r.SnapshotID]
-	if !ok || r.SnapshotID != s.LatestSnapshot["T1"] || r.Ticket != nil {
+	r := s.Events.Get("e1")
+	snap, ok := s.Snapshots.Lookup(r.SnapshotID)
+	if !ok || r.SnapshotID != s.LatestSnapshot.Get("T1") || r.Ticket != nil {
 		t.Fatal("accepted event must reference its snapshot instead of copying the ticket", r.SnapshotID, r.Ticket != nil)
 	}
 	if r.TicketID != "T1" || r.TicketHash != snap.Hash || r.ForwardedBy != "support-user" || r.Origin != "manual_forward" || string(r.Raw) != `{"source":"jira"}` {
@@ -47,7 +47,7 @@ func TestReceiveKeepsTicketForEventsWithoutSnapshot(t *testing.T) {
 		if err != nil || !strings.HasPrefix(receipt.Action, "ignored_") {
 			t.Fatal("expected an ignored event", ev.ID, receipt.Action, err)
 		}
-		r := e.Store.Snapshot().Events[ev.ID]
+		r := e.Store.Snapshot().Events.Get(ev.ID)
 		if r.SnapshotID != "" || r.Ticket == nil || r.Ticket.Subject != ev.Ticket.Subject || r.TicketHash != hash(*r.Ticket) {
 			t.Fatal("an event without a snapshot must keep its ticket", ev.ID, r)
 		}
@@ -83,8 +83,8 @@ func legacyStateFile(t *testing.T, s State, tamper string) string {
 		t.Fatal(err)
 	}
 	legacy := map[string]Event{}
-	for id, r := range s.Events {
-		ticket := s.Snapshots[r.SnapshotID].Ticket
+	for id, r := range s.Events.All() {
+		ticket := s.Snapshots.Get(r.SnapshotID).Ticket
 		if r.Ticket != nil {
 			ticket = *r.Ticket
 		}
@@ -125,13 +125,13 @@ func TestLegacyEventsConvertOnLoad(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := loaded.Snapshot()
-	if r := s.Events["accepted"]; r.Ticket != nil || r.SnapshotID == "" || r.TicketHash != s.Snapshots[r.SnapshotID].Hash || r.TicketID != "T1" {
+	if r := s.Events.Get("accepted"); r.Ticket != nil || r.SnapshotID == "" || r.TicketHash != s.Snapshots.Get(r.SnapshotID).Hash || r.TicketID != "T1" {
 		t.Fatal("legacy event with a matching snapshot was not compacted", r)
 	}
-	if r := s.Events["stale"]; r.Ticket == nil || r.SnapshotID != "" || r.Ticket.Subject != "Older edit" {
+	if r := s.Events.Get("stale"); r.Ticket == nil || r.SnapshotID != "" || r.Ticket.Subject != "Older edit" {
 		t.Fatal("legacy event without a snapshot lost its ticket", r)
 	}
-	if r := s.Events["divergent"]; r.Ticket == nil || r.Ticket.Subject != "diverges from its snapshot" || r.TicketHash != hash(*r.Ticket) {
+	if r := s.Events.Get("divergent"); r.Ticket == nil || r.Ticket.Subject != "diverges from its snapshot" || r.TicketHash != hash(*r.Ticket) {
 		t.Fatal("legacy event that differs from its snapshot lost its own ticket", r)
 	}
 	// Idempotency keeps working on converted records.

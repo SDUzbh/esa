@@ -55,28 +55,28 @@ func seedClosedTickets(b *testing.B, n int) *Engine {
 		b.Fatal(err)
 	}
 	err = e.Store.Update(func(s *State) error {
-		event, snapshot, c := s.Events["ev-0"], s.Snapshots[s.LatestSnapshot["K-0"]], s.Cases[receipt.CaseID]
+		event, snapshot, c := s.Events.Get("ev-0"), s.Snapshots.Get(s.LatestSnapshot.Get("K-0")), s.Cases.Get(receipt.CaseID)
 		for i := 1; i < n; i++ {
 			ticketID, eventID := fmt.Sprintf("K-%d", i), fmt.Sprintf("ev-%d", i)
-			ticket := s.Tickets["K-0"]
+			ticket := s.Tickets.Get("K-0")
 			ticket.ID, ticket.SourceKey = ticketID, ticketID
-			s.Tickets[ticketID] = ticket
+			s.Tickets.Put(ticketID, ticket)
 			event.ID, event.TicketID, event.TicketHash, event.SnapshotID = eventID, ticketID, hash(ticket), snapshotIDFor(eventID)
-			s.Events[eventID] = event
+			s.Events.Put(eventID, event)
 			snapshot.ID, snapshot.EventID, snapshot.Ticket, snapshot.Hash = "snapshot_"+hash(eventID), eventID, ticket, hash(ticket)
-			s.Snapshots[snapshot.ID] = snapshot
-			s.LatestSnapshot[ticketID] = snapshot.ID
+			s.Snapshots.Put(snapshot.ID, snapshot)
+			s.LatestSnapshot.Put(ticketID, snapshot.ID)
 			c.ID, c.TicketID, c.SourceKey = "case_"+hash(ticketID)[:24], ticketID, ticketID
-			s.Cases[c.ID] = c
+			s.Cases.Put(c.ID, c)
 			s.CaseHistory = append(s.CaseHistory, c)
-			s.Receipts[eventID] = Receipt{EventID: eventID, TicketID: ticketID, CaseID: c.ID, Action: receipt.Action}
+			s.Receipts.Put(eventID, Receipt{EventID: eventID, TicketID: ticketID, CaseID: c.ID, Action: receipt.Action})
 		}
 		return nil
 	})
 	if err != nil {
 		b.Fatal(err)
 	}
-	if got := len(e.Store.Snapshot().Tickets); got != n {
+	if got := e.Store.Snapshot().Tickets.Len(); got != n {
 		b.Fatalf("seeded %d tickets, want %d", got, n)
 	}
 	return e
@@ -130,9 +130,9 @@ func BenchmarkStoreUpdateOneTicket(b *testing.B) {
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
 				err := e.update(func(s *State) error {
-					ticket := s.Tickets["K-1"]
+					ticket := s.Tickets.Get("K-1")
 					ticket.Assignee = fmt.Sprint(i)
-					s.Tickets[ticket.ID] = ticket
+					s.Tickets.Put(ticket.ID, ticket)
 					return nil
 				})
 				if err != nil {
@@ -147,7 +147,7 @@ func BenchmarkReceiveClosedTicket(b *testing.B) {
 	for _, n := range benchSizes(b) {
 		b.Run(fmt.Sprint(n), func(b *testing.B) {
 			e := seededEngine(b, "receive", n)
-			start := len(e.Store.Snapshot().Tickets)
+			start := e.Store.Snapshot().Tickets.Len()
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
 				id := fmt.Sprintf("R-%d", start+i)
@@ -187,30 +187,170 @@ func BenchmarkPostgresUpdateOneTicket(b *testing.B) {
 	for _, n := range benchSizes(b) {
 		b.Run(fmt.Sprint(n), func(b *testing.B) {
 			url := testDatabaseURL(b)
-			seed := seededEngine(b, "write", n).Store.Snapshot()
+			seed := seedMemoryStore(b, n).Store.Snapshot()
 			p := openTestPostgres(b, url, testSchema(b, url))
 			ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 			defer cancel()
 			if err := p.AcquireWriter(ctx, 20*time.Millisecond); err != nil {
 				b.Fatal(err)
 			}
-			store, err := newStore(p)
-			if err != nil {
+			// Seed with the bulk import, as a real migration does.
+			if err := p.Import(ctx, seed); err != nil {
 				b.Fatal(err)
 			}
-			if err = store.Update(func(s *State) error { *s = seed.detach(); return nil }); err != nil {
+			store, err := newStore(p)
+			if err != nil {
 				b.Fatal(err)
 			}
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
 				err := store.Update(func(s *State) error {
-					ticket := s.Tickets["K-1"]
+					ticket := s.Tickets.Get("K-1")
 					ticket.Assignee = fmt.Sprint(i)
-					s.Tickets[ticket.ID] = ticket
+					s.Tickets.Put(ticket.ID, ticket)
 					return nil
 				})
 				if err != nil {
 					b.Fatal(err)
+				}
+			}
+		})
+	}
+}
+
+// discardPersister accepts every commit without storing it, so benchmarks
+// measure only the in-memory work of Update (detach, callback, diff).
+type discardPersister struct{ initial State }
+
+func (p discardPersister) Load() (State, uint64, error) { return p.initial, 0, nil }
+func (discardPersister) Apply(c Commit) (uint64, error) { return c.Revision + 1, nil }
+
+// seedMemoryStore builds n closed tickets directly into a state (no encoding)
+// behind a discardPersister.
+func seedMemoryStore(b *testing.B, n int) *Engine {
+	b.Helper()
+	cacheKey := fmt.Sprintf("memory/%d", n)
+	if e, ok := seeded.Load(cacheKey); ok {
+		return e.(*Engine)
+	}
+	e := testEngine(b)
+	template := benchClosedTicket(e, "K-0")
+	receipt, err := e.Receive(Event{ID: "ev-0", Origin: "bench", ForwardedBy: "u", ForwardedAt: e.Now(), Ticket: template})
+	if err != nil {
+		b.Fatal(err)
+	}
+	s := e.Store.Snapshot().detach()
+	event, snapshot, c := s.Events.Get("ev-0"), s.Snapshots.Get(s.LatestSnapshot.Get("K-0")), s.Cases.Get(receipt.CaseID)
+	for i := 1; i < n; i++ {
+		ticketID, eventID := fmt.Sprintf("K-%d", i), fmt.Sprintf("ev-%d", i)
+		ticket := s.Tickets.Get("K-0")
+		ticket.ID, ticket.SourceKey = ticketID, ticketID
+		s.Tickets.Put(ticketID, ticket)
+		event.ID, event.TicketID, event.TicketHash, event.SnapshotID = eventID, ticketID, hash(ticket), snapshotIDFor(eventID)
+		s.Events.Put(eventID, event)
+		snapshot.ID, snapshot.EventID, snapshot.Ticket, snapshot.Hash = snapshotIDFor(eventID), eventID, ticket, hash(ticket)
+		s.Snapshots.Put(snapshot.ID, snapshot)
+		s.LatestSnapshot.Put(ticketID, snapshot.ID)
+		c.ID, c.TicketID, c.SourceKey = "case_"+hash(ticketID)[:24], ticketID, ticketID
+		s.Cases.Put(c.ID, c)
+		s.CaseHistory = append(s.CaseHistory, c)
+		s.Receipts.Put(eventID, Receipt{EventID: eventID, TicketID: ticketID, CaseID: c.ID, Action: receipt.Action})
+	}
+	store, err := newStore(discardPersister{initial: s})
+	if err != nil {
+		b.Fatal(err)
+	}
+	e.Store = store
+	seeded.Store(cacheKey, e)
+	return e
+}
+
+// BenchmarkMemoryUpdateOneTicket is the per-write cost without persistence:
+// what the Postgres store pays in memory on top of its ~1 ms database write.
+func BenchmarkMemoryUpdateOneTicket(b *testing.B) {
+	for _, n := range benchSizes(b) {
+		b.Run(fmt.Sprint(n), func(b *testing.B) {
+			e := seedMemoryStore(b, n)
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				err := e.update(func(s *State) error {
+					ticket := s.Tickets.Get("K-1")
+					ticket.Assignee = fmt.Sprint(i)
+					s.Tickets.Put(ticket.ID, ticket)
+					return nil
+				})
+				if err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+	}
+}
+
+// BenchmarkMemoryReceiveClosedTicket is one intake without persistence.
+func BenchmarkMemoryReceiveClosedTicket(b *testing.B) {
+	for _, n := range benchSizes(b) {
+		b.Run(fmt.Sprint(n), func(b *testing.B) {
+			e := seedMemoryStore(b, n)
+			start := e.Store.Snapshot().Tickets.Len()
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				id := fmt.Sprintf("R-%d-%d", start, i)
+				if _, err := e.Receive(Event{ID: "ev-" + id, Origin: "bench", ForwardedBy: "u", ForwardedAt: e.Now(), Ticket: benchClosedTicket(e, id)}); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+	}
+}
+
+// seedFinishedInvestigations adds n finished investigations and their runs to
+// the memory archive: the bulk of a long-running deployment's history.
+func seedFinishedInvestigations(b *testing.B, n int) *Engine {
+	b.Helper()
+	cacheKey := fmt.Sprintf("worker/%d", n)
+	if e, ok := seeded.Load(cacheKey); ok {
+		return e.(*Engine)
+	}
+	s := seedMemoryStore(b, n).Store.Snapshot().detach()
+	for i := 0; i < n; i++ {
+		taskID, runID := fmt.Sprintf("inv-%d", i), fmt.Sprintf("run-%d", i)
+		s.Investigations.Put(taskID, Investigation{ID: taskID, RunID: runID, ProjectID: "1", State: "agent_proposed", Phase: "assignment"})
+		s.Runs.Put(runID, Run{ID: runID, TicketID: fmt.Sprintf("K-%d", i), InvestigationID: taskID, State: "agent_proposed"})
+	}
+	store, err := newStore(discardPersister{initial: s})
+	if err != nil {
+		b.Fatal(err)
+	}
+	e := testEngine(b)
+	e.Store = store
+	seeded.Store(cacheKey, e)
+	return e
+}
+
+// BenchmarkMemoryWorkerClaim is one worker pass that finds one queued
+// investigation among n finished ones: the idle check, then the claim
+// transaction (recovery, slot counting, fair ordering). The candidate has no
+// group, so the pass supersedes it instead of invoking an analyzer.
+func BenchmarkMemoryWorkerClaim(b *testing.B) {
+	for _, n := range benchSizes(b) {
+		b.Run(fmt.Sprint(n), func(b *testing.B) {
+			e := seedFinishedInvestigations(b, n)
+			ctx := context.Background()
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				id := fmt.Sprintf("queued-%d-%d", n, i)
+				if err := e.Store.Update(func(s *State) error {
+					s.Investigations.Put(id, Investigation{ID: id, ProjectID: "1", State: "queued", CreatedAt: e.Now()})
+					return nil
+				}); err != nil {
+					b.Fatal(err)
+				}
+				if found, err := e.ProcessOne(ctx, nil); err != nil || found {
+					b.Fatal(found, err)
+				}
+				if e.Store.Snapshot().Investigations.Get(id).State != "superseded" {
+					b.Fatal("the worker did not reach the queued investigation")
 				}
 			}
 		})

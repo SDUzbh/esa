@@ -303,3 +303,56 @@ func BenchmarkMemoryReceiveClosedTicket(b *testing.B) {
 		})
 	}
 }
+
+// seedFinishedInvestigations adds n finished investigations and their runs to
+// the memory archive: the bulk of a long-running deployment's history.
+func seedFinishedInvestigations(b *testing.B, n int) *Engine {
+	b.Helper()
+	cacheKey := fmt.Sprintf("worker/%d", n)
+	if e, ok := seeded.Load(cacheKey); ok {
+		return e.(*Engine)
+	}
+	s := seedMemoryStore(b, n).Store.Snapshot().detach()
+	for i := 0; i < n; i++ {
+		taskID, runID := fmt.Sprintf("inv-%d", i), fmt.Sprintf("run-%d", i)
+		s.Investigations.Put(taskID, Investigation{ID: taskID, RunID: runID, ProjectID: "1", State: "agent_proposed", Phase: "assignment"})
+		s.Runs.Put(runID, Run{ID: runID, TicketID: fmt.Sprintf("K-%d", i), InvestigationID: taskID, State: "agent_proposed"})
+	}
+	store, err := newStore(discardPersister{initial: s})
+	if err != nil {
+		b.Fatal(err)
+	}
+	e := testEngine(b)
+	e.Store = store
+	seeded.Store(cacheKey, e)
+	return e
+}
+
+// BenchmarkMemoryWorkerClaim is one worker pass that finds one queued
+// investigation among n finished ones: the idle check, then the claim
+// transaction (recovery, slot counting, fair ordering). The candidate has no
+// group, so the pass supersedes it instead of invoking an analyzer.
+func BenchmarkMemoryWorkerClaim(b *testing.B) {
+	for _, n := range benchSizes(b) {
+		b.Run(fmt.Sprint(n), func(b *testing.B) {
+			e := seedFinishedInvestigations(b, n)
+			ctx := context.Background()
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				id := fmt.Sprintf("queued-%d-%d", n, i)
+				if err := e.Store.Update(func(s *State) error {
+					s.Investigations.Put(id, Investigation{ID: id, ProjectID: "1", State: "queued", CreatedAt: e.Now()})
+					return nil
+				}); err != nil {
+					b.Fatal(err)
+				}
+				if found, err := e.ProcessOne(ctx, nil); err != nil || found {
+					b.Fatal(found, err)
+				}
+				if e.Store.Snapshot().Investigations.Get(id).State != "superseded" {
+					b.Fatal("the worker did not reach the queued investigation")
+				}
+			}
+		})
+	}
+}

@@ -6,11 +6,11 @@ package esa
 func eligibleCaseHistory(s State, t Ticket) []Case {
 	rows := []Case{}
 	for _, c := range s.CaseHistory {
-		source, ok := s.Tickets[c.TicketID]
+		source, ok := s.Tickets.Lookup(c.TicketID)
 		if !ok || source.Private || source.ProjectID != t.ProjectID {
 			continue
 		}
-		if override := s.IssueOverrides[t.ID]; override != "" && c.IssueID != override {
+		if override := s.IssueOverrides.Get(t.ID); override != "" && c.IssueID != override {
 			continue
 		}
 		rows = append(rows, c)

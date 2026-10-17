@@ -55,14 +55,14 @@ func TestStoreAppliesOnlyChangedUpdates(t *testing.T) {
 	if err := s.Update(func(*State) error { return nil }); err != nil || len(p.commits) != 0 {
 		t.Fatal("no-op Update reached the persister", err, len(p.commits))
 	}
-	if err := s.Update(func(st *State) error { st.Tickets["T1"] = fixture(e, "T1"); return nil }); err != nil {
+	if err := s.Update(func(st *State) error { st.Tickets.Put("T1", fixture(e, "T1")); return nil }); err != nil {
 		t.Fatal(err)
 	}
 	if len(p.commits) != 1 {
 		t.Fatal("changed Update was not applied once", len(p.commits))
 	}
 	c := p.commits[0]
-	if c.Revision != 7 || c.Encoded != nil || !slices.Equal(c.Changes.Maps["tickets"].Upserted, []string{"T1"}) || c.State.Tickets["T1"].ID != "T1" {
+	if c.Revision != 7 || c.Encoded != nil || !slices.Equal(c.Changes.Maps["tickets"].Upserted, []string{"T1"}) || c.State.Tickets.Get("T1").ID != "T1" {
 		t.Fatal("unexpected commit", c.Revision, c.Encoded != nil, c.Changes)
 	}
 	if s.revision != 8 {
@@ -74,12 +74,12 @@ func TestStoreFailedApplyLeavesMemoryUnchanged(t *testing.T) {
 	e := testEngine(t)
 	p := &recordingPersister{initial: emptyState(), fail: errors.New("disk full")}
 	s := recordingStore(t, p)
-	err := s.Update(func(st *State) error { st.Tickets["T1"] = fixture(e, "T1"); return nil })
-	if err == nil || len(s.Snapshot().Tickets) != 0 || s.revision != 0 {
-		t.Fatal("failed Apply changed memory", err, len(s.Snapshot().Tickets), s.revision)
+	err := s.Update(func(st *State) error { st.Tickets.Put("T1", fixture(e, "T1")); return nil })
+	if err == nil || s.Snapshot().Tickets.Len() != 0 || s.revision != 0 {
+		t.Fatal("failed Apply changed memory", err, s.Snapshot().Tickets.Len(), s.revision)
 	}
 	p.fail = nil
-	if err = s.Update(func(st *State) error { st.Tickets["T1"] = fixture(e, "T1"); return nil }); err != nil {
+	if err = s.Update(func(st *State) error { st.Tickets.Put("T1", fixture(e, "T1")); return nil }); err != nil {
 		t.Fatal(err)
 	}
 	if got := p.commits[1].Changes.Maps["tickets"].Upserted; !slices.Equal(got, []string{"T1"}) {
@@ -90,20 +90,20 @@ func TestStoreFailedApplyLeavesMemoryUnchanged(t *testing.T) {
 func TestWholeStatePersisterGetsEncodingAndSkipsEqualContent(t *testing.T) {
 	e := testEngine(t)
 	initial := emptyState()
-	initial.Tickets = map[string]Ticket{"T1": fixture(e, "T1")}
+	initial.Tickets = TableOf(map[string]Ticket{"T1": fixture(e, "T1")})
 	p := &wholeRecorder{recordingPersister{initial: initial}}
 	s := recordingStore(t, p)
 	// Rebuilding a slice with equal content changes pointers but not the encoding.
 	err := s.Update(func(st *State) error {
-		ticket := st.Tickets["T1"]
+		ticket := st.Tickets.Get("T1")
 		ticket.Components = append([]string(nil), ticket.Components...)
-		st.Tickets["T1"] = ticket
+		st.Tickets.Put("T1", ticket)
 		return nil
 	})
 	if err != nil || len(p.commits) != 0 {
 		t.Fatal("equal-content Update was written", err, len(p.commits))
 	}
-	if err = s.Update(func(st *State) error { st.Tickets["T2"] = fixture(e, "T2"); return nil }); err != nil {
+	if err = s.Update(func(st *State) error { st.Tickets.Put("T2", fixture(e, "T2")); return nil }); err != nil {
 		t.Fatal(err)
 	}
 	want, _ := json.Marshal(s.Snapshot())
@@ -116,14 +116,14 @@ func TestJSONPersisterRoundTripAndSchemaCheck(t *testing.T) {
 	e := testEngine(t)
 	path := filepath.Join(t.TempDir(), "state.json")
 	s, err := OpenStore(path)
-	if err != nil || len(s.Snapshot().Tickets) != 0 {
+	if err != nil || s.Snapshot().Tickets.Len() != 0 {
 		t.Fatal("missing file must open an empty store", err)
 	}
-	if err = s.Update(func(st *State) error { st.Tickets["T1"] = fixture(e, "T1"); return nil }); err != nil {
+	if err = s.Update(func(st *State) error { st.Tickets.Put("T1", fixture(e, "T1")); return nil }); err != nil {
 		t.Fatal(err)
 	}
 	reopened, err := OpenStore(path)
-	if err != nil || reopened.Snapshot().Tickets["T1"].ID != "T1" {
+	if err != nil || reopened.Snapshot().Tickets.Get("T1").ID != "T1" {
 		t.Fatal("JSON persister lost a committed Update", err)
 	}
 	if err = os.WriteFile(path, []byte(`{"schema_version":2}`), 0600); err != nil {

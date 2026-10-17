@@ -55,28 +55,28 @@ func seedClosedTickets(b *testing.B, n int) *Engine {
 		b.Fatal(err)
 	}
 	err = e.Store.Update(func(s *State) error {
-		event, snapshot, c := s.Events["ev-0"], s.Snapshots[s.LatestSnapshot["K-0"]], s.Cases[receipt.CaseID]
+		event, snapshot, c := s.Events.Get("ev-0"), s.Snapshots.Get(s.LatestSnapshot.Get("K-0")), s.Cases.Get(receipt.CaseID)
 		for i := 1; i < n; i++ {
 			ticketID, eventID := fmt.Sprintf("K-%d", i), fmt.Sprintf("ev-%d", i)
-			ticket := s.Tickets["K-0"]
+			ticket := s.Tickets.Get("K-0")
 			ticket.ID, ticket.SourceKey = ticketID, ticketID
-			s.Tickets[ticketID] = ticket
+			s.Tickets.Put(ticketID, ticket)
 			event.ID, event.TicketID, event.TicketHash, event.SnapshotID = eventID, ticketID, hash(ticket), snapshotIDFor(eventID)
-			s.Events[eventID] = event
+			s.Events.Put(eventID, event)
 			snapshot.ID, snapshot.EventID, snapshot.Ticket, snapshot.Hash = "snapshot_"+hash(eventID), eventID, ticket, hash(ticket)
-			s.Snapshots[snapshot.ID] = snapshot
-			s.LatestSnapshot[ticketID] = snapshot.ID
+			s.Snapshots.Put(snapshot.ID, snapshot)
+			s.LatestSnapshot.Put(ticketID, snapshot.ID)
 			c.ID, c.TicketID, c.SourceKey = "case_"+hash(ticketID)[:24], ticketID, ticketID
-			s.Cases[c.ID] = c
+			s.Cases.Put(c.ID, c)
 			s.CaseHistory = append(s.CaseHistory, c)
-			s.Receipts[eventID] = Receipt{EventID: eventID, TicketID: ticketID, CaseID: c.ID, Action: receipt.Action}
+			s.Receipts.Put(eventID, Receipt{EventID: eventID, TicketID: ticketID, CaseID: c.ID, Action: receipt.Action})
 		}
 		return nil
 	})
 	if err != nil {
 		b.Fatal(err)
 	}
-	if got := len(e.Store.Snapshot().Tickets); got != n {
+	if got := e.Store.Snapshot().Tickets.Len(); got != n {
 		b.Fatalf("seeded %d tickets, want %d", got, n)
 	}
 	return e
@@ -130,9 +130,9 @@ func BenchmarkStoreUpdateOneTicket(b *testing.B) {
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
 				err := e.update(func(s *State) error {
-					ticket := s.Tickets["K-1"]
+					ticket := s.Tickets.Get("K-1")
 					ticket.Assignee = fmt.Sprint(i)
-					s.Tickets[ticket.ID] = ticket
+					s.Tickets.Put(ticket.ID, ticket)
 					return nil
 				})
 				if err != nil {
@@ -147,7 +147,7 @@ func BenchmarkReceiveClosedTicket(b *testing.B) {
 	for _, n := range benchSizes(b) {
 		b.Run(fmt.Sprint(n), func(b *testing.B) {
 			e := seededEngine(b, "receive", n)
-			start := len(e.Store.Snapshot().Tickets)
+			start := e.Store.Snapshot().Tickets.Len()
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
 				id := fmt.Sprintf("R-%d", start+i)
@@ -204,9 +204,9 @@ func BenchmarkPostgresUpdateOneTicket(b *testing.B) {
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
 				err := store.Update(func(s *State) error {
-					ticket := s.Tickets["K-1"]
+					ticket := s.Tickets.Get("K-1")
 					ticket.Assignee = fmt.Sprint(i)
-					s.Tickets[ticket.ID] = ticket
+					s.Tickets.Put(ticket.ID, ticket)
 					return nil
 				})
 				if err != nil {
@@ -239,21 +239,21 @@ func seedMemoryStore(b *testing.B, n int) *Engine {
 		b.Fatal(err)
 	}
 	s := e.Store.Snapshot().detach()
-	event, snapshot, c := s.Events["ev-0"], s.Snapshots[s.LatestSnapshot["K-0"]], s.Cases[receipt.CaseID]
+	event, snapshot, c := s.Events.Get("ev-0"), s.Snapshots.Get(s.LatestSnapshot.Get("K-0")), s.Cases.Get(receipt.CaseID)
 	for i := 1; i < n; i++ {
 		ticketID, eventID := fmt.Sprintf("K-%d", i), fmt.Sprintf("ev-%d", i)
-		ticket := s.Tickets["K-0"]
+		ticket := s.Tickets.Get("K-0")
 		ticket.ID, ticket.SourceKey = ticketID, ticketID
-		s.Tickets[ticketID] = ticket
+		s.Tickets.Put(ticketID, ticket)
 		event.ID, event.TicketID, event.TicketHash, event.SnapshotID = eventID, ticketID, hash(ticket), snapshotIDFor(eventID)
-		s.Events[eventID] = event
+		s.Events.Put(eventID, event)
 		snapshot.ID, snapshot.EventID, snapshot.Ticket, snapshot.Hash = snapshotIDFor(eventID), eventID, ticket, hash(ticket)
-		s.Snapshots[snapshot.ID] = snapshot
-		s.LatestSnapshot[ticketID] = snapshot.ID
+		s.Snapshots.Put(snapshot.ID, snapshot)
+		s.LatestSnapshot.Put(ticketID, snapshot.ID)
 		c.ID, c.TicketID, c.SourceKey = "case_"+hash(ticketID)[:24], ticketID, ticketID
-		s.Cases[c.ID] = c
+		s.Cases.Put(c.ID, c)
 		s.CaseHistory = append(s.CaseHistory, c)
-		s.Receipts[eventID] = Receipt{EventID: eventID, TicketID: ticketID, CaseID: c.ID, Action: receipt.Action}
+		s.Receipts.Put(eventID, Receipt{EventID: eventID, TicketID: ticketID, CaseID: c.ID, Action: receipt.Action})
 	}
 	store, err := newStore(discardPersister{initial: s})
 	if err != nil {
@@ -273,9 +273,9 @@ func BenchmarkMemoryUpdateOneTicket(b *testing.B) {
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
 				err := e.update(func(s *State) error {
-					ticket := s.Tickets["K-1"]
+					ticket := s.Tickets.Get("K-1")
 					ticket.Assignee = fmt.Sprint(i)
-					s.Tickets[ticket.ID] = ticket
+					s.Tickets.Put(ticket.ID, ticket)
 					return nil
 				})
 				if err != nil {
@@ -291,7 +291,7 @@ func BenchmarkMemoryReceiveClosedTicket(b *testing.B) {
 	for _, n := range benchSizes(b) {
 		b.Run(fmt.Sprint(n), func(b *testing.B) {
 			e := seedMemoryStore(b, n)
-			start := len(e.Store.Snapshot().Tickets)
+			start := e.Store.Snapshot().Tickets.Len()
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
 				id := fmt.Sprintf("R-%d-%d", start, i)

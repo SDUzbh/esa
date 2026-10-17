@@ -7,9 +7,9 @@ func caseScope(c Case) string {
 }
 func canonicalSolution(s State, issueID, scope string) (SolutionRevision, bool) {
 	var selected SolutionRevision
-	for _, task := range s.Investigations {
-		sol, ok := s.Solutions[task.SolutionID]
-		if !ok || task.IssueID != issueID || sol.ScopeHash != scope || s.Groups[task.GroupID].CurrentTaskID != task.ID {
+	for _, task := range s.Investigations.All() {
+		sol, ok := s.Solutions.Lookup(task.SolutionID)
+		if !ok || task.IssueID != issueID || sol.ScopeHash != scope || s.Groups.Get(task.GroupID).CurrentTaskID != task.ID {
 			continue
 		}
 		if selected.ID == "" || sol.AvailableAt.After(selected.AvailableAt) || sol.AvailableAt.Equal(selected.AvailableAt) && (sol.Revision > selected.Revision || sol.Revision == selected.Revision && sol.ID < selected.ID) {
@@ -19,7 +19,7 @@ func canonicalSolution(s State, issueID, scope string) (SolutionRevision, bool) 
 	return selected, selected.ID != ""
 }
 func (e *Engine) syncCases(s *State, sol SolutionRevision) {
-	for id, c := range s.Cases {
+	for id, c := range s.Cases.All() {
 		if c.IssueID != sol.IssueID || caseScope(c) != sol.ScopeHash || c.State == "invalidated" || c.State == "duplicate" || c.State == "archived" {
 			continue
 		}
@@ -44,7 +44,7 @@ func (e *Engine) syncCases(s *State, sol SolutionRevision) {
 		}
 		next.Version++
 		next.UpdatedAt = e.Now()
-		s.Cases[id] = next
+		s.Cases.Put(id, next)
 		s.CaseHistory = append(s.CaseHistory, next)
 	}
 }
@@ -58,13 +58,13 @@ func (e *Engine) publishSolution(s *State, task Investigation, old, next Solutio
 	next.InvestigationID = old.InvestigationID
 	next.RunID = old.RunID
 	next.AvailableAt, next.RecordedAt = e.Now(), time.Now().UTC()
-	s.Solutions[next.ID] = next
-	for id, current := range s.Investigations {
-		if current.SolutionID == "" || current.IssueID != task.IssueID || s.Groups[current.GroupID].ScopeHash != next.ScopeHash || s.Groups[current.GroupID].CurrentTaskID != current.ID {
+	s.Solutions.Put(next.ID, next)
+	for id, current := range s.Investigations.All() {
+		if current.SolutionID == "" || current.IssueID != task.IssueID || s.Groups.Get(current.GroupID).ScopeHash != next.ScopeHash || s.Groups.Get(current.GroupID).CurrentTaskID != current.ID {
 			continue
 		}
 		current.SolutionID, current.State, current.UpdatedAt = next.ID, next.State, e.Now()
-		s.Investigations[id] = current
+		s.Investigations.Put(id, current)
 	}
 	e.syncCases(s, next)
 	e.invalidateApplications(s)

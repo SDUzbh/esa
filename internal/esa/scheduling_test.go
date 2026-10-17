@@ -19,7 +19,7 @@ func TestSharedInvestigationsResumesNeverInvokedTaskWhenProviderAppears(t *testi
 	if _, err := e.ProcessOne(context.Background(), analyzerFunc(func(context.Context, AnalyzeRequest) (Report, error) { calls++; return diagnosticReport(), nil })); err != nil {
 		t.Fatal(err)
 	}
-	if calls != 1 || len(e.Store.Snapshot().Investigations) != 1 {
+	if calls != 1 || e.Store.Snapshot().Investigations.Len() != 1 {
 		t.Fatal("provider change duplicated or suppressed the queued task")
 	}
 }

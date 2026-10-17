@@ -15,7 +15,7 @@ import (
 // Resolutions, labels, agent reports and later comments are never features.
 func classifierText(t Ticket) string { return t.Subject + "\n" + t.Description }
 func (api *API) classifierTicket(r *http.Request) (Ticket, error) {
-	t, ok := api.Engine.Store.Snapshot().Tickets[r.PathValue("id")]
+	t, ok := api.Engine.Store.Snapshot().Tickets.Lookup(r.PathValue("id"))
 	if !ok || t.Private || t.ForwardedBy == "" || t.ForwardedAt.IsZero() || !allowed(r, t.ProjectID) || !ticketAllowed(r, t.ID) {
 		return t, ErrNotFound
 	}
@@ -23,7 +23,7 @@ func (api *API) classifierTicket(r *http.Request) (Ticket, error) {
 }
 func latestPrediction(s State, t Ticket, m *classifier.Model) *ClassifierPrediction {
 	var latest *ClassifierPrediction
-	for _, p := range s.ClassifierPredictions {
+	for _, p := range s.ClassifierPredictions.All() {
 		if p.TicketID == t.ID && p.ProjectID == t.ProjectID && p.Text == classifierText(t) && p.ForwardedAt.Equal(t.ForwardedAt) && p.Prediction.ModelVersion == m.Version {
 			copy := p
 			if latest == nil || p.CreatedAt.After(latest.CreatedAt) {
@@ -50,7 +50,7 @@ func (e *Engine) classifierView(s State, t Ticket) map[string]any {
 	p := latestPrediction(s, t, m)
 	var feedback *ClassifierFeedback
 	if p != nil {
-		for _, f := range s.ClassifierFeedback {
+		for _, f := range s.ClassifierFeedback.All() {
 			if f.PredictionID == p.ID && (feedback == nil || f.Example.ReviewedAt.After(feedback.Example.ReviewedAt) || f.Example.ReviewedAt.Equal(feedback.Example.ReviewedAt) && f.ID > feedback.ID) {
 				copy := f
 				feedback = &copy
@@ -86,18 +86,15 @@ func (api *API) classifierPredict(w http.ResponseWriter, r *http.Request) {
 	p := ClassifierPrediction{TicketID: t.ID, ProjectID: t.ProjectID, Text: text, ForwardedAt: t.ForwardedAt, CreatedAt: api.Engine.Now(), Prediction: m.Predict(text)}
 	p.ID = hash([]string{t.ID, t.ProjectID, text, t.ForwardedAt.UTC().Format(time.RFC3339Nano), m.Version})
 	err = api.Engine.update(func(s *State) error {
-		current, ok := s.Tickets[t.ID]
+		current, ok := s.Tickets.Lookup(t.ID)
 		if !ok || current.Private || current.ProjectID != t.ProjectID || classifierText(current) != text || !current.ForwardedAt.Equal(t.ForwardedAt) {
 			return ErrConflict
 		}
-		if old, ok := s.ClassifierPredictions[p.ID]; ok {
+		if old, ok := s.ClassifierPredictions.Lookup(p.ID); ok {
 			p = old
 			return nil
 		}
-		if s.ClassifierPredictions == nil {
-			s.ClassifierPredictions = map[string]ClassifierPrediction{}
-		}
-		s.ClassifierPredictions[p.ID] = p
+		s.ClassifierPredictions.Put(p.ID, p)
 		return nil
 	})
 	if err != nil {
@@ -150,11 +147,11 @@ func (api *API) classifierFeedback(w http.ResponseWriter, r *http.Request) {
 	sort.Strings(req.Labels)
 	var record ClassifierFeedback
 	err = api.Engine.update(func(s *State) error {
-		current, ok := s.Tickets[t.ID]
+		current, ok := s.Tickets.Lookup(t.ID)
 		if !ok || current.Private || current.ProjectID != t.ProjectID {
 			return ErrNotFound
 		}
-		p, ok := s.ClassifierPredictions[req.PredictionID]
+		p, ok := s.ClassifierPredictions.Lookup(req.PredictionID)
 		if !ok || p.TicketID != t.ID || p.ProjectID != t.ProjectID {
 			return ErrNotFound
 		}
@@ -162,7 +159,7 @@ func (api *API) classifierFeedback(w http.ResponseWriter, r *http.Request) {
 			return fmt.Errorf("%w: prediction is stale; request suggestions for the current snapshot", ErrConflict)
 		}
 		key := hash([]string{t.ProjectID, t.ID, req.ID})
-		if old, ok := s.ClassifierFeedback[key]; ok {
+		if old, ok := s.ClassifierFeedback.Lookup(key); ok {
 			if old.PredictionID != req.PredictionID || old.Example.Reviewer != req.Reviewer || hash(old.Example.Labels) != hash(req.Labels) || old.Note != req.Note {
 				return ErrConflict
 			}
@@ -170,7 +167,7 @@ func (api *API) classifierFeedback(w http.ResponseWriter, r *http.Request) {
 			return nil
 		}
 		reviewedAt := api.Engine.Now()
-		for _, previous := range s.ClassifierFeedback {
+		for _, previous := range s.ClassifierFeedback.All() {
 			if previous.Example.ID == t.ID && previous.Example.ProjectID == t.ProjectID && !reviewedAt.After(previous.Example.ReviewedAt) {
 				return fmt.Errorf("%w: review timestamp must advance; retry after the server clock advances", ErrConflict)
 			}
@@ -179,10 +176,7 @@ func (api *API) classifierFeedback(w http.ResponseWriter, r *http.Request) {
 		if err := record.Example.Validate(); err != nil {
 			return fmt.Errorf("%w: %v", ErrInvalid, err)
 		}
-		if s.ClassifierFeedback == nil {
-			s.ClassifierFeedback = map[string]ClassifierFeedback{}
-		}
-		s.ClassifierFeedback[key] = record
+		s.ClassifierFeedback.Put(key, record)
 		return nil
 	})
 	if err != nil {
@@ -203,8 +197,8 @@ func (api *API) classifierExport(w http.ResponseWriter, r *http.Request) {
 	}
 	s := api.Engine.Store.Snapshot()
 	latest := map[string]ClassifierFeedback{}
-	for _, f := range s.ClassifierFeedback {
-		t, ok := s.Tickets[f.Example.ID]
+	for _, f := range s.ClassifierFeedback.All() {
+		t, ok := s.Tickets.Lookup(f.Example.ID)
 		if !ok || t.Private || t.ProjectID != f.Example.ProjectID || !allowed(r, t.ProjectID) || !ticketAllowed(r, t.ID) || f.Example.ReviewedAt.After(before) {
 			continue
 		}

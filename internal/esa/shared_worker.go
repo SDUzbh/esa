@@ -12,26 +12,26 @@ import (
 )
 
 func (e *Engine) recoverInvestigations(s *State) error {
-	for id, task := range s.Investigations {
+	for id, task := range s.Investigations.All() {
 		if activeInvestigation(task) && !parked(task) && !task.LeaseUntil.After(e.Now()) {
 			task.State = "failed"
 			task.Epoch++
 			task.UpdatedAt = e.Now()
-			s.Investigations[id] = task
-			r := s.Runs[task.RunID]
+			s.Investigations.Put(id, task)
+			r := s.Runs.Get(task.RunID)
 			r.Error = "Investigation lease expired. Inspect the invocation audit before an explicit retry; spend is uncertain."
 			r.UpdatedAt = e.Now()
-			s.Runs[r.ID] = r
+			s.Runs.Put(r.ID, r)
 		}
 	}
-	for id, r := range s.Runs {
+	for id, r := range s.Runs.All() {
 		if r.State == "queued" && (r.WorkflowVersion != WorkflowVersion || r.Input.ForwardedBy == "" || r.Input.ForwardedAt.IsZero()) {
 			r.State = "awaiting_forward"
 			r.Route = "manual_forward"
-			s.Runs[id] = r
-			if task, ok := s.Investigations[r.InvestigationID]; ok {
+			s.Runs.Put(id, r)
+			if task, ok := s.Investigations.Lookup(r.InvestigationID); ok {
 				task.State = "awaiting_forward"
-				s.Investigations[task.ID] = task
+				s.Investigations.Put(task.ID, task)
 			}
 		}
 	}
@@ -42,15 +42,15 @@ func (e *Engine) recoverInvestigations(s *State) error {
 // waited longer than max_queue_wait_seconds with exact routing-only usage.
 func (e *Engine) settleParked(s *State) {
 	limit := time.Duration(e.Config.Worker.MaxQueueWaitSeconds) * time.Second
-	for id, task := range s.Investigations {
+	for id, task := range s.Investigations.All() {
 		if !parked(task) {
 			continue
 		}
-		superseded := !taskHasActiveMembers(*s, task) || s.Groups[task.GroupID].CurrentTaskID != task.ID
+		superseded := !taskHasActiveMembers(*s, task) || s.Groups.Get(task.GroupID).CurrentTaskID != task.ID
 		if !superseded && time.Since(task.WaitingSince) < limit {
 			continue
 		}
-		run := s.Runs[task.RunID]
+		run := s.Runs.Get(task.RunID)
 		var input AnalyzeRequest
 		if run.PipelineInput != nil {
 			input = *run.PipelineInput
@@ -63,8 +63,8 @@ func (e *Engine) settleParked(s *State) {
 		}
 		task.ElapsedMS, task.UpdatedAt = elapsed, e.Now()
 		run.PipelineInput, run.UpdatedAt = nil, e.Now()
-		s.Investigations[id] = task
-		s.Runs[run.ID] = run
+		s.Investigations.Put(id, task)
+		s.Runs.Put(run.ID, run)
 	}
 }
 
@@ -232,7 +232,7 @@ func (e *Engine) ProcessOne(ctx context.Context, analyzer Analyzer) (bool, error
 		e.settleParked(s)
 		// Parked tasks hold no worker, so they do not count toward the project limit.
 		active := map[string]int{}
-		for _, item := range s.Investigations {
+		for _, item := range s.Investigations.All() {
 			if activeInvestigation(item) && !parked(item) {
 				active[item.ProjectID]++
 			}
@@ -248,9 +248,9 @@ func (e *Engine) ProcessOne(ctx context.Context, analyzer Analyzer) (bool, error
 				candidate.HeartbeatAt = e.Now()
 				candidate.LeaseUntil = e.Now().Add(time.Duration(e.Config.Worker.LeaseSeconds) * time.Second)
 				candidate.UpdatedAt = e.Now()
-				s.Investigations[candidate.ID] = candidate
+				s.Investigations.Put(candidate.ID, candidate)
 				s.LastClaimedProject = candidate.ProjectID
-				task, run = candidate, s.Runs[candidate.RunID]
+				task, run = candidate, s.Runs.Get(candidate.RunID)
 				found, resumed = true, true
 				return nil
 			}
@@ -262,15 +262,15 @@ func (e *Engine) ProcessOne(ctx context.Context, analyzer Analyzer) (bool, error
 			if active[candidate.ProjectID] >= e.Config.Worker.MaxActivePerProject || staged && routingBusy(*s, candidate.ProjectID) {
 				continue
 			}
-			group := s.Groups[candidate.GroupID]
+			group := s.Groups.Get(candidate.GroupID)
 			if group.CurrentTaskID != candidate.ID || !taskHasActiveMembers(*s, candidate) {
 				candidate.State = "superseded"
 				candidate.UpdatedAt = e.Now()
-				s.Investigations[candidate.ID] = candidate
+				s.Investigations.Put(candidate.ID, candidate)
 				continue
 			}
 			task = candidate
-			run = s.Runs[task.RunID]
+			run = s.Runs.Get(task.RunID)
 			found = true
 			if analyzer == nil || e.Config.Budget.MaxCalls == 0 {
 				task.State = "awaiting_configuration"
@@ -290,8 +290,8 @@ func (e *Engine) ProcessOne(ctx context.Context, analyzer Analyzer) (bool, error
 			}
 			task.UpdatedAt = e.Now()
 			run.UpdatedAt = e.Now()
-			s.Investigations[task.ID] = task
-			s.Runs[run.ID] = run
+			s.Investigations.Put(task.ID, task)
+			s.Runs.Put(run.ID, run)
 			break
 		}
 		return nil
@@ -328,13 +328,13 @@ func (e *Engine) ProcessOne(ctx context.Context, analyzer Analyzer) (bool, error
 				return
 			case <-ticker.C:
 				if err := e.update(func(s *State) error {
-					current := s.Investigations[task.ID]
+					current := s.Investigations.Get(task.ID)
 					if !ownsInvestigation(current, task) {
 						return ErrConflict
 					}
 					current.HeartbeatAt = e.Now()
 					current.LeaseUntil = e.Now().Add(time.Duration(e.Config.Worker.LeaseSeconds) * time.Second)
-					s.Investigations[task.ID] = current
+					s.Investigations.Put(task.ID, current)
 					return nil
 				}); err != nil {
 					cancel()
@@ -412,11 +412,11 @@ func (e *Engine) ProcessOne(ctx context.Context, analyzer Analyzer) (bool, error
 	}
 	e.sealReport(&report, task, input, time.Since(started).Milliseconds())
 	err = e.update(func(s *State) error {
-		current := s.Investigations[task.ID]
+		current := s.Investigations.Get(task.ID)
 		if !ownsInvestigation(current, task) {
 			return fmt.Errorf("%w: stale investigation result rejected", ErrConflict)
 		}
-		r := s.Runs[run.ID]
+		r := s.Runs.Get(run.ID)
 		// Failed or superseded work still has a cost and a diagnostic audit.
 		r.Report, r.PipelineInput = report, nil
 		if report.Routing != nil && report.Routing.Action == "join" {
@@ -431,7 +431,7 @@ func (e *Engine) ProcessOne(ctx context.Context, analyzer Analyzer) (bool, error
 				touchIssue(s, id, e.Now())
 			}
 		}
-		if !taskHasActiveMembers(*s, current) || s.Groups[current.GroupID].CurrentTaskID != current.ID {
+		if !taskHasActiveMembers(*s, current) || s.Groups.Get(current.GroupID).CurrentTaskID != current.ID {
 			current.State = "superseded"
 		} else if callErr != nil {
 			current.State = "failed"
@@ -459,7 +459,7 @@ func (e *Engine) ProcessOne(ctx context.Context, analyzer Analyzer) (bool, error
 			r.IssueID = current.IssueID
 			r.Report.Envelope.IssueID = current.IssueID
 			if current.State == "agent_proposed" {
-				group := s.Groups[current.GroupID]
+				group := s.Groups.Get(current.GroupID)
 				sourceID := run.TicketID
 				if report.AssignmentRouting != nil && report.AssignmentRouting.Action == "assign" {
 					for _, record := range records {
@@ -483,14 +483,14 @@ func (e *Engine) ProcessOne(ctx context.Context, analyzer Analyzer) (bool, error
 							current.Application = &SolutionApplication{SolutionID: record.SolutionID, CaseID: record.CaseID, CaseVersion: record.CaseVersion, SourceTicketID: record.SourceTicketID, State: "proposed", Revision: 1}
 							// Standalone Case association may have advanced its metadata revision.
 							if record.CaseID != "" {
-								current.Application.CaseVersion = s.Cases[record.CaseID].Version
+								current.Application.CaseVersion = s.Cases.Get(record.CaseID).Version
 							}
 						}
 					}
 					current.State = "reuse_proposed"
 				} else {
 					solution := SolutionRevision{ID: randomID("solution_"), IssueID: current.IssueID, InvestigationID: current.ID, ProjectID: current.ProjectID, ScopeHash: group.ScopeHash, SourceTicketID: sourceID, Origin: "agent", State: "proposed", Revision: 1, RunID: run.ID, AvailableAt: e.Now(), RecordedAt: time.Now().UTC()}
-					s.Solutions[solution.ID] = solution
+					s.Solutions.Put(solution.ID, solution)
 					current.SolutionID = solution.ID
 				}
 
@@ -500,8 +500,8 @@ func (e *Engine) ProcessOne(ctx context.Context, analyzer Analyzer) (bool, error
 		current.UpdatedAt = e.Now()
 		current.LeaseUntil = time.Time{}
 		r.UpdatedAt = e.Now()
-		s.Investigations[current.ID] = current
-		s.Runs[r.ID] = r
+		s.Investigations.Put(current.ID, current)
+		s.Runs.Put(r.ID, r)
 		return nil
 	})
 	return true, err

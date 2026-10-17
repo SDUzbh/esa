@@ -17,10 +17,10 @@ func runQueueWorkers(t *testing.T, e *Engine, provider PipelineAnalyzer) {
 	defer cancel()
 	settled := func() bool {
 		s := e.Store.Snapshot()
-		if len(s.Investigations) == 0 {
+		if s.Investigations.Len() == 0 {
 			return false
 		}
-		for _, task := range s.Investigations {
+		for _, task := range s.Investigations.All() {
 			if task.State == "queued" || activeInvestigation(task) {
 				return false
 			}
@@ -51,7 +51,7 @@ func runQueueWorkers(t *testing.T, e *Engine, provider PipelineAnalyzer) {
 // watchState calls found once when any task matches, until stop closes.
 func watchState(e *Engine, stop <-chan struct{}, match func(Investigation) bool, found func()) {
 	for {
-		for _, task := range e.Store.Snapshot().Investigations {
+		for _, task := range e.Store.Snapshot().Investigations.All() {
 			if match(task) {
 				found()
 				return
@@ -121,8 +121,8 @@ func TestQueueWaitDoesNotConsumeEngineeringDeadline(t *testing.T) {
 		t.Fatal("no task waited for engineering capacity")
 	}
 	s := e.Store.Snapshot()
-	for _, task := range s.Investigations {
-		run := s.Runs[task.RunID]
+	for _, task := range s.Investigations.All() {
+		run := s.Runs.Get(task.RunID)
 		if task.State != "agent_proposed" || run.Error != "" || run.Report.Usage.Calls != 3 {
 			t.Fatal("waiting for a slot exhausted the task deadline", task.State, run.Error, run.Report.Usage.Calls)
 		}
@@ -159,8 +159,8 @@ func TestQueueWaitLimitFailsWithoutEngineeringCall(t *testing.T) {
 	runQueueWorkers(t, e, provider)
 	s := e.Store.Snapshot()
 	failed, proposed := 0, 0
-	for _, task := range s.Investigations {
-		run := s.Runs[task.RunID]
+	for _, task := range s.Investigations.All() {
+		run := s.Runs.Get(task.RunID)
 		switch task.State {
 		case "failed":
 			failed++
@@ -202,9 +202,9 @@ func TestEachStageGetsItsOwnDeadline(t *testing.T) {
 	})
 	runQueueWorkers(t, e, provider)
 	s := e.Store.Snapshot()
-	for _, task := range s.Investigations {
-		if task.State != "agent_proposed" || s.Runs[task.RunID].Error != "" {
-			t.Fatal("stages within their own deadline failed", task.State, s.Runs[task.RunID].Error)
+	for _, task := range s.Investigations.All() {
+		if task.State != "agent_proposed" || s.Runs.Get(task.RunID).Error != "" {
+			t.Fatal("stages within their own deadline failed", task.State, s.Runs.Get(task.RunID).Error)
 		}
 	}
 	for _, stage := range []string{"route", "engineer", "assign"} {
@@ -226,8 +226,8 @@ func TestStageDeadlineStillStopsSlowStage(t *testing.T) {
 	})
 	runQueueWorkers(t, e, provider)
 	s := e.Store.Snapshot()
-	for _, task := range s.Investigations {
-		run := s.Runs[task.RunID]
+	for _, task := range s.Investigations.All() {
+		run := s.Runs.Get(task.RunID)
 		if task.State != "failed" || !strings.Contains(run.Error, "deadline exceeded") || run.Report.Usage.Calls != 2 || run.Report.Usage.TokensReported {
 			t.Fatal("a stage exceeding timeout_seconds must fail with uncertain spend", task.State, run.Error, run.Report.Usage)
 		}

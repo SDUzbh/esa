@@ -77,18 +77,18 @@ func issueRecords(s State, task Investigation, ticket Ticket) []IssueRecord {
 	selected := map[string]IssueRecord{}
 	add := func(r IssueRecord) {
 		if r.IssueID != "" {
-			if _, exists := s.Issues[r.IssueID]; !exists {
+			if _, exists := s.Issues.Lookup(r.IssueID); !exists {
 				return
 			}
 		}
 		if r.Summary == "" || len(r.Recommendations) == 0 || r.AvailableAt.IsZero() || r.AvailableAt.After(task.Contract.ObservationCutoff) {
 			return
 		}
-		if override := s.IssueOverrides[ticket.ID]; override != "" && r.IssueID != override {
+		if override := s.IssueOverrides.Get(ticket.ID); override != "" && r.IssueID != override {
 			return
 		}
-		if issue, exists := s.Issues[r.IssueID]; exists {
-			source, visible := s.Tickets[issueTitleSource(s, issue)]
+		if issue, exists := s.Issues.Lookup(r.IssueID); exists {
+			source, visible := s.Tickets.Lookup(issueTitleSource(s, issue))
 			if !visible || source.Private || source.ProjectID != ticket.ProjectID {
 				r.Title = ""
 			}
@@ -101,33 +101,33 @@ func issueRecords(s State, task Investigation, ticket Ticket) []IssueRecord {
 		}
 	}
 	latest := map[string]SolutionRevision{}
-	for _, rev := range s.Solutions {
+	for _, rev := range s.Solutions.All() {
 		if !rev.AvailableAt.After(task.Contract.ObservationCutoff) && rev.Revision > latest[rev.InvestigationID].Revision {
 			latest[rev.InvestigationID] = rev
 		}
 	}
-	for _, other := range s.Investigations {
+	for _, other := range s.Investigations.All() {
 		if other.ID == task.ID || other.Application != nil {
 			continue
 		}
-		issue, ok := s.Issues[other.IssueID]
+		issue, ok := s.Issues.Lookup(other.IssueID)
 		if !ok || issue.ProjectID != ticket.ProjectID || issue.CreatedAt.After(task.Contract.ObservationCutoff) {
 			continue
 		}
-		current := s.Solutions[other.SolutionID]
+		current := s.Solutions.Get(other.SolutionID)
 		if current.State != "proposed" && current.State != "trusted" {
 			continue
 		}
 		sol := latest[current.InvestigationID]
-		run := s.Runs[sol.RunID]
+		run := s.Runs.Get(sol.RunID)
 		if run.Report.Routing != nil && run.Report.Routing.Action == "reuse" && sol.State != "trusted" {
 			continue
 		}
 		if sol.State != "proposed" && sol.State != "trusted" {
 			continue
 		}
-		source, ok := s.Tickets[run.TicketID]
-		dependency, visible := s.Tickets[sol.SourceTicketID]
+		source, ok := s.Tickets.Lookup(run.TicketID)
+		dependency, visible := s.Tickets.Lookup(sol.SourceTicketID)
 		if !ok || !visible || source.Private || dependency.Private || source.ProjectID != ticket.ProjectID || dependency.ProjectID != ticket.ProjectID || run.Input.ForwardedAt.After(task.Contract.ObservationCutoff) || run.Report.Envelope == nil || run.Report.Envelope.ResponseAvailableAt.After(task.Contract.ObservationCutoff) {
 			continue
 		}
@@ -142,13 +142,13 @@ func issueRecords(s State, task Investigation, ticket Ticket) []IssueRecord {
 	}
 	for _, c := range CasesAt(eligibleCaseHistory(s, ticket), task.Contract.ObservationCutoff) {
 		// Rejected/withdrawn current records must never be offered as live advice.
-		current := s.Cases[c.ID]
+		current := s.Cases.Get(c.ID)
 		if current.State != "trusted" {
 			continue
 		}
 		if c.SolutionID != "" {
-			sol, ok := s.Solutions[c.SolutionID]
-			if !ok || sol.State != "trusted" || s.Investigations[sol.InvestigationID].SolutionID != sol.ID {
+			sol, ok := s.Solutions.Lookup(c.SolutionID)
+			if !ok || sol.State != "trusted" || s.Investigations.Get(sol.InvestigationID).SolutionID != sol.ID {
 				continue
 			}
 		}
@@ -158,23 +158,23 @@ func issueRecords(s State, task Investigation, ticket Ticket) []IssueRecord {
 		}
 		scope := investigationScope(Ticket{ProjectID: c.ProjectID, Components: c.Components, Versions: c.Versions, Environment: c.Environment})
 		title := c.Subject
-		if issue, ok := s.Issues[c.IssueID]; ok {
+		if issue, ok := s.Issues.Lookup(c.IssueID); ok {
 			title = issue.Title
 		}
 		add(IssueRecord{SolutionID: c.SolutionID, ID: id, IssueID: c.IssueID, Kind: "engineer_resolved", ProjectID: c.ProjectID, ScopeHash: scope, Title: title, Description: c.Summary, SourceTicketID: c.TicketID, SourceKey: c.SourceKey, CaseID: c.ID, CaseVersion: c.Version, Components: c.Components, Versions: c.Versions, Environment: c.Environment, Summary: c.Resolution.Cause, Recommendations: []string{c.Resolution.Solution}, VerificationSteps: []string{c.Resolution.Validation}, AvailableAt: c.UpdatedAt})
 	}
 	// In-progress metadata contains only the earlier immutable ticket, never a
 	// partial diagnosis. It is operational coordination, not a third solution type.
-	for _, other := range s.Investigations {
-		run := s.Runs[other.RunID]
+	for _, other := range s.Investigations.All() {
+		run := s.Runs.Get(other.RunID)
 		pending := activeInvestigation(other) && (other.Phase == "waiting_engineering" || other.Phase == "investigating" || other.Phase == "assignment")
 		// Queueing can outlast the original investigation. Expose its original
 		// input as coordination metadata, without leaking the later diagnosis.
 		completedLater := other.Phase == "assignment" && (other.State == "agent_proposed" || other.State == "trusted") && run.Report.Envelope != nil && run.Report.Envelope.ResponseAvailableAt.After(task.Contract.ObservationCutoff)
-		if other.ID == task.ID || !pending && !completedLater || other.Contract.ObservationCutoff.After(task.Contract.ObservationCutoff) || !taskHasActiveMembers(s, other) || s.Groups[other.GroupID].CurrentTaskID != other.ID {
+		if other.ID == task.ID || !pending && !completedLater || other.Contract.ObservationCutoff.After(task.Contract.ObservationCutoff) || !taskHasActiveMembers(s, other) || s.Groups.Get(other.GroupID).CurrentTaskID != other.ID {
 			continue
 		}
-		source := s.Tickets[run.TicketID]
+		source := s.Tickets.Get(run.TicketID)
 		if source.ID == "" || source.Private || source.Closed || run.ProjectID != ticket.ProjectID || investigationScope(run.Input) != investigationScope(ticket) || investigationSignature(source) != investigationSignature(run.Input) || other.Contract.IssueID != task.Contract.IssueID {
 			continue
 		}

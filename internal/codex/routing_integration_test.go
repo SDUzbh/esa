@@ -70,12 +70,12 @@ func TestBlockedEngineeringHandoffAwaitsInformationOverHTTP(t *testing.T) {
 				t.Fatal("handoff processing failed", worked, err)
 			}
 			state := store.Snapshot()
-			run := state.Runs[receipt.RunID]
+			run := state.Runs.Get(receipt.RunID)
 			want := "Provide one unambiguous affected release."
 			if len(versions) > 0 {
 				want = "Invalid or nonexistent version."
 			}
-			if run.State != "awaiting_information" || run.Error != "" || run.Report.Usage.Calls != 1 || run.Report.Routing == nil || run.Report.Routing.Action != "request_information" || *sourceCalls != 0 || len(state.Issues) != 0 || len(state.Solutions) != 0 || len(stages) != 1 || stages[0] != "route" {
+			if run.State != "awaiting_information" || run.Error != "" || run.Report.Usage.Calls != 1 || run.Report.Routing == nil || run.Report.Routing.Action != "request_information" || *sourceCalls != 0 || state.Issues.Len() != 0 || state.Solutions.Len() != 0 || len(stages) != 1 || stages[0] != "route" {
 				t.Fatal("handoff gate failed to stop the application pipeline", run, stages, *sourceCalls)
 			}
 			if run.Report.Routing.Reason != want || len(run.Report.Limitations) != 1 || run.Report.Limitations[0] != want {
@@ -125,9 +125,9 @@ func TestNativeRoutingReusesAuthoritativeIssueOverHTTP(t *testing.T) {
 			})); err != nil {
 				t.Fatal(err)
 			}
-			first := store.Snapshot().Runs[receipt.RunID]
+			first := store.Snapshot().Runs.Get(receipt.RunID)
 			if kind == "engineer" {
-				task := store.Snapshot().Investigations[first.InvestigationID]
+				task := store.Snapshot().Investigations.Get(first.InvestigationID)
 				if _, err = engine.ReviewSolution(task.ID, esa.SolutionReview{Action: "approve", Reviewer: "engineer", ExpectedSolutionID: task.SolutionID, Resolution: esa.Resolution{Cause: "Reviewed authoritative cause", Solution: "Engineer authoritative guard", Validation: "Reviewed regression"}}); err != nil {
 					t.Fatal(err)
 				}
@@ -159,8 +159,8 @@ func TestNativeRoutingReusesAuthoritativeIssueOverHTTP(t *testing.T) {
 				t.Fatal(err)
 			}
 			state := store.Snapshot()
-			run := state.Runs[next.RunID]
-			if run.Route != "issue_reuse" || run.IssueID != first.IssueID || run.SourceTicketID != source.ID || run.Report.Routing == nil || run.Report.Usage.Calls != 1 || *sourceCalls != 0 || len(state.Issues) != 1 {
+			run := state.Runs.Get(next.RunID)
+			if run.Route != "issue_reuse" || run.IssueID != first.IssueID || run.SourceTicketID != source.ID || run.Report.Routing == nil || run.Report.Usage.Calls != 1 || *sourceCalls != 0 || state.Issues.Len() != 1 {
 				t.Fatal("native routing did not reuse authoritative solution", run, *sourceCalls)
 			}
 			want := "Stored authoritative guard"
@@ -206,7 +206,7 @@ func TestNativeEngineeringRequestsRoutingAssignmentOverHTTP(t *testing.T) {
 			})); err != nil {
 				t.Fatal(err)
 			}
-			original := store.Snapshot().Runs[seed.RunID]
+			original := store.Snapshot().Runs.Get(seed.RunID)
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				var input esa.AnalyzeRequest
 				if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
@@ -233,17 +233,17 @@ func TestNativeEngineeringRequestsRoutingAssignmentOverHTTP(t *testing.T) {
 				t.Fatal(err)
 			}
 			state := store.Snapshot()
-			run := state.Runs[receipt.RunID]
+			run := state.Runs.Get(receipt.RunID)
 			if run.Report.Usage.Calls != 3 || run.Report.Usage.InputTokens != 36 || *sourceCalls != 1 || len(run.Report.Findings) != 1 || run.Report.IssueRequest == nil {
 				t.Fatal("request or stage accounting lost at public boundary", run)
 			}
 			switch decision {
 			case "analyze":
-				if run.State != "awaiting_review" || run.IssueID == original.IssueID || len(state.Issues) != 2 || state.Issues[run.IssueID].Title != "Routing approved canonical title" {
+				if run.State != "awaiting_review" || run.IssueID == original.IssueID || state.Issues.Len() != 2 || state.Issues.Get(run.IssueID).Title != "Routing approved canonical title" {
 					t.Fatal("Routing Agent creation was not applied", run)
 				}
 			case "assign_existing":
-				if run.State != "awaiting_review" || run.IssueID != original.IssueID || len(state.Issues) != 1 || state.Investigations[run.InvestigationID].Application != nil || len(state.Solutions) != 2 {
+				if run.State != "awaiting_review" || run.IssueID != original.IssueID || state.Issues.Len() != 1 || state.Investigations.Get(run.InvestigationID).Application != nil || state.Solutions.Len() != 2 {
 					t.Fatal("supported engineering result was not grouped into existing Issue", run)
 				}
 				request := httptest.NewRequest("GET", "/v1/tickets/query", nil)
@@ -256,11 +256,11 @@ func TestNativeEngineeringRequestsRoutingAssignmentOverHTTP(t *testing.T) {
 					t.Fatal("grouping evidence crossed source visibility", response.Body)
 				}
 			case "assignment_info":
-				if run.State != "awaiting_information" || run.IssueID != "" || len(state.Issues) != 1 || len(state.Solutions) != 1 {
+				if run.State != "awaiting_information" || run.IssueID != "" || state.Issues.Len() != 1 || state.Solutions.Len() != 1 {
 					t.Fatal("clarification created an Issue or lost diagnosis", run)
 				}
 			case "assignment_unread":
-				if run.State != "failed" || run.IssueID != "" || len(state.Issues) != 1 || len(state.Solutions) != 1 {
+				if run.State != "failed" || run.IssueID != "" || state.Issues.Len() != 1 || state.Solutions.Len() != 1 {
 					t.Fatal("failed grouping fell back to engineering assignment", run)
 				}
 			}

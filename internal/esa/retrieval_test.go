@@ -28,7 +28,7 @@ func seedRetrievalCase(t *testing.T, e *Engine, source Ticket, approve bool) Cas
 		}
 		return c
 	}
-	return e.Store.Snapshot().Cases[receipt.CaseID]
+	return e.Store.Snapshot().Cases.Get(receipt.CaseID)
 }
 
 // These synthetic scenarios verify admission and context delivery, not model accuracy.
@@ -63,7 +63,7 @@ func TestCaseContextNeverBypassesAgent(t *testing.T) {
 				tc.change(&query)
 			}
 			receipt := receive(t, e, "forward", query)
-			run := e.Store.Snapshot().Runs[receipt.RunID]
+			run := e.Store.Snapshot().Runs.Get(receipt.RunID)
 			if run.Route != "engineering_analysis" || run.State != "queued" || len(run.Report.Recommendations) != 0 {
 				t.Fatal("host made a diagnosis", run)
 			}
@@ -82,8 +82,8 @@ func TestCaseContextNeverBypassesAgent(t *testing.T) {
 				t.Fatal("Agent was bypassed", processed, calls, err)
 			}
 			state := e.Store.Snapshot()
-			if state.Runs[receipt.RunID].State != "awaiting_information" || len(state.Issues) != 0 {
-				t.Fatal("unsupported answer created an issue", state.Runs[receipt.RunID])
+			if state.Runs.Get(receipt.RunID).State != "awaiting_information" || state.Issues.Len() != 0 {
+				t.Fatal("unsupported answer created an issue", state.Runs.Get(receipt.RunID))
 			}
 		})
 	}

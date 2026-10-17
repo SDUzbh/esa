@@ -38,7 +38,7 @@ type wholeStatePersister interface {
 }
 
 func initialState() State {
-	return State{SchemaVersion: 1, Tickets: map[string]Ticket{}, Events: map[string]EventRecord{}, Receipts: map[string]Receipt{}, Runs: map[string]Run{}, Latest: map[string]string{}, Cases: map[string]Case{}}
+	return State{SchemaVersion: 1}
 }
 
 // jsonPersister keeps the state in one JSON file, written atomically with

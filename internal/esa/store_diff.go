@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"maps"
 	"reflect"
-	"slices"
 	"strings"
 	"unsafe"
 )
@@ -60,23 +59,6 @@ func sameBits[V any](a, b *V) bool {
 	return bytes.Equal(unsafe.Slice((*byte)(unsafe.Pointer(a)), n), unsafe.Slice((*byte)(unsafe.Pointer(b)), n))
 }
 
-func diffMap[V any](old, next map[string]V) MapChanges {
-	var c MapChanges
-	for k, v := range next {
-		if prev, ok := old[k]; !ok || !sameBits(&prev, &v) {
-			c.Upserted = append(c.Upserted, k)
-		}
-	}
-	for k := range old {
-		if _, ok := next[k]; !ok {
-			c.Deleted = append(c.Deleted, k)
-		}
-	}
-	slices.Sort(c.Upserted)
-	slices.Sort(c.Deleted)
-	return c
-}
-
 func diffHistory[V any](old, next []V) HistoryChange {
 	if len(next) < len(old) {
 		return HistoryChange{Rewritten: true}
@@ -107,23 +89,23 @@ func frameOf(s *State) frame {
 // edited). TestDiffStateCoversEveryField fails if a State field is missing here.
 func diffState(old, next *State) StateChanges {
 	var c StateChanges
-	c.add("latest_snapshot", diffMap(old.LatestSnapshot, next.LatestSnapshot))
-	c.add("snapshots", diffMap(old.Snapshots, next.Snapshots))
-	c.add("engineering_issues", diffMap(old.Issues, next.Issues))
-	c.add("issue_ticket_links", diffMap(old.Memberships, next.Memberships))
-	c.add("issue_overrides", diffMap(old.IssueOverrides, next.IssueOverrides))
-	c.add("investigations", diffMap(old.Investigations, next.Investigations))
-	c.add("investigation_groups", diffMap(old.Groups, next.Groups))
-	c.add("solution_revisions", diffMap(old.Solutions, next.Solutions))
-	c.add("classifier_predictions", diffMap(old.ClassifierPredictions, next.ClassifierPredictions))
-	c.add("classifier_feedback", diffMap(old.ClassifierFeedback, next.ClassifierFeedback))
-	c.add("tickets", diffMap(old.Tickets, next.Tickets))
-	c.add("events", diffMap(old.Events, next.Events))
-	c.add("receipts", diffMap(old.Receipts, next.Receipts))
-	c.add("event_rejections", diffMap(old.Rejections, next.Rejections))
-	c.add("runs", diffMap(old.Runs, next.Runs))
-	c.add("latest", diffMap(old.Latest, next.Latest))
-	c.add("cases", diffMap(old.Cases, next.Cases))
+	c.add("latest_snapshot", diffTable(old.LatestSnapshot, next.LatestSnapshot))
+	c.add("snapshots", diffTable(old.Snapshots, next.Snapshots))
+	c.add("engineering_issues", diffTable(old.Issues, next.Issues))
+	c.add("issue_ticket_links", diffTable(old.Memberships, next.Memberships))
+	c.add("issue_overrides", diffTable(old.IssueOverrides, next.IssueOverrides))
+	c.add("investigations", diffTable(old.Investigations, next.Investigations))
+	c.add("investigation_groups", diffTable(old.Groups, next.Groups))
+	c.add("solution_revisions", diffTable(old.Solutions, next.Solutions))
+	c.add("classifier_predictions", diffTable(old.ClassifierPredictions, next.ClassifierPredictions))
+	c.add("classifier_feedback", diffTable(old.ClassifierFeedback, next.ClassifierFeedback))
+	c.add("tickets", diffTable(old.Tickets, next.Tickets))
+	c.add("events", diffTable(old.Events, next.Events))
+	c.add("receipts", diffTable(old.Receipts, next.Receipts))
+	c.add("event_rejections", diffTable(old.Rejections, next.Rejections))
+	c.add("runs", diffTable(old.Runs, next.Runs))
+	c.add("latest", diffTable(old.Latest, next.Latest))
+	c.add("cases", diffTable(old.Cases, next.Cases))
 	c.CaseHistory = diffHistory(old.CaseHistory, next.CaseHistory)
 	c.MembershipHistory = diffHistory(old.MembershipHistory, next.MembershipHistory)
 	oldFrame, nextFrame := frameOf(old), frameOf(next)
@@ -149,7 +131,8 @@ func verifyChanges(old, next *State, c StateChanges) {
 			panic(fmt.Sprintf("esa: change detection missed State.%s%s; it would not be persisted", field.Name, what))
 		}
 		switch {
-		case of.Kind() == reflect.Map && name != "-":
+		case of.Addr().Type().Implements(reflect.TypeFor[stateTable]()):
+			ot, nt := of.Addr().Interface().(stateTable), nf.Addr().Interface().(stateTable)
 			reported := map[string]bool{}
 			for _, k := range c.Maps[name].Upserted {
 				reported[k] = true
@@ -158,19 +141,17 @@ func verifyChanges(old, next *State, c StateChanges) {
 				reported[k] = true
 			}
 			keys := map[string]bool{}
-			for _, k := range of.MapKeys() {
-				keys[k.String()] = true
+			for _, k := range ot.tableKeys() {
+				keys[k] = true
 			}
-			for _, k := range nf.MapKeys() {
-				keys[k.String()] = true
+			for _, k := range nt.tableKeys() {
+				keys[k] = true
 			}
 			for k := range keys {
-				key := reflect.ValueOf(k)
-				a, b := of.MapIndex(key), nf.MapIndex(key)
-				if a.IsValid() != b.IsValid() || a.IsValid() && encode(a) != encode(b) {
-					if !reported[k] {
-						missed("[" + k + "]")
-					}
+				a, okA := ot.tableEncode(k)
+				b, okB := nt.tableEncode(k)
+				if (okA != okB || a != b) && !reported[k] {
+					missed("[" + k + "]")
 				}
 			}
 		case of.Kind() == reflect.Slice:

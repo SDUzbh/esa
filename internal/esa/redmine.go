@@ -74,13 +74,10 @@ func (e *Engine) SyncRedmine(ctx context.Context, baseURL, token string, client 
 // lost acknowledgement re-evaluates the same frozen event and adds nothing.
 func (e *Engine) recordRejection(event Event, cause error) error {
 	return e.Store.Update(func(s *State) error {
-		if _, ok := s.Rejections[event.ID]; ok {
+		if _, ok := s.Rejections.Lookup(event.ID); ok {
 			return nil
 		}
-		if s.Rejections == nil {
-			s.Rejections = map[string]EventRejection{}
-		}
-		s.Rejections[event.ID] = EventRejection{EventID: event.ID, TicketID: event.Ticket.ID, ProjectID: event.Ticket.ProjectID, ForwardedBy: event.ForwardedBy, ForwardedAt: event.ForwardedAt, Reason: cause.Error(), RejectedAt: e.Now()}
+		s.Rejections.Put(event.ID, EventRejection{EventID: event.ID, TicketID: event.Ticket.ID, ProjectID: event.Ticket.ProjectID, ForwardedBy: event.ForwardedBy, ForwardedAt: event.ForwardedAt, Reason: cause.Error(), RejectedAt: e.Now()})
 		return nil
 	})
 }

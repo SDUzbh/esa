@@ -14,14 +14,13 @@ import (
 func seedIssueCatalogue(t *testing.T, e *Engine, count int) {
 	t.Helper()
 	if err := e.Store.Update(func(s *State) error {
-		prepareInvestigations(s)
 		for i := 0; i < count; i++ {
 			id := fmt.Sprintf("issue_%03d", i)
 			ticket := fixture(e, fmt.Sprintf("source-%03d", i))
 			ticket.ForwardedBy, ticket.ForwardedAt = "human", e.Now()
-			s.Tickets[ticket.ID] = ticket
-			s.Issues[id] = EngineeringIssue{ID: id, ProjectID: ticket.ProjectID, Title: ticket.Subject, TitleSourceTicketID: ticket.ID, CreatedAt: e.Now().Add(time.Duration(i-count) * time.Second)}
-			s.Memberships[id] = IssueTicketLink{ID: id, IssueID: id, TicketID: ticket.ID, State: "tentative", Version: 1}
+			s.Tickets.Put(ticket.ID, ticket)
+			s.Issues.Put(id, EngineeringIssue{ID: id, ProjectID: ticket.ProjectID, Title: ticket.Subject, TitleSourceTicketID: ticket.ID, CreatedAt: e.Now().Add(time.Duration(i-count) * time.Second)})
+			s.Memberships.Put(id, IssueTicketLink{ID: id, IssueID: id, TicketID: ticket.ID, State: "tentative", Version: 1})
 		}
 		return nil
 	}); err != nil {
@@ -34,11 +33,11 @@ func TestEmptyIssueCleanupPreservesAudit(t *testing.T) {
 	ticket, run := analyzedTicket(t, e, "source")
 	before := e.Store.Snapshot()
 	link, _ := activeMembership(before, ticket.ID)
-	if _, err := e.ReviewMembership(ticket.ID, MembershipReview{ExpectedMembershipID: link.ID, ExpectedSnapshotID: before.LatestSnapshot[ticket.ID], Reviewer: "engineer", Reason: "Different cause"}); err != nil {
+	if _, err := e.ReviewMembership(ticket.ID, MembershipReview{ExpectedMembershipID: link.ID, ExpectedSnapshotID: before.LatestSnapshot.Get(ticket.ID), Reviewer: "engineer", Reason: "Different cause"}); err != nil {
 		t.Fatal(err)
 	}
 	after := e.Store.Snapshot()
-	if _, exists := after.Issues[run.IssueID]; exists || len(after.Issues) != 1 {
+	if _, exists := after.Issues.Lookup(run.IssueID); exists || after.Issues.Len() != 1 {
 		t.Fatal("empty former issue was not removed")
 	}
 	if hash(before.Runs) != hash(after.Runs) || hash(before.Solutions) != hash(after.Solutions) || hash(before.Snapshots) != hash(after.Snapshots) {
@@ -47,7 +46,7 @@ func TestEmptyIssueCleanupPreservesAudit(t *testing.T) {
 	if len(issueRecords(after, Investigation{Contract: TaskContract{ObservationCutoff: e.Now()}}, fixture(e, "query"))) != 0 {
 		t.Fatal("removed issue reappeared through historical knowledge")
 	}
-	if _, err := e.ReviewSolution(run.InvestigationID, SolutionReview{ExpectedSolutionID: before.Investigations[run.InvestigationID].SolutionID, Action: "withdraw", Reviewer: "engineer"}); err == nil {
+	if _, err := e.ReviewSolution(run.InvestigationID, SolutionReview{ExpectedSolutionID: before.Investigations.Get(run.InvestigationID).SolutionID, Action: "withdraw", Reviewer: "engineer"}); err == nil {
 		t.Fatal("removed issue accepted a new knowledge review")
 	}
 }
@@ -81,7 +80,7 @@ func TestIssueLimitUsesDurableAccessOrder(t *testing.T) {
 	if response := classifierRequest(e, "GET", "/v1/tickets/source-000", "", "1", "source-000"); response.Code != 200 {
 		t.Fatal(response.Body)
 	}
-	seen := e.Store.Snapshot().Issues["issue_000"]
+	seen := e.Store.Snapshot().Issues.Get("issue_000")
 	if seen.AccessOrder == 0 || !seen.LastAccessedAt.Equal(e.Now()) {
 		t.Fatal("detail access was not recorded")
 	}
@@ -93,10 +92,10 @@ func TestIssueLimitUsesDurableAccessOrder(t *testing.T) {
 		t.Fatal(err)
 	}
 	state := e.Store.Snapshot()
-	if len(state.Issues) != IssueLimit || state.Issues["issue_000"].ID == "" || state.Issues["issue_001"].ID != "" || state.Runs[receipt.RunID].IssueID == "" {
+	if state.Issues.Len() != IssueLimit || state.Issues.Get("issue_000").ID == "" || state.Issues.Get("issue_001").ID != "" || state.Runs.Get(receipt.RunID).IssueID == "" {
 		t.Fatal("global limit did not evict the least recently accessed issue")
 	}
-	if state.Memberships["issue_001"].State != "detached" {
+	if state.Memberships.Get("issue_001").State != "detached" {
 		t.Fatal("eviction left an active membership")
 	}
 	reopened, err := OpenStore(path)
@@ -108,11 +107,11 @@ func TestIssueLimitUsesDurableAccessOrder(t *testing.T) {
 		t.Fatal(err)
 	}
 	engine.Now = e.Now
-	if engine.Store.Snapshot().Issues["issue_000"].AccessOrder != seen.AccessOrder {
+	if engine.Store.Snapshot().Issues.Get("issue_000").AccessOrder != seen.AccessOrder {
 		t.Fatal("restart lost LRU order")
 	}
 	response := classifierRequest(engine, "GET", "/v1/tickets/source-000", "", "1", "source-000")
-	if response.Code != 200 || engine.Store.Snapshot().Issues["issue_000"].AccessOrder <= state.IssueAccessSequence {
+	if response.Code != 200 || engine.Store.Snapshot().Issues.Get("issue_000").AccessOrder <= state.IssueAccessSequence {
 		t.Fatal("restart reset access sequence", response.Body)
 	}
 }
@@ -121,9 +120,8 @@ func TestStartupPrunesEmptyAndExcessIssues(t *testing.T) {
 	e := testEngine(t)
 	seedIssueCatalogue(t, e, IssueLimit+3)
 	if err := e.Store.Update(func(s *State) error {
-		prepareInvestigations(s)
-		s.Issues["empty"] = EngineeringIssue{ID: "empty", CreatedAt: e.Now()}
-		s.IssueOverrides["source-000"] = "issue_000"
+		s.Issues.Put("empty", EngineeringIssue{ID: "empty", CreatedAt: e.Now()})
+		s.IssueOverrides.Put("source-000", "issue_000")
 		return nil
 	}); err != nil {
 		t.Fatal(err)
@@ -132,7 +130,7 @@ func TestStartupPrunesEmptyAndExcessIssues(t *testing.T) {
 		t.Fatal(err)
 	}
 	state := e.Store.Snapshot()
-	if len(state.Issues) != IssueLimit || state.Issues["empty"].ID != "" || state.Issues["issue_002"].ID != "" || state.Issues["issue_003"].ID == "" || state.IssueOverrides["source-000"] != "" {
+	if state.Issues.Len() != IssueLimit || state.Issues.Get("empty").ID != "" || state.Issues.Get("issue_002").ID != "" || state.Issues.Get("issue_003").ID == "" || state.IssueOverrides.Get("source-000") != "" {
 		t.Fatal("startup retention failed")
 	}
 }
@@ -146,7 +144,7 @@ func TestLRUEvictionCannotResurrectLinkedCase(t *testing.T) {
 	if _, err := e.ReviewCase(closed.CaseID, Review{Action: "approve", Reviewer: "engineer"}); err != nil {
 		t.Fatal(err)
 	}
-	if e.Store.Snapshot().Issues[run.IssueID].ID == "" {
+	if e.Store.Snapshot().Issues.Get(run.IssueID).ID == "" {
 		t.Fatal("closed case was incorrectly considered empty")
 	}
 	seedIssueCatalogue(t, e, IssueLimit)
@@ -154,9 +152,9 @@ func TestLRUEvictionCannotResurrectLinkedCase(t *testing.T) {
 		// Make all new issues more recent, at the same replay timestamp.
 		for i := 0; i < IssueLimit; i++ {
 			id := fmt.Sprintf("issue_%03d", i)
-			issue := s.Issues[id]
+			issue := s.Issues.Get(id)
 			issue.CreatedAt = e.Now()
-			s.Issues[id] = issue
+			s.Issues.Put(id, issue)
 			touchIssue(s, id, e.Now())
 		}
 		return nil
@@ -164,7 +162,7 @@ func TestLRUEvictionCannotResurrectLinkedCase(t *testing.T) {
 		t.Fatal(err)
 	}
 	state := e.Store.Snapshot()
-	if len(state.Issues) != IssueLimit || state.Issues[run.IssueID].ID != "" || state.Cases[closed.CaseID].State != "trusted" {
+	if state.Issues.Len() != IssueLimit || state.Issues.Get(run.IssueID).ID != "" || state.Cases.Get(closed.CaseID).State != "trusted" {
 		t.Fatal("capacity eviction changed the retained case audit")
 	}
 	for _, record := range issueRecords(state, Investigation{Contract: TaskContract{ObservationCutoff: e.Now()}}, fixture(e, "query")) {
@@ -181,7 +179,7 @@ func TestLRUEvictionCannotResurrectLinkedCase(t *testing.T) {
 func TestReportedAccessCannotTouchOutsideFrozenDirectory(t *testing.T) {
 	e := testEngine(t)
 	_, original := analyzedTicket(t, e, "source")
-	before := e.Store.Snapshot().Issues[original.IssueID].AccessOrder
+	before := e.Store.Snapshot().Issues.Get(original.IssueID).AccessOrder
 	query := fixture(e, "query")
 	query.Description += " distinct report"
 	receipt := receive(t, e, "query", query)
@@ -193,7 +191,7 @@ func TestReportedAccessCannotTouchOutsideFrozenDirectory(t *testing.T) {
 		t.Fatal(err)
 	}
 	state := e.Store.Snapshot()
-	if state.Runs[receipt.RunID].State != "failed" || state.Issues[original.IssueID].AccessOrder != before {
+	if state.Runs.Get(receipt.RunID).State != "failed" || state.Issues.Get(original.IssueID).AccessOrder != before {
 		t.Fatal("invalid provider access changed the catalogue")
 	}
 	if _, err := e.AnalyzeTicket(query.ID, true, "engineer"); err != nil {
@@ -206,7 +204,7 @@ func TestReportedAccessCannotTouchOutsideFrozenDirectory(t *testing.T) {
 	})); err != nil {
 		t.Fatal(err)
 	}
-	if e.Store.Snapshot().Issues[original.IssueID].AccessOrder <= before {
+	if e.Store.Snapshot().Issues.Get(original.IssueID).AccessOrder <= before {
 		t.Fatal("eligible provider read did not update LRU")
 	}
 }
@@ -233,7 +231,7 @@ func TestEvictionDuringAnalysisCannotRestoreIssue(t *testing.T) {
 		t.Fatal(err)
 	}
 	state := e.Store.Snapshot()
-	if len(state.Issues) != IssueLimit || state.Issues[original.IssueID].ID != "" || state.Runs[receipt.RunID].State != "failed" || state.Runs[receipt.RunID].IssueID != "" {
+	if state.Issues.Len() != IssueLimit || state.Issues.Get(original.IssueID).ID != "" || state.Runs.Get(receipt.RunID).State != "failed" || state.Runs.Get(receipt.RunID).IssueID != "" {
 		t.Fatal("stale analysis restored an evicted issue")
 	}
 }

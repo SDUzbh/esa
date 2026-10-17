@@ -2,6 +2,7 @@ package esa
 
 import (
 	"encoding/json"
+	"errors"
 	"reflect"
 	"strings"
 )
@@ -10,7 +11,9 @@ import (
 // workflow interprets retired protocol fields or runs their former behavior.
 type JSONFields map[string]json.RawMessage
 
-func decodeFields(data []byte, target any, extra *JSONFields) error {
+// decodeFields decodes data into target, keeps unknown fields in extra, and
+// fails if a required field is absent or null.
+func decodeFields(data []byte, target any, extra *JSONFields, required ...string) error {
 	*extra = nil
 	if err := json.Unmarshal(data, target); err != nil {
 		return err
@@ -18,6 +21,11 @@ func decodeFields(data []byte, target any, extra *JSONFields) error {
 	var fields JSONFields
 	if err := json.Unmarshal(data, &fields); err != nil {
 		return err
+	}
+	for _, name := range required {
+		if raw, ok := fields[name]; !ok || string(raw) == "null" {
+			return errors.New("invalid store schema")
+		}
 	}
 	typ := reflect.TypeOf(target).Elem()
 	for i := 0; i < typ.NumField(); i++ {
@@ -79,9 +87,13 @@ func (t Run) MarshalJSON() ([]byte, error) {
 	type plain Run
 	return encodeFields(plain(t), t.StoredFields)
 }
+
+// stateCoreTables must be present in a stored JSON frame.
+var stateCoreTables = []string{"tickets", "events", "receipts", "runs", "latest", "cases"}
+
 func (t *State) UnmarshalJSON(data []byte) error {
 	type plain State
-	return decodeFields(data, (*plain)(t), &t.StoredFields)
+	return decodeFields(data, (*plain)(t), &t.StoredFields, stateCoreTables...)
 }
 func (t State) MarshalJSON() ([]byte, error) {
 	type plain State

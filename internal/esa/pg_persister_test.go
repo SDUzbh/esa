@@ -206,9 +206,9 @@ func TestPostgresRoundTripAndOnlyChangedRows(t *testing.T) {
 		t.Fatal("no-op Update wrote a revision", err, e.Store.revision, before)
 	}
 	if err := e.update(func(s *State) error {
-		tk := s.Tickets["open"]
+		tk := s.Tickets.Get("open")
 		tk.Assignee = "engineer"
-		s.Tickets["open"] = tk
+		s.Tickets.Put("open", tk)
 		return nil
 	}); err != nil {
 		t.Fatal(err)
@@ -235,7 +235,7 @@ func TestPostgresNormalizesRunsEventsAndColdSnapshots(t *testing.T) {
 	closed.Resolution = Resolution{Reason: "fixed", Cause: "c", Solution: "s", Validation: "v"}
 	receive(t, e, "closed-event", closed)
 	s := e.Store.Snapshot()
-	runID := s.Latest["open"]
+	runID := s.Latest.Get("open")
 	table := func(name string) string { return pgx.Identifier{schema, name}.Sanitize() }
 	if n := adminQueryInt(t, url, "SELECT count(*) FROM "+table("runs")+" WHERE id = $1 AND payload->'input' IS NULL", runID); n != 1 {
 		t.Fatal("run input was stored instead of referencing its snapshot")
@@ -253,16 +253,16 @@ func TestPostgresNormalizesRunsEventsAndColdSnapshots(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if loaded.Runs[runID].Input.ID != "open" || hash(loaded.Runs[runID].Input) != hash(s.Runs[runID].Input) {
+	if loaded.Runs.Get(runID).Input.ID != "open" || hash(loaded.Runs.Get(runID).Input) != hash(s.Runs.Get(runID).Input) {
 		t.Fatal("run input was not restored from its snapshot")
 	}
-	if _, ok := loaded.Snapshots[s.LatestSnapshot["closed"]]; ok {
+	if _, ok := loaded.Snapshots.Lookup(s.LatestSnapshot.Get("closed")); ok {
 		t.Fatal("a closed ticket's snapshot, referenced by no run or link, was loaded")
 	}
-	if _, ok := loaded.Snapshots[s.Runs[runID].SnapshotID]; !ok {
+	if _, ok := loaded.Snapshots.Lookup(s.Runs.Get(runID).SnapshotID); !ok {
 		t.Fatal("a run's snapshot was not loaded")
 	}
-	if loaded.Events["open-event"].Raw != nil || len(loaded.MembershipHistory) != 0 {
+	if loaded.Events.Get("open-event").Raw != nil || len(loaded.MembershipHistory) != 0 {
 		t.Fatal("cold data was loaded")
 	}
 	// Idempotency on the reloaded state.
@@ -286,7 +286,7 @@ func TestPostgresNormalizesRunsEventsAndColdSnapshots(t *testing.T) {
 func TestPostgresImmutableRowsAndAtomicFailure(t *testing.T) {
 	e, p, url, schema := pgEngine(t)
 	receive(t, e, "e1", fixture(e, "T1"))
-	snapID := e.Store.Snapshot().LatestSnapshot["T1"]
+	snapID := e.Store.Snapshot().LatestSnapshot.Get("T1")
 	ctx := context.Background()
 	conn, err := pgx.Connect(ctx, url)
 	if err != nil {
@@ -297,20 +297,20 @@ func TestPostgresImmutableRowsAndAtomicFailure(t *testing.T) {
 		t.Fatal("snapshot row could be modified", err)
 	}
 	err = e.Store.Update(func(s *State) error {
-		snap := s.Snapshots[snapID]
+		snap := s.Snapshots.Get(snapID)
 		snap.Ticket.Subject = "rewritten"
-		s.Snapshots[snapID] = snap
+		s.Snapshots.Put(snapID, snap)
 		return nil
 	})
-	if err == nil || e.Store.Snapshot().Snapshots[snapID].Ticket.Subject == "rewritten" {
+	if err == nil || e.Store.Snapshot().Snapshots.Get(snapID).Ticket.Subject == "rewritten" {
 		t.Fatal("snapshot rewrite was committed", err)
 	}
 	// A failure inside the transaction leaves database and memory unchanged.
 	rev := e.Store.revision
 	p.testBeforeCommit = func() error { return errors.New("injected failure") }
-	err = e.Store.Update(func(s *State) error { s.Tickets["T2"] = fixture(e, "T2"); return nil })
+	err = e.Store.Update(func(s *State) error { s.Tickets.Put("T2", fixture(e, "T2")); return nil })
 	p.testBeforeCommit = nil
-	if err == nil || e.Store.revision != rev || len(e.Store.Snapshot().Tickets) != 1 {
+	if err == nil || e.Store.revision != rev || e.Store.Snapshot().Tickets.Len() != 1 {
 		t.Fatal("failed transaction changed memory", err)
 	}
 	if n := adminQueryInt(t, url, "SELECT count(*) FROM "+pgx.Identifier{schema, "tickets"}.Sanitize()); n != 1 {
@@ -327,9 +327,9 @@ func TestPostgresUnknownCommitOutcome(t *testing.T) {
 	// The commit succeeded but its reply was lost: meta.revision shows it landed.
 	rev := e.Store.revision
 	p.testAfterCommit = func() error { return errors.New("connection reset by peer") }
-	err := e.Store.Update(func(s *State) error { s.Tickets["T2"] = fixture(e, "T2"); return nil })
+	err := e.Store.Update(func(s *State) error { s.Tickets.Put("T2", fixture(e, "T2")); return nil })
 	p.testAfterCommit = nil
-	if err != nil || e.Store.revision != rev+1 || e.Store.Snapshot().Tickets["T2"].ID != "T2" {
+	if err != nil || e.Store.revision != rev+1 || e.Store.Snapshot().Tickets.Get("T2").ID != "T2" {
 		t.Fatal("committed Update with a lost reply was not published", err)
 	}
 	// Nothing committed: the revision is unchanged, so the error stands.
@@ -377,17 +377,17 @@ func TestPostgresTakeoverFencesOldWriter(t *testing.T) {
 	adminExec(t, url, "SELECT pg_terminate_backend($1)", lockPID(t, a))
 	b := openTestPostgres(t, url, schema)
 	newWriter := openTestPostgresStore(t, b)
-	err := e.Store.Update(func(s *State) error { s.Tickets["T2"] = fixture(e, "T2"); return nil })
+	err := e.Store.Update(func(s *State) error { s.Tickets.Put("T2", fixture(e, "T2")); return nil })
 	if !errors.Is(err, ErrLostWriter) {
 		t.Fatal("old writer committed after the term bump", err)
 	}
-	if _, ok := e.Store.Snapshot().Tickets["T2"]; ok {
+	if _, ok := e.Store.Snapshot().Tickets.Lookup("T2"); ok {
 		t.Fatal("fenced Update changed the old writer's memory")
 	}
 	if n := adminQueryInt(t, url, "SELECT count(*) FROM "+pgx.Identifier{schema, "tickets"}.Sanitize()); n != 1 {
 		t.Fatal("fenced Update reached the database", n)
 	}
-	if newWriter.Snapshot().Tickets["T1"].ID != "T1" {
+	if newWriter.Snapshot().Tickets.Get("T1").ID != "T1" {
 		t.Fatal("new writer did not load earlier commits")
 	}
 	if err = a.CheckLock(context.Background()); !errors.Is(err, ErrLostWriter) {
@@ -404,7 +404,7 @@ func TestPostgresCommitBeforeBumpIsSeenByNewWriter(t *testing.T) {
 	a.testBeforeCommit = func() error { close(paused); <-release; return nil }
 	committed := make(chan error, 1)
 	go func() {
-		committed <- e.Store.Update(func(s *State) error { s.Tickets["T2"] = fixture(e, "T2"); return nil })
+		committed <- e.Store.Update(func(s *State) error { s.Tickets.Put("T2", fixture(e, "T2")); return nil })
 	}()
 	<-paused
 	adminExec(t, url, "SELECT pg_terminate_backend($1)", lockPID(t, a))
@@ -430,7 +430,7 @@ func TestPostgresCommitBeforeBumpIsSeenByNewWriter(t *testing.T) {
 		t.Fatal("commit that held the meta row before the bump failed", err)
 	}
 	s := <-opened
-	if s == nil || s.Snapshot().Tickets["T2"].ID != "T2" {
+	if s == nil || s.Snapshot().Tickets.Get("T2").ID != "T2" {
 		t.Fatal("new writer missed a commit that landed before its term bump")
 	}
 }

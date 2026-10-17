@@ -89,27 +89,27 @@ func TestCasesApprovalDoesNotRerouteAndWithdrawalRespectsPrivacy(t *testing.T) {
 	open := fixture(e, "open")
 	initial := receive(t, e, "open-event", open)
 	closed, receipt := resolved(t, e)
-	if r := e.Store.Snapshot().Runs[initial.RunID]; r.Route != "engineering_analysis" {
+	if r := e.Store.Snapshot().Runs.Get(initial.RunID); r.Route != "engineering_analysis" {
 		t.Fatal(r.Route)
 	}
 	if _, err := e.ReviewCase(receipt.CaseID, Review{Action: "approve", Reviewer: "engineer"}); err != nil {
 		t.Fatal(err)
 	}
 	s := e.Store.Snapshot()
-	r := s.Runs[s.Latest[open.ID]]
+	r := s.Runs.Get(s.Latest.Get(open.ID))
 	if r.ID != initial.RunID || r.Route != "engineering_analysis" || r.Report.Usage.Calls != 0 {
 		t.Fatal(r)
 	}
 	closed.Assignee = "Other"
 	closed.UpdatedAt = closed.UpdatedAt.Add(time.Second)
 	receive(t, e, "closed-metadata", closed)
-	if e.Store.Snapshot().Cases[receipt.CaseID].State != "trusted" {
+	if e.Store.Snapshot().Cases.Get(receipt.CaseID).State != "trusted" {
 		t.Fatal("metadata revoked trust")
 	}
 	closed.Closed = false
 	closed.UpdatedAt = closed.UpdatedAt.Add(time.Second)
 	receive(t, e, "reopened", closed)
-	if e.Store.Snapshot().Latest[open.ID] != r.ID {
+	if e.Store.Snapshot().Latest.Get(open.ID) != r.ID {
 		t.Fatal("case withdrawal silently replaced an investigation")
 	}
 	if len(CasesAt(e.Store.Snapshot().CaseHistory, e.Now())) != 0 {
@@ -136,7 +136,7 @@ func TestAllResolvedCollection(t *testing.T) {
 		ticket.Closed = true
 		ticket.Resolution.Reason = reason
 		r := receive(t, e, reason, ticket)
-		c := e.Store.Snapshot().Cases[r.CaseID]
+		c := e.Store.Snapshot().Cases.Get(r.CaseID)
 		want := map[string]string{"fixed": "draft", "duplicate": "duplicate", "rejected": "archived"}[reason]
 		if c.State != want {
 			t.Fatal(c)
@@ -154,7 +154,7 @@ func TestAnalyzerGatesBudgetRecoveryAndStaleResults(t *testing.T) {
 		e := testEngine(t)
 		r := receive(t, e, "a", fixture(e, "a"))
 		e.ProcessOne(context.Background(), nil)
-		run := e.Store.Snapshot().Runs[r.RunID]
+		run := e.Store.Snapshot().Runs.Get(r.RunID)
 		if run.State != "awaiting_configuration" || run.Report.Usage.Calls != 0 {
 			t.Fatal(run)
 		}
@@ -170,7 +170,7 @@ func TestAnalyzerGatesBudgetRecoveryAndStaleResults(t *testing.T) {
 			called = true
 			return Report{Issue: &IssueAssignment{Title: "Candidate", Reason: "Observed evidence"}, Summary: "Candidate", Evidence: []Evidence{{Source: "git", Reference: "old:10", Quote: "Observed"}}, Usage: Usage{Calls: 1, InputTokens: 100, OutputTokens: 200, TokensReported: true}}, nil
 		}))
-		run := e.Store.Snapshot().Runs[r.RunID]
+		run := e.Store.Snapshot().Runs.Get(r.RunID)
 		if !called || run.Report.Usage.Calls != 1 || run.State != "awaiting_review" || len(run.Report.Alerts) != 3 {
 			t.Fatal(run)
 		}
@@ -184,11 +184,11 @@ func TestAnalyzerGatesBudgetRecoveryAndStaleResults(t *testing.T) {
 			}
 			return Report{Issue: &IssueAssignment{Title: "Candidate", Reason: "Observed check"}, Summary: "Candidate", Evidence: []Evidence{{Source: "git", Reference: "abc:src/file:10", Quote: "Observed check"}}}, nil
 		}))
-		run := e.Store.Snapshot().Runs[r.RunID]
+		run := e.Store.Snapshot().Runs.Get(r.RunID)
 		if run.State != "awaiting_review" || run.Report.Usage.Calls != 1 || len(run.Report.Limitations) == 0 {
 			t.Fatal(run)
 		}
-		task := e.Store.Snapshot().Investigations[run.InvestigationID]
+		task := e.Store.Snapshot().Investigations.Get(run.InvestigationID)
 		if _, err := e.ReviewSolution(task.ID, SolutionReview{ExpectedSolutionID: task.SolutionID, Reviewer: "engineer", Action: "approve", Resolution: Resolution{Cause: "Reviewed candidate", Solution: "Apply the observed check", Validation: "Verify the reported scenario"}}); err != nil {
 			t.Fatal(err)
 		}
@@ -203,7 +203,7 @@ func TestAnalyzerGatesBudgetRecoveryAndStaleResults(t *testing.T) {
 			receive(t, e, "b", ticket)
 			return Report{Issue: &IssueAssignment{Title: "Old", Reason: "Old evidence"}, Summary: "Old", Evidence: []Evidence{{Source: "git", Reference: "old", Quote: "Old"}}}, nil
 		}))
-		if e.Store.Snapshot().Runs[r.RunID].State != "superseded" {
+		if e.Store.Snapshot().Runs.Get(r.RunID).State != "superseded" {
 			t.Fatal("stale result published")
 		}
 	})
@@ -211,20 +211,20 @@ func TestAnalyzerGatesBudgetRecoveryAndStaleResults(t *testing.T) {
 		e := testEngine(t)
 		r := receive(t, e, "a", fixture(e, "a"))
 		e.Store.Update(func(s *State) error {
-			run := s.Runs[r.RunID]
+			run := s.Runs.Get(r.RunID)
 			run.State = "running"
-			s.Runs[run.ID] = run
-			task := s.Investigations[run.InvestigationID]
+			s.Runs.Put(run.ID, run)
+			task := s.Investigations.Get(run.InvestigationID)
 			task.State = "running"
 			task.InvocationStarted = true
 			task.LeaseUntil = e.Now().Add(-time.Second)
-			s.Investigations[task.ID] = task
+			s.Investigations.Put(task.ID, task)
 			return nil
 		})
 		if err := e.Recover(); err != nil {
 			t.Fatal(err)
 		}
-		run := e.Store.Snapshot().Runs[r.RunID]
+		run := e.Store.Snapshot().Runs.Get(r.RunID)
 		if run.State != "failed" {
 			t.Fatal("interrupted run remained active", run)
 		}
@@ -251,8 +251,8 @@ func TestDurableStoreAndRollback(t *testing.T) {
 	}
 	// Snapshot is read-only and shared; Clone is the detached copy to edit.
 	clone := loaded.Clone()
-	clone.Tickets["foreign"] = Ticket{}
-	if len(loaded.Snapshot().Tickets) != 0 {
+	clone.Tickets.Put("foreign", Ticket{})
+	if loaded.Snapshot().Tickets.Len() != 0 {
 		t.Fatal("clone aliases live state")
 	}
 }

@@ -42,7 +42,7 @@ type coldSnapshotReader interface {
 // unreferenced snapshots out of memory, from storage. It never loads the
 // snapshot into memory and is safe to call outside Update.
 func (s *Store) LookupSnapshot(ctx context.Context, id string) (TicketSnapshot, bool, error) {
-	if snap, ok := s.Snapshot().Snapshots[id]; ok {
+	if snap, ok := s.Snapshot().Snapshots.Lookup(id); ok {
 		return snap, true, nil
 	}
 	if r, ok := s.persister.(coldSnapshotReader); ok {
@@ -94,8 +94,12 @@ func newStore(p Persister) (*Store, error) {
 	s.publishLocked(nil)
 	return s, nil
 }
+
+// validateState checks the schema version. A JSON frame missing a core table
+// is rejected while decoding (State.UnmarshalJSON), since an empty Table and
+// an absent one look the same once decoded.
 func validateState(s State) error {
-	if s.SchemaVersion != 1 || s.Tickets == nil || s.Events == nil || s.Receipts == nil || s.Runs == nil || s.Latest == nil || s.Cases == nil {
+	if s.SchemaVersion != 1 {
 		return errors.New("invalid store schema")
 	}
 	return nil
@@ -126,9 +130,6 @@ func (s *Store) Update(fn func(*State) error) error {
 func (s *Store) updateLocked(fn func(*State) error) error {
 	s.verifyPublishedLocked()
 	next := s.state.detach()
-	if next.Snapshots != nil || next.Investigations != nil {
-		prepareInvestigations(&next)
-	}
 	err := fn(&next)
 	s.verifyPublishedLocked()
 	if err != nil {
@@ -224,31 +225,15 @@ func (s *Store) Clone() State {
 	return clone
 }
 
-// detach returns a state whose top-level maps and slices can be changed without
-// touching s. Entities themselves are shared and must be replaced, not edited.
-// Slices are clipped so an append always reallocates instead of writing into
-// an array that the published state still references.
+// detach returns a state that an Update can change without touching s, in
+// O(1): Tables are persistent, so the copy shares every node and a write
+// copies only its own path. Entities are shared too and must be replaced, not
+// edited in place. History slices are clipped so an append always reallocates
+// instead of writing into an array the published state still references.
 func (s State) detach() State {
 	next := s
 	next.StoredFields = maps.Clone(s.StoredFields)
-	next.LatestSnapshot = maps.Clone(s.LatestSnapshot)
-	next.Snapshots = maps.Clone(s.Snapshots)
-	next.Issues = maps.Clone(s.Issues)
-	next.Memberships = maps.Clone(s.Memberships)
 	next.MembershipHistory = slices.Clip(s.MembershipHistory)
-	next.IssueOverrides = maps.Clone(s.IssueOverrides)
-	next.Investigations = maps.Clone(s.Investigations)
-	next.Groups = maps.Clone(s.Groups)
-	next.Solutions = maps.Clone(s.Solutions)
-	next.ClassifierPredictions = maps.Clone(s.ClassifierPredictions)
-	next.ClassifierFeedback = maps.Clone(s.ClassifierFeedback)
-	next.Tickets = maps.Clone(s.Tickets)
-	next.Events = maps.Clone(s.Events)
-	next.Receipts = maps.Clone(s.Receipts)
-	next.Rejections = maps.Clone(s.Rejections)
-	next.Runs = maps.Clone(s.Runs)
-	next.Latest = maps.Clone(s.Latest)
-	next.Cases = maps.Clone(s.Cases)
 	next.CaseHistory = slices.Clip(s.CaseHistory)
 	return next
 }
@@ -259,7 +244,7 @@ func (s *Store) needsWork(now time.Time, provider bool, maxQueueWait time.Durati
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	free := engineeringActive(s.state) < EngineeringConcurrency
-	for _, task := range s.state.Investigations {
+	for _, task := range s.state.Investigations.All() {
 		if parked(task) {
 			if provider && free || time.Since(task.WaitingSince) >= maxQueueWait {
 				return true
@@ -270,7 +255,7 @@ func (s *Store) needsWork(now time.Time, provider bool, maxQueueWait time.Durati
 			return true
 		}
 	}
-	for _, run := range s.state.Runs {
+	for _, run := range s.state.Runs.All() {
 		if run.State == "queued" && (run.WorkflowVersion != WorkflowVersion || run.Input.ForwardedBy == "" || run.Input.ForwardedAt.IsZero()) {
 			return true
 		}

@@ -10,31 +10,26 @@ import (
 	"time"
 )
 
-func TestDiffMapReportsOnlyRealChanges(t *testing.T) {
+func TestDiffTableReportsOnlyRealChanges(t *testing.T) {
 	e := testEngine(t)
-	old := map[string]Ticket{"a": fixture(e, "a"), "b": fixture(e, "b"), "c": fixture(e, "c")}
-	next := cloneTickets(old)
-	next["a"] = next["a"] // identical replace
-	changed := next["b"]
+	old := TableOf(map[string]Ticket{"a": fixture(e, "a"), "b": fixture(e, "b"), "c": fixture(e, "c")})
+	next := old
+	next.Put("a", next.Get("a")) // identical replace
+	changed := next.Get("b")
 	changed.Assignee = "someone"
-	next["b"] = changed
-	delete(next, "c")
-	next["d"] = fixture(e, "d")
-	got := diffMap(old, next)
+	next.Put("b", changed)
+	next.Delete("c")
+	next.Put("d", fixture(e, "d"))
+	got := diffTable(old, next)
 	if !slices.Equal(got.Upserted, []string{"b", "d"}) || !slices.Equal(got.Deleted, []string{"c"}) {
-		t.Fatal("unexpected map changes", got)
+		t.Fatal("unexpected table changes", got)
 	}
-	if got := diffMap(old, cloneTickets(old)); !got.empty() {
-		t.Fatal("untouched copy reported changes", got)
+	if got := diffTable(old, old); !got.empty() {
+		t.Fatal("untouched table reported changes", got)
 	}
-}
-
-func cloneTickets(m map[string]Ticket) map[string]Ticket {
-	out := make(map[string]Ticket, len(m))
-	for k, v := range m {
-		out[k] = v
+	if old.Get("b").Assignee == "someone" || old.Len() != 3 {
+		t.Fatal("writing the copy changed the original")
 	}
-	return out
 }
 
 func TestDiffHistoryTailAndRewrite(t *testing.T) {
@@ -89,18 +84,21 @@ func TestDiffStateCoversEveryField(t *testing.T) {
 		field := typ.Field(i)
 		next := base.detach()
 		nf := reflect.ValueOf(&next).Elem().Field(i)
-		switch nf.Kind() {
-		case reflect.Map:
+		table, isTable := nf.Addr().Interface().(stateTable)
+		switch {
+		case isTable:
+			table.tablePutZero("k")
+		case nf.Kind() == reflect.Map:
 			nf.SetMapIndex(reflect.ValueOf("k").Convert(nf.Type().Key()), reflect.Zero(nf.Type().Elem()))
-		case reflect.Slice:
+		case nf.Kind() == reflect.Slice:
 			nf.Set(reflect.Append(nf, reflect.Zero(nf.Type().Elem())))
-		case reflect.String:
+		case nf.Kind() == reflect.String:
 			nf.SetString("x")
-		case reflect.Int, reflect.Int64:
+		case nf.Kind() == reflect.Int || nf.Kind() == reflect.Int64:
 			nf.SetInt(nf.Int() + 1)
-		case reflect.Uint64:
+		case nf.Kind() == reflect.Uint64:
 			nf.SetUint(nf.Uint() + 1)
-		case reflect.Struct: // time.Time
+		case nf.Type() == reflect.TypeFor[time.Time]():
 			nf.Set(reflect.ValueOf(time.Unix(1, 0).UTC()))
 		default:
 			t.Fatalf("State.%s has an unhandled kind %s; extend diffState and this test", field.Name, nf.Kind())
@@ -111,7 +109,7 @@ func TestDiffStateCoversEveryField(t *testing.T) {
 			continue
 		}
 		name := strings.Split(field.Tag.Get("json"), ",")[0]
-		if nf.Kind() == reflect.Map && name != "-" && !slices.Equal(c.Maps[name].Upserted, []string{"k"}) {
+		if isTable && !slices.Equal(c.Maps[name].Upserted, []string{"k"}) {
 			t.Errorf("State.%s changes are not reported under %q: %v", field.Name, name, c.Maps)
 		}
 	}
@@ -128,7 +126,7 @@ func TestProjectionAloneChangesNothing(t *testing.T) {
 	}
 	analyzedTicket(t, e, "analyzed")
 	published := e.Store.Snapshot()
-	if len(published.Investigations) == 0 {
+	if published.Investigations.Len() == 0 {
 		t.Fatal("fixture has no investigations")
 	}
 	next := published.detach()
@@ -146,9 +144,9 @@ func TestChangeGuardCatchesMissedChange(t *testing.T) {
 	receive(t, e, "seed", fixture(e, "T1"))
 	published := e.Store.Snapshot()
 	next := published.detach()
-	ticket := next.Tickets["T1"]
+	ticket := next.Tickets.Get("T1")
 	ticket.Assignee = "changed"
-	next.Tickets["T1"] = ticket
+	next.Tickets.Put("T1", ticket)
 	defer func() {
 		if r := recover(); r == nil || !strings.Contains(fmt.Sprint(r), "missed") {
 			t.Fatal("guard accepted a change the diff did not report", r)
@@ -166,7 +164,7 @@ func TestUpdateReportsChangesToGuardAcrossWorkflow(t *testing.T) {
 	closed.Closed, closed.Status, closed.UpdatedAt = true, "Resolved", e.Now().Add(time.Minute)
 	closed.Resolution = Resolution{Reason: "fixed", Cause: "c", Solution: "s", Validation: "v"}
 	receive(t, e, "closed-flow", closed)
-	if e.Store.Snapshot().Tickets["flow"].Closed != true {
+	if e.Store.Snapshot().Tickets.Get("flow").Closed != true {
 		t.Fatal("closing the ticket was not persisted")
 	}
 }

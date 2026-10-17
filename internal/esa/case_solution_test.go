@@ -15,8 +15,8 @@ func TestSharedInvestigationsReviewedCaseSupersedesPendingAndSplitPreservesInput
 	}
 	s := e.Store.Snapshot()
 	task := sortedInvestigations(s)[0]
-	old := s.Solutions[task.SolutionID]
-	initial := s.Runs[task.RunID]
+	old := s.Solutions.Get(task.SolutionID)
+	initial := s.Runs.Get(task.RunID)
 	q.Closed = true
 	q.Resolution = Resolution{Cause: "Reviewed cause", Solution: "Engineer amendment", Validation: "Scoped validation"}
 	receipt := receive(t, e, "resolved", q)
@@ -24,19 +24,19 @@ func TestSharedInvestigationsReviewedCaseSupersedesPendingAndSplitPreservesInput
 		t.Fatal(err)
 	}
 	s = e.Store.Snapshot()
-	newTask := s.Investigations[task.ID]
-	solution := s.Solutions[newTask.SolutionID]
-	if solution.Origin != "engineer" || solution.State != "trusted" || solution.Resolution.Solution != "Engineer amendment" || solution.Supersedes != old.ID || s.Solutions[old.ID].State != "proposed" {
+	newTask := s.Investigations.Get(task.ID)
+	solution := s.Solutions.Get(newTask.SolutionID)
+	if solution.Origin != "engineer" || solution.State != "trusted" || solution.Resolution.Solution != "Engineer amendment" || solution.Supersedes != old.ID || s.Solutions.Get(old.ID).State != "proposed" {
 		t.Fatalf("review precedence: %+v", solution)
 	}
-	memberSnapshot := s.LatestSnapshot["member"]
+	memberSnapshot := s.LatestSnapshot.Get("member")
 	membership, _ := activeMembership(s, "member")
 	r, err := e.ReviewMembership("member", MembershipReview{ExpectedMembershipID: membership.ID, ExpectedSnapshotID: memberSnapshot, Reviewer: "engineer", Reason: "Contradictory evidence requires a separate investigation"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	s = e.Store.Snapshot()
-	if r.RunID != initial.ID || len(s.Investigations) != 1 || hash(s.Runs[initial.ID].Input) != hash(initial.Input) || len(s.MembershipHistory) < 4 {
+	if r.RunID != initial.ID || s.Investigations.Len() != 1 || hash(s.Runs.Get(initial.ID).Input) != hash(initial.Input) || len(s.MembershipHistory) < 4 {
 		t.Fatal("split rewrote historical input or failed to retain membership revisions")
 	}
 	if _, err = e.ReviewMembership("member", MembershipReview{ExpectedMembershipID: membership.ID, ExpectedSnapshotID: memberSnapshot, Reviewer: "engineer", Reason: "Stale split"}); err == nil {

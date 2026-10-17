@@ -18,12 +18,12 @@ func coldSnapshotEngine(t *testing.T) (*Engine, *PostgresPersister, TicketSnapsh
 	closed.Closed, closed.Status = true, "Resolved"
 	closed.Resolution = Resolution{Reason: "fixed", Cause: "c", Solution: "s", Validation: "v"}
 	receive(t, e, "closed-event", closed)
-	snap := e.Store.Snapshot().Snapshots[e.Store.Snapshot().LatestSnapshot["closed"]]
+	snap := e.Store.Snapshot().Snapshots.Get(e.Store.Snapshot().LatestSnapshot.Get("closed"))
 	first.Close()
 	p := openTestPostgres(t, url, schema)
 	reopened := testEngine(t)
 	reopened.Store = openTestPostgresStore(t, p)
-	if _, inMemory := reopened.Store.Snapshot().Snapshots[snap.ID]; inMemory {
+	if _, inMemory := reopened.Store.Snapshot().Snapshots.Lookup(snap.ID); inMemory {
 		t.Fatal("fixture snapshot is not cold")
 	}
 	return reopened, p, snap
@@ -36,7 +36,7 @@ func TestColdSnapshotIsServedFromStorage(t *testing.T) {
 	if w.Code != 200 || jsonCompact(t, w.Body.Bytes()) != string(want) {
 		t.Fatal("cold snapshot not served as stored", w.Code, w.Body.String())
 	}
-	if _, inMemory := e.Store.Snapshot().Snapshots[snap.ID]; inMemory {
+	if _, inMemory := e.Store.Snapshot().Snapshots.Lookup(snap.ID); inMemory {
 		t.Fatal("a cold read loaded the snapshot into memory")
 	}
 	for _, c := range []struct{ name, path, scope, tickets string }{

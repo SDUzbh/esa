@@ -255,43 +255,43 @@ func (e *Engine) Receive(event Event) (Receipt, error) {
 	ticketHash := hash(t)
 	var receipt Receipt
 	err := e.update(func(s *State) error {
-		previousRunID := s.Latest[t.ID]
+		previousRunID := s.Latest.Get(t.ID)
 		record := EventRecord{ID: event.ID, Origin: event.Origin, Force: event.Force, ForwardedBy: event.ForwardedBy, ForwardedAt: event.ForwardedAt, OccurredAt: event.OccurredAt, ReceivedAt: event.ReceivedAt, TicketID: t.ID, TicketHash: ticketHash, Raw: event.Raw}
-		if old, ok := s.Events[event.ID]; ok {
+		if old, ok := s.Events.Lookup(event.ID); ok {
 			if old.TicketHash != ticketHash || old.Origin != event.Origin || old.Force != event.Force {
 				return reject(fmt.Errorf("%w: event ID was reused with different content", ErrConflict))
 			}
-			receipt = s.Receipts[event.ID]
+			receipt = s.Receipts.Get(event.ID)
 			receipt.Action = "duplicate"
 			return nil
 		}
-		if old, ok := s.Tickets[t.ID]; ok && old.ProjectID != t.ProjectID {
+		if old, ok := s.Tickets.Lookup(t.ID); ok && old.ProjectID != t.ProjectID {
 			return reject(fmt.Errorf("%w: ticket belongs to a different project", ErrConflict))
 		}
 		receipt = Receipt{EventID: event.ID, TicketID: t.ID}
 		if event.Origin == "esa" {
 			receipt.Action = "ignored_self_event"
-		} else if old, ok := s.Tickets[t.ID]; ok && t.UpdatedAt.Before(old.UpdatedAt) {
+		} else if old, ok := s.Tickets.Lookup(t.ID); ok && t.UpdatedAt.Before(old.UpdatedAt) {
 			receipt.Action = "ignored_stale_event"
 		} else {
-			if previous, ok := s.Tickets[t.ID]; ok && ((previous.Closed && !t.Closed) || investigationScope(previous) != investigationScope(t)) {
+			if previous, ok := s.Tickets.Lookup(t.ID); ok && ((previous.Closed && !t.Closed) || investigationScope(previous) != investigationScope(t)) {
 				e.withdrawSourceSolutions(s, t.ID, "Source was reopened or its applicability scope changed")
 			}
-			s.Tickets[t.ID] = t
+			s.Tickets.Put(t.ID, t)
 			record.SnapshotID = captureSnapshot(s, event)
 			e.detachChangedMemberships(s, t)
 			if t.Private {
-				if c, ok := s.Cases["case_"+hash(t.ID)[:24]]; ok && c.State != "invalidated" {
+				if c, ok := s.Cases.Lookup("case_" + hash(t.ID)[:24]); ok && c.State != "invalidated" {
 					c.State = "invalidated"
 					c.Version++
 					c.UpdatedAt = now
 					c.ReviewNote = "The source ticket became private."
-					s.Cases[c.ID] = c
+					s.Cases.Put(c.ID, c)
 					s.CaseHistory = append(s.CaseHistory, c)
 				}
-				if r, ok := s.Runs[s.Latest[t.ID]]; ok && r.InvestigationID == "" {
+				if r, ok := s.Runs.Lookup(s.Latest.Get(t.ID)); ok && r.InvestigationID == "" {
 					r.State = "restricted"
-					s.Runs[r.ID] = r
+					s.Runs.Put(r.ID, r)
 				}
 				receipt.Action = "restricted_private_ticket"
 			} else if t.Closed {
@@ -299,12 +299,12 @@ func (e *Engine) Receive(event Event) (Receipt, error) {
 				receipt.Action = "case_collected"
 				receipt.CaseID = c.ID
 			} else {
-				if c, ok := s.Cases["case_"+hash(t.ID)[:24]]; ok && c.State != "invalidated" {
+				if c, ok := s.Cases.Lookup("case_" + hash(t.ID)[:24]); ok && c.State != "invalidated" {
 					c.State = "invalidated"
 					c.ReviewNote = "The source ticket was reopened."
 					c.Version++
 					c.UpdatedAt = now
-					s.Cases[c.ID] = c
+					s.Cases.Put(c.ID, c)
 					s.CaseHistory = append(s.CaseHistory, c)
 				}
 				receipt = e.enqueue(s, t, now, event.Force)
@@ -319,8 +319,8 @@ func (e *Engine) Receive(event Event) (Receipt, error) {
 			ticket := t
 			record.Ticket = &ticket
 		}
-		s.Events[event.ID] = record
-		s.Receipts[event.ID] = receipt
+		s.Events.Put(event.ID, record)
+		s.Receipts.Put(event.ID, receipt)
 		return nil
 	})
 	return receipt, err
@@ -328,8 +328,8 @@ func (e *Engine) Receive(event Event) (Receipt, error) {
 
 func (e *Engine) collectCase(s *State, t Ticket, now time.Time) Case {
 	c := Case{ID: "case_" + hash(t.ID)[:24], TicketID: t.ID, ProjectID: t.ProjectID, SourceKey: t.SourceKey, Subject: t.Subject, Summary: t.Description, Components: unique(t.Components), Versions: unique(t.Versions), Environment: t.Environment, Resolution: t.Resolution, State: "draft", CreatedAt: now, UpdatedAt: now, Version: 1}
-	c.IssueID = s.Runs[s.Latest[t.ID]].IssueID
-	if override := s.IssueOverrides[t.ID]; override != "" {
+	c.IssueID = s.Runs.Get(s.Latest.Get(t.ID)).IssueID
+	if override := s.IssueOverrides.Get(t.ID); override != "" {
 		c.IssueID = override
 	}
 	c.SourceHash = hash(struct {
@@ -341,7 +341,7 @@ func (e *Engine) collectCase(s *State, t Ticket, now time.Time) Case {
 	} else if contains([]string{"rejected", "cancelled", "won't fix", "wontfix", "not a problem", "invalid"}, t.Resolution.Reason) {
 		c.State = "archived"
 	}
-	if old, ok := s.Cases[c.ID]; ok {
+	if old, ok := s.Cases.Lookup(c.ID); ok {
 		if c.IssueID == "" {
 			c.IssueID = old.IssueID
 		}
@@ -358,7 +358,7 @@ func (e *Engine) collectCase(s *State, t Ticket, now time.Time) Case {
 		c.ReviewNote = sol.Note
 		c.TrustedAt = sol.AvailableAt
 	}
-	s.Cases[c.ID] = c
+	s.Cases.Put(c.ID, c)
 	s.CaseHistory = append(s.CaseHistory, c)
 	return c
 }
@@ -375,13 +375,13 @@ type Review struct {
 func (e *Engine) ReviewCase(id string, review Review) (Case, error) {
 	var result Case
 	err := e.update(func(s *State) error {
-		c, ok := s.Cases[id]
+		c, ok := s.Cases.Lookup(id)
 		original := c
 		if !ok {
 			return ErrNotFound
 		}
 		if c.IssueID != "" {
-			if _, exists := s.Issues[c.IssueID]; !exists {
+			if _, exists := s.Issues.Lookup(c.IssueID); !exists {
 				return fmt.Errorf("%w: engineering issue was removed", ErrConflict)
 			}
 			touchIssue(s, c.IssueID, e.Now())
@@ -393,7 +393,7 @@ func (e *Engine) ReviewCase(id string, review Review) (Case, error) {
 			c.Resolution = *review.Resolution
 		}
 		if review.Action == "approve" {
-			t, ok := s.Tickets[c.TicketID]
+			t, ok := s.Tickets.Lookup(c.TicketID)
 			if !ok || !t.Closed || t.Private || c.State == "duplicate" || c.State == "archived" || c.State == "invalidated" {
 				return fmt.Errorf("%w: source ticket is not eligible", ErrInvalid)
 			}
@@ -404,7 +404,7 @@ func (e *Engine) ReviewCase(id string, review Review) (Case, error) {
 		state := map[string]string{"approve": "trusted", "reject": "rejected", "withdraw": "withdrawn"}[review.Action]
 		if sol, ok := canonicalSolution(*s, c.IssueID, caseScope(c)); ok && c.IssueID != "" {
 			c.SolutionID = sol.ID
-			s.Cases[id] = c
+			s.Cases.Put(id, c)
 			if sol.State == state && sameResolution(sol.Resolution, c.Resolution) {
 				e.syncCases(s, sol)
 			} else {
@@ -415,18 +415,18 @@ func (e *Engine) ReviewCase(id string, review Review) (Case, error) {
 				next.Resolution = c.Resolution
 				next.Reviewer = review.Reviewer
 				next.Note = review.Note
-				e.publishSolution(s, s.Investigations[sol.InvestigationID], sol, next)
+				e.publishSolution(s, s.Investigations.Get(sol.InvestigationID), sol, next)
 			}
-			result = s.Cases[id]
+			result = s.Cases.Get(id)
 			if hash(result) != hash(original) && result.Version == original.Version {
 				result.Version++
 				result.UpdatedAt = e.Now()
-				s.Cases[id] = result
+				s.Cases.Put(id, result)
 				s.CaseHistory = append(s.CaseHistory, result)
 			}
 			return nil
 		}
-		if c.State == state && sameResolution(s.Cases[id].Resolution, c.Resolution) {
+		if c.State == state && sameResolution(s.Cases.Get(id).Resolution, c.Resolution) {
 			result = c
 			return nil
 		}
@@ -440,7 +440,7 @@ func (e *Engine) ReviewCase(id string, review Review) (Case, error) {
 		} else {
 			c.TrustedAt = time.Time{}
 		}
-		s.Cases[id] = c
+		s.Cases.Put(id, c)
 		s.CaseHistory = append(s.CaseHistory, c)
 		e.invalidateApplications(s)
 		result = c
@@ -452,7 +452,7 @@ func (e *Engine) ReviewCase(id string, review Review) (Case, error) {
 // AnalyzeTicket explicitly retries the current forwarded snapshot for a named actor.
 // Unchanged input may reuse a run; force requests a new diagnosis.
 func (e *Engine) AnalyzeTicket(id string, force bool, actor string) (Receipt, error) {
-	ticket, ok := e.Store.Snapshot().Tickets[id]
+	ticket, ok := e.Store.Snapshot().Tickets.Lookup(id)
 	if !ok || ticket.ForwardedBy == "" {
 		return Receipt{}, ErrNotFound
 	}

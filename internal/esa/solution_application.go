@@ -4,22 +4,22 @@ import "fmt"
 
 func applicationSource(s State, app SolutionApplication) (SolutionRevision, bool) {
 	if app.SolutionID != "" {
-		sol, ok := s.Solutions[app.SolutionID]
+		sol, ok := s.Solutions.Lookup(app.SolutionID)
 		if !ok {
 			return sol, false
 		}
-		if _, exists := s.Issues[sol.IssueID]; !exists {
+		if _, exists := s.Issues.Lookup(sol.IssueID); !exists {
 			return sol, false
 		}
-		owner := s.Investigations[sol.InvestigationID]
-		return sol, owner.SolutionID == sol.ID && (sol.State == "trusted" || sol.State == "proposed") && !s.Tickets[sol.SourceTicketID].Private
+		owner := s.Investigations.Get(sol.InvestigationID)
+		return sol, owner.SolutionID == sol.ID && (sol.State == "trusted" || sol.State == "proposed") && !s.Tickets.Get(sol.SourceTicketID).Private
 	}
-	c, ok := s.Cases[app.CaseID]
-	if !ok || c.Version != app.CaseVersion || c.State != "trusted" || s.Tickets[c.TicketID].Private {
+	c, ok := s.Cases.Lookup(app.CaseID)
+	if !ok || c.Version != app.CaseVersion || c.State != "trusted" || s.Tickets.Get(c.TicketID).Private {
 		return SolutionRevision{}, false
 	}
 	if c.IssueID != "" {
-		if _, exists := s.Issues[c.IssueID]; !exists {
+		if _, exists := s.Issues.Lookup(c.IssueID); !exists {
 			return SolutionRevision{}, false
 		}
 	}
@@ -29,13 +29,13 @@ func taskSolution(s State, task Investigation) (SolutionRevision, bool) {
 	if task.Application != nil {
 		return applicationSource(s, *task.Application)
 	}
-	sol, ok := s.Solutions[task.SolutionID]
+	sol, ok := s.Solutions.Lookup(task.SolutionID)
 	return sol, ok
 }
 func (e *Engine) reviewApplication(s *State, task Investigation, review SolutionReview) (SolutionRevision, error) {
 	app := *task.Application
 	source, valid := applicationSource(*s, app)
-	if s.Groups[task.GroupID].CurrentTaskID != task.ID || s.Tickets[s.Runs[task.RunID].TicketID].Private {
+	if s.Groups.Get(task.GroupID).CurrentTaskID != task.ID || s.Tickets.Get(s.Runs.Get(task.RunID).TicketID).Private {
 		return source, fmt.Errorf("%w: application is no longer current", ErrConflict)
 	}
 	expected := app.SolutionID
@@ -58,11 +58,11 @@ func (e *Engine) reviewApplication(s *State, task Investigation, review Solution
 	task.Application = &app
 	task.UpdatedAt = e.Now()
 	task.State = map[string]string{"accepted": "applied", "rejected": "rejected", "withdrawn": "withdrawn"}[state]
-	s.Investigations[task.ID] = task
+	s.Investigations.Put(task.ID, task)
 	return source, nil
 }
 func (e *Engine) invalidateApplications(s *State) {
-	for id, task := range s.Investigations {
+	for id, task := range s.Investigations.All() {
 		if task.Application == nil || task.Application.State == "withdrawn" || task.Application.State == "rejected" {
 			continue
 		}
@@ -76,7 +76,7 @@ func (e *Engine) invalidateApplications(s *State) {
 		task.Application = &app
 		task.State = "withdrawn"
 		task.UpdatedAt = e.Now()
-		s.Investigations[id] = task
+		s.Investigations.Put(id, task)
 	}
 }
 
@@ -84,5 +84,5 @@ func taskSourceTicket(s State, task Investigation) string {
 	if task.Application != nil {
 		return task.Application.SourceTicketID
 	}
-	return s.Solutions[task.SolutionID].SourceTicketID
+	return s.Solutions.Get(task.SolutionID).SourceTicketID
 }

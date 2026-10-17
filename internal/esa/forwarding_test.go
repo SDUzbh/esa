@@ -14,14 +14,14 @@ func TestManualForwardingRequiredBeforeIntake(t *testing.T) {
 	if _, err := e.Receive(Event{ID: "automatic", Origin: "redmine", Ticket: ticket}); err == nil {
 		t.Fatal("automatic intake accepted")
 	}
-	if len(e.Store.Snapshot().Tickets) != 0 {
+	if e.Store.Snapshot().Tickets.Len() != 0 {
 		t.Fatal("rejected intake changed store")
 	}
 	for _, subject := range []string{"How do I configure a consumer?", "Feature requested", "Unclassified failure"} {
 		ticket.ID = subject
 		ticket.Subject = subject
 		receipt := receive(t, e, subject, ticket)
-		run := e.Store.Snapshot().Runs[receipt.RunID]
+		run := e.Store.Snapshot().Runs.Get(receipt.RunID)
 		if run.Route != "engineering_analysis" {
 			t.Fatal("classification still controls forwarding", run)
 		}
@@ -34,15 +34,15 @@ func TestLegacyAutomaticQueueCannotExecute(t *testing.T) {
 	e := testEngine(t)
 	receipt := receive(t, e, "old", fixture(e, "old"))
 	e.Store.Update(func(s *State) error {
-		r := s.Runs[receipt.RunID]
+		r := s.Runs.Get(receipt.RunID)
 		r.WorkflowVersion = "2"
 		r.Input.ForwardedBy = ""
-		s.Runs[r.ID] = r
+		s.Runs.Put(r.ID, r)
 		return nil
 	})
 	called := false
 	e.ProcessOne(context.Background(), analyzerFunc(func(context.Context, AnalyzeRequest) (Report, error) { called = true; return Report{}, nil }))
-	if called || e.Store.Snapshot().Runs[receipt.RunID].State != "awaiting_forward" {
+	if called || e.Store.Snapshot().Runs.Get(receipt.RunID).State != "awaiting_forward" {
 		t.Fatal("old automatic queue executed")
 	}
 }
@@ -60,7 +60,7 @@ func TestClassificationEndpointsRemoved(t *testing.T) {
 		}
 	}
 	ticket := fixture(e, "legacy-record")
-	e.Store.Update(func(s *State) error { s.Tickets[ticket.ID] = ticket; return nil })
+	e.Store.Update(func(s *State) error { s.Tickets.Put(ticket.ID, ticket); return nil })
 	r := httptest.NewRequest("GET", "/v1/tickets", nil)
 	r.Header.Set("Authorization", "Bearer token")
 	r.Header.Set("X-ESA-Project-IDs", "1")
@@ -80,10 +80,10 @@ func TestForceForwardIsOneRunAndIdempotent(t *testing.T) {
 		t.Fatal(err)
 	}
 	third, err := e.Receive(event)
-	if err != nil || first.RunID == second.RunID || third.RunID != second.RunID || third.Action != "duplicate" || len(e.Store.Snapshot().Runs) != 2 {
+	if err != nil || first.RunID == second.RunID || third.RunID != second.RunID || third.Action != "duplicate" || e.Store.Snapshot().Runs.Len() != 2 {
 		t.Fatal(first, second, third, err)
 	}
-	b, _ := json.Marshal(e.Store.Snapshot().Runs[second.RunID])
+	b, _ := json.Marshal(e.Store.Snapshot().Runs.Get(second.RunID))
 	if strings.Contains(string(b), `"classification"`) {
 		t.Fatal("new run contains classification", string(b))
 	}

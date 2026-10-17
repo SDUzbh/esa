@@ -87,7 +87,7 @@ func TestClassifierPredictionHumanFeedbackExportAndPersistence(t *testing.T) {
 	ticket.Description = "Null pointer regression reproduced"
 	receive(t, e, "forward", ticket)
 	before := e.Store.Snapshot()
-	if len(before.ClassifierPredictions) != 0 {
+	if before.ClassifierPredictions.Len() != 0 {
 		t.Fatal("intake automatically invoked classifier")
 	}
 	w := classifierRequest(e, "POST", "/v1/tickets/ticket/classifier/predict", "{}", "1", "ticket")
@@ -110,7 +110,7 @@ func TestClassifierPredictionHumanFeedbackExportAndPersistence(t *testing.T) {
 		}
 	}
 	s := e.Store.Snapshot()
-	if len(s.ClassifierFeedback) != 1 || hash(before.Runs) != hash(s.Runs) || hash(before.Tickets) != hash(s.Tickets) || hash(before.Cases) != hash(s.Cases) {
+	if s.ClassifierFeedback.Len() != 1 || hash(before.Runs) != hash(s.Runs) || hash(before.Tickets) != hash(s.Tickets) || hash(before.Cases) != hash(s.Cases) {
 		t.Fatal("feedback changed workflow or was duplicated")
 	}
 	w = classifierRequest(e, "GET", "/v1/classifier/feedback?before="+e.Now().Format(time.RFC3339), "", "1", "ticket")
@@ -132,7 +132,7 @@ func TestClassifierPredictionHumanFeedbackExportAndPersistence(t *testing.T) {
 		t.Fatal("ticket view missing human feedback", w.Body)
 	}
 	loaded, err := OpenStore(e.Store.persister.(*jsonPersister).path)
-	if err != nil || len(loaded.Snapshot().ClassifierFeedback) != 1 {
+	if err != nil || loaded.Snapshot().ClassifierFeedback.Len() != 1 {
 		t.Fatal("feedback not durable", err)
 	}
 	req.Labels = []string{"unsupported"}
@@ -187,7 +187,7 @@ func TestClassifierFutureModelAndPrivateVisibility(t *testing.T) {
 		t.Fatal(err)
 	}
 	w := classifierRequest(e, "POST", "/v1/tickets/historical/classifier/predict", "{}", "1", "historical")
-	if w.Code != 409 || len(e.Store.Snapshot().ClassifierPredictions) != 0 {
+	if w.Code != 409 || e.Store.Snapshot().ClassifierPredictions.Len() != 0 {
 		t.Fatal("future model used in replay", w.Code, w.Body)
 	}
 	for _, path := range []string{"/v1/tickets/historical/classifier", "/v1/tickets/historical/classifier/predict"} {
@@ -200,7 +200,12 @@ func TestClassifierFutureModelAndPrivateVisibility(t *testing.T) {
 			t.Fatal("project scope bypassed", w.Code)
 		}
 	}
-	e.Store.Update(func(s *State) error { t := s.Tickets["historical"]; t.Private = true; s.Tickets[t.ID] = t; return nil })
+	e.Store.Update(func(s *State) error {
+		t := s.Tickets.Get("historical")
+		t.Private = true
+		s.Tickets.Put(t.ID, t)
+		return nil
+	})
 	w = classifierRequest(e, "GET", "/v1/tickets/historical/classifier", "", "1", "historical")
 	if w.Code != 404 {
 		t.Fatal("private prediction visible", w.Code)

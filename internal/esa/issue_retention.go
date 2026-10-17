@@ -23,25 +23,25 @@ func (e *Engine) update(fn func(*State) error) error {
 }
 
 func touchIssue(s *State, id string, at time.Time) {
-	issue, ok := s.Issues[id]
+	issue, ok := s.Issues.Lookup(id)
 	if !ok || issue.CreatedAt.After(at) {
 		return
 	}
 	s.IssueAccessSequence++
 	issue.AccessOrder, issue.LastAccessedAt = s.IssueAccessSequence, at
-	s.Issues[id] = issue
+	s.Issues.Put(id, issue)
 }
 
 // ticketTouchTarget returns the Issue that an access to the ticket would touch,
 // or "" when touchTicketIssue would change nothing. It only reads s.
 func ticketTouchTarget(s State, id string, at time.Time) string {
-	issueID := s.Runs[s.Latest[id]].IssueID
+	issueID := s.Runs.Get(s.Latest.Get(id)).IssueID
 	if link, ok := activeMembership(s, id); ok && link.IssueID != "" {
 		issueID = link.IssueID
-	} else if s.Tickets[id].Closed {
-		issueID = s.Cases["case_"+hash(id)[:24]].IssueID
+	} else if s.Tickets.Get(id).Closed {
+		issueID = s.Cases.Get("case_" + hash(id)[:24]).IssueID
 	}
-	if issue, ok := s.Issues[issueID]; !ok || issue.CreatedAt.After(at) {
+	if issue, ok := s.Issues.Lookup(issueID); !ok || issue.CreatedAt.After(at) {
 		return ""
 	}
 	return issueID
@@ -56,38 +56,38 @@ func touchTicketIssue(s *State, id string, at time.Time) {
 // maintainIssues removes empty Issues, then evicts by durable least-recent access.
 // It detaches current associations while preserving immutable snapshots and reports.
 func maintainIssues(s *State, at time.Time) bool {
-	if len(s.Issues) == 0 {
+	if s.Issues.Len() == 0 {
 		return false
 	}
 	live := map[string]bool{}
 	assigned := map[string]string{}
-	for _, link := range s.Memberships {
-		t, ok := s.Tickets[link.TicketID]
+	for _, link := range s.Memberships.All() {
+		t, ok := s.Tickets.Lookup(link.TicketID)
 		if !ok || t.Private || link.State != "tentative" || link.IssueID == "" {
 			continue
 		}
 		live[link.IssueID] = true
 		assigned[t.ID] = link.IssueID
 	}
-	for _, c := range s.Cases {
-		t, ok := s.Tickets[c.TicketID]
+	for _, c := range s.Cases.All() {
+		t, ok := s.Tickets.Lookup(c.TicketID)
 		if ok && !t.Private && t.Closed && c.State != "invalidated" && c.State != "duplicate" && c.State != "archived" {
 			live[c.IssueID] = true
 		}
 	}
 	// A usable analysis still has a source ticket while an explicit replacement
 	// task is unassigned. Do not erase that knowledge before routing can reuse it.
-	for _, sol := range s.Solutions {
-		if live[sol.IssueID] || s.Investigations[sol.InvestigationID].SolutionID != sol.ID || sol.State != "proposed" && sol.State != "trusted" {
+	for _, sol := range s.Solutions.All() {
+		if live[sol.IssueID] || s.Investigations.Get(sol.InvestigationID).SolutionID != sol.ID || sol.State != "proposed" && sol.State != "trusted" {
 			continue
 		}
-		t, ok := s.Tickets[sol.SourceTicketID]
-		run := s.Runs[sol.RunID]
+		t, ok := s.Tickets.Lookup(sol.SourceTicketID)
+		run := s.Runs.Get(sol.RunID)
 		if !ok || t.Private || t.Closed || run.TicketID != t.ID || investigationSignature(run.Input) != investigationSignature(t) {
 			continue
 		}
 		primary := assigned[t.ID]
-		if override := s.IssueOverrides[t.ID]; override != "" {
+		if override := s.IssueOverrides.Get(t.ID); override != "" {
 			primary = override
 		}
 		if primary == "" || primary == sol.IssueID {
@@ -95,7 +95,7 @@ func maintainIssues(s *State, at time.Time) bool {
 		}
 	}
 	removed := false
-	for id, issue := range s.Issues {
+	for id, issue := range s.Issues.All() {
 		if issue.AccessOrder > s.IssueAccessSequence {
 			s.IssueAccessSequence = issue.AccessOrder
 		}
@@ -104,11 +104,11 @@ func maintainIssues(s *State, at time.Time) bool {
 			removed = true
 		}
 	}
-	if len(s.Issues) <= IssueLimit {
+	if s.Issues.Len() <= IssueLimit {
 		return removed
 	}
-	issues := make([]EngineeringIssue, 0, len(s.Issues))
-	for _, issue := range s.Issues {
+	issues := make([]EngineeringIssue, 0, s.Issues.Len())
+	for _, issue := range s.Issues.All() {
 		issues = append(issues, issue)
 	}
 	sort.Slice(issues, func(i, j int) bool {
@@ -128,19 +128,19 @@ func maintainIssues(s *State, at time.Time) bool {
 }
 
 func removeIssue(s *State, id, reason string, at time.Time) {
-	delete(s.Issues, id)
-	for key, link := range s.Memberships {
+	s.Issues.Delete(id)
+	for key, link := range s.Memberships.All() {
 		if link.IssueID != id || link.State != "tentative" {
 			continue
 		}
 		link.State, link.Basis, link.AvailableAt = "detached", "Issue removed: "+reason, at
 		link.Version++
-		s.Memberships[key] = link
+		s.Memberships.Put(key, link)
 		s.MembershipHistory = append(s.MembershipHistory, link)
 	}
-	for ticket, issue := range s.IssueOverrides {
+	for ticket, issue := range s.IssueOverrides.All() {
 		if issue == id {
-			delete(s.IssueOverrides, ticket)
+			s.IssueOverrides.Delete(ticket)
 		}
 	}
 }

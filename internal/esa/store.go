@@ -134,7 +134,8 @@ func (s *Store) updateLocked(fn func(*State) error) error {
 	if err != nil {
 		return err
 	}
-	projectInvestigationStates(&next)
+	projectChangedInvestigations(&s.state, &next)
+	verifyProjection(&next)
 	// Only changed entities differ from the published state; when nothing
 	// changed, skip encoding the whole state. In tests the guard re-derives
 	// every change from JSON encodings and panics if the diff missed one.

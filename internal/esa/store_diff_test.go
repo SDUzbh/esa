@@ -168,3 +168,23 @@ func TestUpdateReportsChangesToGuardAcrossWorkflow(t *testing.T) {
 		t.Fatal("closing the ticket was not persisted")
 	}
 }
+
+// A write that changes a run without touching its investigation is still
+// re-projected from the investigation, as the full projection would.
+func TestIncrementalProjectionCoversRunOnlyWrites(t *testing.T) {
+	e := testEngine(t)
+	receive(t, e, "open", fixture(e, "open"))
+	runID := e.Store.Snapshot().Latest.Get("open")
+	want := e.Store.Snapshot().Runs.Get(runID).State
+	if err := e.Store.Update(func(s *State) error {
+		run := s.Runs.Get(runID)
+		run.State = "edited directly"
+		s.Runs.Put(runID, run)
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if got := e.Store.Snapshot().Runs.Get(runID).State; got != want {
+		t.Fatalf("run state %q was not re-projected to %q", got, want)
+	}
+}

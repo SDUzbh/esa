@@ -118,6 +118,20 @@ func diffState(old, next *State) StateChanges {
 	return c
 }
 
+// verifyProjection is the guard's check that the incremental projection
+// matches projecting every investigation. It runs only while
+// guardPublishedState is on.
+func verifyProjection(next *State) {
+	if !guardPublishedState {
+		return
+	}
+	full := next.detach()
+	projectInvestigationStates(&full)
+	if c := diffTable(next.Runs, full.Runs); len(c.Upserted) > 0 {
+		panic(fmt.Sprintf("esa: incremental projection missed runs %v", c.Upserted))
+	}
+}
+
 // verifyChanges is the guard's cross-check: it re-derives every change by
 // comparing JSON encodings and panics if diffState missed one, which would
 // mean a lost write once only changes are persisted. Reported changes that

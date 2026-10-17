@@ -24,6 +24,11 @@ if [ "${1:-start}" = stop ]; then
     exit 0
 fi
 
+# A server whose password file is gone is unreachable; it is disposable, so
+# replace it rather than pair it with a new password.
+if [ ! -s "$dir/password" ] && docker inspect "$name" >/dev/null 2>&1; then
+    docker rm -f "$name" >/dev/null
+fi
 mkdir -p "$dir"
 chmod 700 "$dir"
 if [ ! -s "$dir/password" ]; then

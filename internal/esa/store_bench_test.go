@@ -216,3 +216,89 @@ func BenchmarkPostgresUpdateOneTicket(b *testing.B) {
 		})
 	}
 }
+
+// discardPersister accepts every commit without storing it, so benchmarks
+// measure only the in-memory work of Update (detach, callback, diff).
+type discardPersister struct{ initial State }
+
+func (p discardPersister) Load() (State, uint64, error) { return p.initial, 0, nil }
+func (discardPersister) Apply(c Commit) (uint64, error) { return c.Revision + 1, nil }
+
+// seedMemoryStore builds n closed tickets directly into a state (no encoding)
+// behind a discardPersister.
+func seedMemoryStore(b *testing.B, n int) *Engine {
+	b.Helper()
+	cacheKey := fmt.Sprintf("memory/%d", n)
+	if e, ok := seeded.Load(cacheKey); ok {
+		return e.(*Engine)
+	}
+	e := testEngine(b)
+	template := benchClosedTicket(e, "K-0")
+	receipt, err := e.Receive(Event{ID: "ev-0", Origin: "bench", ForwardedBy: "u", ForwardedAt: e.Now(), Ticket: template})
+	if err != nil {
+		b.Fatal(err)
+	}
+	s := e.Store.Snapshot().detach()
+	event, snapshot, c := s.Events["ev-0"], s.Snapshots[s.LatestSnapshot["K-0"]], s.Cases[receipt.CaseID]
+	for i := 1; i < n; i++ {
+		ticketID, eventID := fmt.Sprintf("K-%d", i), fmt.Sprintf("ev-%d", i)
+		ticket := s.Tickets["K-0"]
+		ticket.ID, ticket.SourceKey = ticketID, ticketID
+		s.Tickets[ticketID] = ticket
+		event.ID, event.TicketID, event.TicketHash, event.SnapshotID = eventID, ticketID, hash(ticket), snapshotIDFor(eventID)
+		s.Events[eventID] = event
+		snapshot.ID, snapshot.EventID, snapshot.Ticket, snapshot.Hash = snapshotIDFor(eventID), eventID, ticket, hash(ticket)
+		s.Snapshots[snapshot.ID] = snapshot
+		s.LatestSnapshot[ticketID] = snapshot.ID
+		c.ID, c.TicketID, c.SourceKey = "case_"+hash(ticketID)[:24], ticketID, ticketID
+		s.Cases[c.ID] = c
+		s.CaseHistory = append(s.CaseHistory, c)
+		s.Receipts[eventID] = Receipt{EventID: eventID, TicketID: ticketID, CaseID: c.ID, Action: receipt.Action}
+	}
+	store, err := newStore(discardPersister{initial: s})
+	if err != nil {
+		b.Fatal(err)
+	}
+	e.Store = store
+	seeded.Store(cacheKey, e)
+	return e
+}
+
+// BenchmarkMemoryUpdateOneTicket is the per-write cost without persistence:
+// what the Postgres store pays in memory on top of its ~1 ms database write.
+func BenchmarkMemoryUpdateOneTicket(b *testing.B) {
+	for _, n := range benchSizes(b) {
+		b.Run(fmt.Sprint(n), func(b *testing.B) {
+			e := seedMemoryStore(b, n)
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				err := e.update(func(s *State) error {
+					ticket := s.Tickets["K-1"]
+					ticket.Assignee = fmt.Sprint(i)
+					s.Tickets[ticket.ID] = ticket
+					return nil
+				})
+				if err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+	}
+}
+
+// BenchmarkMemoryReceiveClosedTicket is one intake without persistence.
+func BenchmarkMemoryReceiveClosedTicket(b *testing.B) {
+	for _, n := range benchSizes(b) {
+		b.Run(fmt.Sprint(n), func(b *testing.B) {
+			e := seedMemoryStore(b, n)
+			start := len(e.Store.Snapshot().Tickets)
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				id := fmt.Sprintf("R-%d-%d", start, i)
+				if _, err := e.Receive(Event{ID: "ev-" + id, Origin: "bench", ForwardedBy: "u", ForwardedAt: e.Now(), Ticket: benchClosedTicket(e, id)}); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+	}
+}

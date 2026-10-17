@@ -1,11 +1,8 @@
 package esa
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -68,89 +65,5 @@ func TestEventRecordIdempotency(t *testing.T) {
 	changed.Ticket.Subject = "Different content"
 	if _, err := e.Receive(changed); !errors.Is(err, ErrConflict) || !errors.Is(err, ErrRejected) {
 		t.Fatal("reused event ID with different content must be rejected", err)
-	}
-}
-
-// legacyStateFile writes a state whose events use the old shape, with a full
-// ticket copy in every event, as files written before EventRecord did.
-func legacyStateFile(t *testing.T, s State, tamper string) string {
-	t.Helper()
-	raw, err := json.Marshal(s)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var frame map[string]json.RawMessage
-	if err = json.Unmarshal(raw, &frame); err != nil {
-		t.Fatal(err)
-	}
-	legacy := map[string]Event{}
-	for id, r := range s.Events.All() {
-		ticket := s.Snapshots.Get(r.SnapshotID).Ticket
-		if r.Ticket != nil {
-			ticket = *r.Ticket
-		}
-		if id == tamper {
-			ticket.Subject = "diverges from its snapshot"
-		}
-		legacy[id] = Event{ID: r.ID, Origin: r.Origin, Force: r.Force, ForwardedBy: r.ForwardedBy, ForwardedAt: r.ForwardedAt, OccurredAt: r.OccurredAt, ReceivedAt: r.ReceivedAt, Ticket: ticket, Raw: r.Raw}
-	}
-	if frame["events"], err = json.Marshal(legacy); err != nil {
-		t.Fatal(err)
-	}
-	if raw, err = json.Marshal(frame); err != nil {
-		t.Fatal(err)
-	}
-	path := filepath.Join(t.TempDir(), "state.json")
-	if err = os.WriteFile(path, raw, 0600); err != nil {
-		t.Fatal(err)
-	}
-	return path
-}
-
-func TestLegacyEventsConvertOnImport(t *testing.T) {
-	e := testEngine(t)
-	accepted := fixture(e, "T1")
-	receive(t, e, "accepted", accepted)
-	receive(t, e, "divergent", fixture(e, "T2"))
-	stale := accepted
-	stale.Subject, stale.UpdatedAt = "Older edit", accepted.UpdatedAt.Add(-time.Hour)
-	if _, err := e.Receive(forward(e, "stale", stale)); err != nil {
-		t.Fatal(err)
-	}
-	path := legacyStateFile(t, e.Store.Snapshot(), "divergent")
-	if b, _ := os.ReadFile(path); !strings.Contains(string(b), `"accepted":{"forwarded_by"`) || !strings.Contains(string(b), `"ticket":{`) {
-		t.Fatal("fixture is not in the legacy event shape")
-	}
-	s, err := ReadLegacyStore(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if r := s.Events.Get("accepted"); r.Ticket != nil || r.SnapshotID == "" || r.TicketHash != s.Snapshots.Get(r.SnapshotID).Hash || r.TicketID != "T1" {
-		t.Fatal("legacy event with a matching snapshot was not compacted", r)
-	}
-	if r := s.Events.Get("stale"); r.Ticket == nil || r.SnapshotID != "" || r.Ticket.Subject != "Older edit" {
-		t.Fatal("legacy event without a snapshot lost its ticket", r)
-	}
-	if r := s.Events.Get("divergent"); r.Ticket == nil || r.Ticket.Subject != "diverges from its snapshot" || r.TicketHash != hash(*r.Ticket) {
-		t.Fatal("legacy event that differs from its snapshot lost its own ticket", r)
-	}
-	// Idempotency keeps working on converted records once imported.
-	url := testDatabaseURL(t)
-	p := acquiredTestPostgres(t, url, testSchema(t, url))
-	if err = p.Import(context.Background(), s); err != nil {
-		t.Fatal(err)
-	}
-	reloaded := testEngine(t)
-	if reloaded.Store, err = newStore(p); err != nil {
-		t.Fatal(err)
-	}
-	original := Event{ID: "accepted", Origin: "test", ForwardedBy: "fixture-human", ForwardedAt: e.Now(), Ticket: accepted}
-	if receipt, err := reloaded.Receive(original); err != nil || receipt.Action != "duplicate" {
-		t.Fatal("converted event no longer deduplicates", receipt.Action, err)
-	}
-	changed := original
-	changed.Ticket.Subject = "Different content"
-	if _, err := reloaded.Receive(changed); !errors.Is(err, ErrRejected) {
-		t.Fatal("converted event no longer rejects a reused ID with different content", err)
 	}
 }

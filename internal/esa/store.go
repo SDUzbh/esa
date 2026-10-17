@@ -87,7 +87,6 @@ func newStore(p Persister) (*Store, error) {
 	if err = validateState(state); err != nil {
 		return nil, err
 	}
-	compactLegacyEvents(&state)
 	state.advanceIndexes()
 	s := &Store{state: state, persister: p, revision: revision}
 	s.publishLocked()

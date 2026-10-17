@@ -2,8 +2,6 @@ package esa
 
 import (
 	"errors"
-	"os"
-	"path/filepath"
 	"slices"
 	"testing"
 )
@@ -72,25 +70,5 @@ func TestStoreFailedApplyLeavesMemoryUnchanged(t *testing.T) {
 	}
 	if got := p.commits[1].Changes.Maps["tickets"].Upserted; !slices.Equal(got, []string{"T1"}) {
 		t.Fatal("retry did not diff against the unchanged state", got)
-	}
-}
-
-func TestReadLegacyStoreChecksTheFile(t *testing.T) {
-	dir := t.TempDir()
-	if _, err := ReadLegacyStore(filepath.Join(dir, "missing.json")); !errors.Is(err, os.ErrNotExist) {
-		t.Fatal("a missing legacy store was not reported", err)
-	}
-	path := filepath.Join(dir, "state.json")
-	if err := os.WriteFile(path, []byte(`{"schema_version":2}`), 0600); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := ReadLegacyStore(path); err == nil {
-		t.Fatal("invalid schema accepted")
-	}
-	if err := os.WriteFile(path, []byte(`{"schema_version":1}`), 0600); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := ReadLegacyStore(path); err == nil {
-		t.Fatal("a store without its core tables was accepted")
 	}
 }

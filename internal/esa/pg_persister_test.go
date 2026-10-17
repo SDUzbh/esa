@@ -467,3 +467,24 @@ func TestPostgresWatchLockReportsLoss(t *testing.T) {
 		t.Fatal("lock loss not reported")
 	}
 }
+
+// hotProjection is the part of s that a working-set Load reproduces: snapshots
+// referenced in memory, no membership history and no raw event payloads.
+func hotProjection(s State) State {
+	out := s.detach()
+	hot := map[string]bool{}
+	for _, id := range hotSnapshotIDs(&s) {
+		hot[id] = true
+	}
+	for id := range out.Snapshots.All() {
+		if !hot[id] {
+			out.Snapshots.Delete(id)
+		}
+	}
+	for id, r := range out.Events.All() {
+		r.Raw = nil
+		out.Events.Put(id, r)
+	}
+	out.MembershipHistory = nil
+	return out
+}

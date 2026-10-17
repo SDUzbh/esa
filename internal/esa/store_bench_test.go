@@ -105,18 +105,22 @@ func BenchmarkPostgresUpdateOneTicket(b *testing.B) {
 		b.Run(fmt.Sprint(n), func(b *testing.B) {
 			url := testDatabaseURL(b)
 			seed := seedMemoryStore(b, n).Store.Snapshot()
-			p := openTestPostgres(b, url, testSchema(b, url))
-			ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 			defer cancel()
-			if err := p.AcquireWriter(ctx, 20*time.Millisecond); err != nil {
+			// A long commit timeout lets one Update seed every row.
+			p, err := OpenPostgres(ctx, url, PostgresOptions{Schema: testSchema(b, url), Timeout: 10 * time.Minute})
+			if err != nil {
 				b.Fatal(err)
 			}
-			// Seed with the bulk import, as a real migration does.
-			if err := p.Import(ctx, seed); err != nil {
+			b.Cleanup(p.Close)
+			if err := p.AcquireWriter(ctx, 20*time.Millisecond); err != nil {
 				b.Fatal(err)
 			}
 			store, err := newStore(p)
 			if err != nil {
+				b.Fatal(err)
+			}
+			if err := store.Update(func(s *State) error { *s = seed.detach(); return nil }); err != nil {
 				b.Fatal(err)
 			}
 			b.ResetTimer()

@@ -89,19 +89,6 @@ type EventRecord struct {
 	Raw         json.RawMessage `json:"raw,omitempty"`
 }
 
-// UnmarshalJSON also reads events stored before EventRecord, which carried
-// only a full ticket copy; compactLegacyEvents later drops redundant copies.
-func (r *EventRecord) UnmarshalJSON(data []byte) error {
-	type plain EventRecord
-	if err := json.Unmarshal(data, (*plain)(r)); err != nil {
-		return err
-	}
-	if r.TicketHash == "" && r.Ticket != nil {
-		r.TicketID, r.TicketHash = r.Ticket.ID, hash(*r.Ticket)
-	}
-	return nil
-}
-
 type Config struct {
 	Version    string           `json:"version"`
 	Budget     Budget           `json:"budget"`

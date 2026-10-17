@@ -109,28 +109,6 @@ func adminQueryInt(t testing.TB, url, sql string, args ...any) int64 {
 	return n
 }
 
-// hotProjection is what a reload must reproduce from s: cold snapshots,
-// membership history and raw event payloads are not loaded.
-func hotProjection(s State) State {
-	out := s.detach()
-	hot := map[string]bool{}
-	for _, id := range hotSnapshotIDs(&s) {
-		hot[id] = true
-	}
-	for id := range out.Snapshots {
-		if !hot[id] {
-			delete(out.Snapshots, id)
-		}
-	}
-	for id, r := range out.Events {
-		r.Raw = nil
-		out.Events[id] = r
-	}
-	out.MembershipHistory = nil
-	prepareInvestigations(&out)
-	return out
-}
-
 func requireReloadMatches(t testing.TB, p *PostgresPersister, want State) {
 	t.Helper()
 	got, _, _, err := p.load()

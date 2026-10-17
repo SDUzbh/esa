@@ -33,6 +33,34 @@ export ESA_API_TOKEN='<private service token of at least 24 random characters>'
 
 JSON remains a single-process adapter with an exclusive writer lock. Stored events reference their snapshot (`snapshot_id`, `ticket_hash`) instead of copying the ticket; an ignored stale or self event, which captures no snapshot, keeps its `ticket`. ESA converts events in the older shape when it loads a state and writes the new shape on the next change; no forwarded content is dropped. Back up the state before upgrading: an older ESA binary cannot read the new event shape correctly, so downgrading requires that backup. Existing report findings remain readable; queued runs without a current manually forwarded snapshot require a new forwarding. Migration does not fabricate historical provenance. Report assessments use `report.assessment`; older sidecar fields require explicit data migration before reuse. Existing stored data is not rewritten by this naming change.
 
+## Postgres state store
+
+ESA can keep its state in its own Postgres database instead of the JSON file: one row per entity, written only where an update changed something, in one transaction per update. See the [storage design](STORAGE_DESIGN.md). Set `-database-url` or `ESA_DATABASE_URL`; the JSON `-store` is then not used, and `-state-url` cannot be combined with it.
+
+One-time setup with Compose (the private `.env` needs `ESA_DB_PASSWORD` and `ESA_DATABASE_URL`, see `deploy/redmine/.env.example`):
+
+```sh
+# Recreate db so it sees ESA_DB_PASSWORD, then create ESA's role and database (safe to rerun).
+DOCKER_CONTEXT=colima-redmine docker-compose -f deploy/redmine/compose.yaml up -d db
+DOCKER_CONTEXT=colima-redmine docker-compose -f deploy/redmine/compose.yaml exec -T db sh -s < deploy/redmine/postgres-init/10-esa-database.sh
+# Stop ESA, back up the esa_state volume, and import the stopped JSON store once.
+DOCKER_CONTEXT=colima-redmine docker-compose -f deploy/redmine/compose.yaml stop esa
+DOCKER_CONTEXT=colima-redmine docker-compose -f deploy/redmine/compose.yaml build esa
+DOCKER_CONTEXT=colima-redmine docker-compose -f deploy/redmine/compose.yaml run --rm esa -import-state /var/lib/esa/state.json
+DOCKER_CONTEXT=colima-redmine docker-compose -f deploy/redmine/compose.yaml up -d esa
+```
+
+The script is piped into the database container, so it needs no bind mount (Colima shares only the Issue directory). To import from the deprecated Redmine state API instead, use `-import-state-url http://redmine:3000/esa/api/state`.
+
+- **Import** runs in one transaction: it refuses a database that already has state, writes everything, reads it back and commits only if the stored state reproduces the source byte for byte, completely and as the working set ESA loads. It never modifies the source. It holds the JSON file lock and refuses to start while another ESA process holds the writer role.
+- **One writer.** A process waits as a **standby** until it holds the writer lock: `/healthz` answers 200 with `"role":"standby"`, `/healthz?role=active` and every `/v1/*` route answer 503, and no workers run. The writer bumps a term before loading; every commit is fenced on that term, so a process that lost the role can never commit. A standby takes over within about 5 seconds of a clean exit, or about 25 seconds after its connection dies.
+- **Losing the role** (the lock session drops, or a commit is fenced) switches the API to 503, stops the workers and exits with an error; Compose restarts the process, which then waits as a standby. An outbox event the old writer could not commit is not acknowledged, and the new writer receives it.
+- **Connections:** connect directly or through session pooling. PgBouncer *transaction* pooling breaks the session advisory lock and is not supported. The lock key is derived from the schema name (`esa` by default). Run one ESA instance per database by default; for a standby, never put it behind the same round-robin name as the writer, and route by `/healthz?role=active`.
+- **Not loaded into memory:** snapshots that no run, investigation contract or live membership references, membership history, and raw event payloads. They stay in the database. Until cold reads are added, `GET /v1/snapshots/{id}` returns 404 for such a snapshot; the Redmine plugin does not use that route.
+- **Rollback:** the imported JSON file is unchanged, so unsetting `ESA_DATABASE_URL` returns to the state as of the import; changes made in Postgres afterwards are not exported back.
+
+## Redmine state API (deprecated)
+
 Redmine migration `003_create_esa_state_records.rb` adds a locked revision/frame row and separate shared investigation entity rows. `/esa/api/state` provides authenticated transactional CAS; snapshots and solution revisions cannot be modified/deleted. Set `ESA_STATE_API_ENABLED=1` in Redmine and `ESA_STATE_URL=http://redmine:3000/esa/api/state` in Go. Go then writes only to this authority, with no JSON fallback or dual writing. Browser users never receive the service token.
 
 For an existing installation: back up JSON/database, stop the ESA writer, rebuild images, start the migrated plugin, import the stopped JSON once into a pristine backend, then start ESA. Set `ESA_STATE_URL=http://redmine:3000/esa/api/state` in the private Compose `.env` when choosing PostgreSQL; leave it unset for the local JSON store:
@@ -47,7 +75,7 @@ DOCKER_CONTEXT=colima-redmine docker-compose -f deploy/redmine/compose.yaml up -
 
 Import preserves the original JSON and rejects an existing/nonzero backend. After remote writes begin, the old file is a backup, not a current rollback target. Returning to JSON requires a consistent export while writers are stopped.
 
-This is a **transactional adapter prototype**: HTTP CAS writes whole state (64 MiB bound); unchanged reads use revision ETags to avoid retransmitting the archive; shared investigation entities are stored separately, while per-ticket data remains in the core state frame. Row-level claims, scalable queries and production migration/load validation remain staged work. Graphs, bytecode and profiling arrays do not belong in business state.
+The Redmine state API (`-state-url`) is **deprecated** in favor of the Postgres state store above. It is a **transactional adapter prototype**: HTTP CAS writes whole state (64 MiB bound); unchanged reads use revision ETags to avoid retransmitting the archive; shared investigation entities are stored separately, while per-ticket data remains in the core state frame. Row-level claims, scalable queries and production migration/load validation remain staged work. Graphs, bytecode and profiling arrays do not belong in business state.
 
 ## Shutdown and cleanup
 

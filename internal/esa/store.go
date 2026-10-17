@@ -23,8 +23,18 @@ type Store struct {
 	// whole-state persisters, to skip writes whose encoding did not change, and
 	// for the test guard; other persisters never encode the whole state.
 	encoded []byte
-	wakeMu  sync.Mutex
-	wake    chan struct{}
+	// lost runs once when a commit fails with ErrLostWriter.
+	lost   func(error)
+	wakeMu sync.Mutex
+	wake   chan struct{}
+}
+
+// OnLostWriter registers fn to run once, in its own goroutine, when a commit
+// fails because another process became the state writer.
+func (s *Store) OnLostWriter(fn func(error)) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.lost = fn
 }
 
 // WorkSignal returns a channel that closes the next time a worker or an
@@ -134,6 +144,10 @@ func (s *Store) Update(fn func(*State) error) error {
 		err := s.updateLocked(fn)
 		if remote && errors.Is(err, errStateCAS) {
 			continue
+		}
+		if errors.Is(err, ErrLostWriter) && s.lost != nil {
+			go s.lost(err)
+			s.lost = nil
 		}
 		return err
 	}

@@ -53,8 +53,9 @@ type PostgresPersister struct {
 	membershipBase int64
 
 	// Test hooks, nil in production.
-	testBeforeCommit func() error
-	testAfterCommit  func() error
+	testBeforeCommit       func() error
+	testAfterCommit        func() error
+	testBeforeImportVerify func(context.Context, pgx.Tx) error
 }
 
 // OpenPostgres connects the data and lock sessions. Call AcquireWriter before
@@ -366,6 +367,15 @@ func (p *PostgresPersister) load() (State, uint64, int64, error) {
 		return State{}, 0, 0, err
 	}
 	defer tx.Rollback(ctx)
+	return p.readState(ctx, tx, false)
+}
+
+// readState reads the state through tx. The working set omits snapshots that
+// nothing in memory references, membership history and raw event payloads;
+// full also reads them, to reconstruct the complete stored state. It returns
+// the revision and the number of stored membership history rows.
+func (p *PostgresPersister) readState(ctx context.Context, tx pgx.Tx, full bool) (State, uint64, int64, error) {
+	var err error
 	state := initialState()
 	prepareInvestigations(&state)
 	var revision int64
@@ -406,7 +416,12 @@ func (p *PostgresPersister) load() (State, uint64, int64, error) {
 			return State{}, 0, 0, err
 		}
 	}
-	if err = readRows(snapshots, "SELECT id, payload FROM "+p.table("snapshots")+" WHERE id = ANY($1)", hotSnapshotIDs(&state)); err != nil {
+	if full {
+		err = readRows(snapshots, "SELECT id, payload FROM "+p.table("snapshots"))
+	} else {
+		err = readRows(snapshots, "SELECT id, payload FROM "+p.table("snapshots")+" WHERE id = ANY($1)", hotSnapshotIDs(&state))
+	}
+	if err != nil {
 		return State{}, 0, 0, err
 	}
 	for id, run := range state.Runs {
@@ -443,7 +458,55 @@ func (p *PostgresPersister) load() (State, uint64, int64, error) {
 	if err = tx.QueryRow(ctx, "SELECT count(*) FROM "+p.table("membership_history")).Scan(&membershipRows); err != nil {
 		return State{}, 0, 0, err
 	}
+	if full {
+		if err = p.readColdRows(ctx, tx, &state); err != nil {
+			return State{}, 0, 0, err
+		}
+	}
 	return state, uint64(revision), membershipRows, nil
+}
+
+// readColdRows adds the membership history and raw event payloads that the
+// working set does not load.
+func (p *PostgresPersister) readColdRows(ctx context.Context, tx pgx.Tx, state *State) error {
+	rows, err := tx.Query(ctx, "SELECT payload FROM "+p.table("membership_history")+" ORDER BY seq")
+	if err != nil {
+		return err
+	}
+	for rows.Next() {
+		var payload []byte
+		var link IssueTicketLink
+		if err = rows.Scan(&payload); err == nil {
+			err = json.Unmarshal(payload, &link)
+		}
+		if err != nil {
+			rows.Close()
+			return fmt.Errorf("membership history: %w", err)
+		}
+		state.MembershipHistory = append(state.MembershipHistory, link)
+	}
+	if err = rows.Err(); err != nil {
+		return err
+	}
+	rows, err = tx.Query(ctx, "SELECT event_id, raw FROM "+p.table("event_raw"))
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id string
+		var raw []byte
+		if err = rows.Scan(&id, &raw); err != nil {
+			return err
+		}
+		r, ok := state.Events[id]
+		if !ok {
+			return fmt.Errorf("raw payload for unknown event %s", id)
+		}
+		r.Raw = json.RawMessage(raw)
+		state.Events[id] = r
+	}
+	return rows.Err()
 }
 
 // hotSnapshotIDs lists the snapshots that code reads from memory: those of

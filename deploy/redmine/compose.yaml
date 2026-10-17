@@ -8,6 +8,8 @@ services:
       POSTGRES_DB: redmine
       POSTGRES_USER: redmine
       POSTGRES_PASSWORD: ${REDMINE_DB_PASSWORD:?Set REDMINE_DB_PASSWORD in .env}
+      # Used only by postgres-init/10-esa-database.sh, run once by hand.
+      ESA_DB_PASSWORD: ${ESA_DB_PASSWORD:-}
       TZ: Asia/Shanghai
     volumes:
       - database:/var/lib/postgresql/data
@@ -59,9 +61,14 @@ services:
     environment:
       ESA_API_TOKEN: ${ESA_API_TOKEN:?Set ESA_API_TOKEN in .env}
       ESA_REDMINE_URL: http://redmine:3000
+      # Postgres state store; empty keeps the JSON store in the esa_state volume.
+      ESA_DATABASE_URL: ${ESA_DATABASE_URL:-}
       ESA_STATE_URL: ${ESA_STATE_URL:-}
       ESA_ANALYZER_URL: ${ESA_ANALYZER_URL:-}
       ESA_ANALYZER_TOKEN: ${ESA_API_TOKEN:?Set ESA_API_TOKEN in .env}
+    depends_on:
+      db:
+        condition: service_healthy
     volumes:
       - esa_state:/var/lib/esa
       - ${ESA_ISSUES_DIRECTORY:-../../runtime/esa/issues}:/var/lib/esa/issues

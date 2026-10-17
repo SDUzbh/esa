@@ -31,8 +31,6 @@ func run() error {
 	issueDirectory := flag.String("issues-directory", "runtime/esa/issues", "Local Issue projection root shared read-only with the provider")
 	databaseURL := flag.String("database-url", os.Getenv("ESA_DATABASE_URL"), "ESA-owned Postgres state database (required)")
 	stateURL := flag.String("state-url", os.Getenv("ESA_STATE_URL"), "Removed: the Redmine state API is no longer supported; ESA refuses to start while it is set")
-	importState := flag.String("import-state", "", "Import a JSON store from before Postgres into the empty database and exit")
-	legacyStore := flag.String("legacy-store", "runtime/esa/state.json", "Where a JSON store from before Postgres would be; ESA refuses to start on an empty database while it exists")
 	ephemeral := flag.Bool("ephemeral-schema", false, "Test-only: keep the state in a new schema that is dropped on exit")
 	rules := flag.String("rules", "config/rules.json", "Workflow configuration and analysis budget")
 	replayAt := flag.String("replay-at", "", "Test-only observation clock initial time (RFC3339)")
@@ -55,12 +53,8 @@ func run() error {
 	if len(token) < 24 {
 		return fmt.Errorf("ESA_API_TOKEN must contain at least 24 characters")
 	}
-	mode, err := chooseStoreMode(*databaseURL, *stateURL, *importState, *ephemeral)
-	if err != nil {
+	if err := checkStoreFlags(*databaseURL, *stateURL); err != nil {
 		return err
-	}
-	if mode == modeImport {
-		return importIntoPostgres(*databaseURL, *importState)
 	}
 	b, err := os.ReadFile(*rules)
 	if err != nil {
@@ -142,11 +136,6 @@ func run() error {
 	}
 	store.OnLostWriter(lose)
 	go persister.WatchLock(runCtx, 5*time.Second, lose)
-	if !*ephemeral {
-		if err = refuseUnimportedStore(store.Snapshot(), *legacyStore); err != nil {
-			return err
-		}
-	}
 	engine, err := esa.NewEngine(store, config)
 	if err != nil {
 		return err
@@ -233,44 +222,16 @@ func run() error {
 	return err
 }
 
-type storeMode int
-
-const (
-	modeServe storeMode = iota
-	modeImport
-)
-
-// chooseStoreMode decides from the state flags whether ESA serves or imports
-// a JSON store from before Postgres and exits. ESA keeps its state only in
-// Postgres; the removed Redmine state API (-state-url or ESA_STATE_URL) stops
-// it instead of being ignored.
-func chooseStoreMode(databaseURL, stateURL, importState string, ephemeral bool) (storeMode, error) {
+// checkStoreFlags requires the Postgres store. The removed Redmine state API
+// (-state-url or ESA_STATE_URL) stops ESA instead of being ignored.
+func checkStoreFlags(databaseURL, stateURL string) error {
 	if stateURL != "" {
-		return 0, fmt.Errorf("the Redmine state API (-state-url or ESA_STATE_URL) is no longer supported; unset it and set -database-url, see docs/ESA_OPERATIONS.md#postgres-state-store")
+		return fmt.Errorf("the Redmine state API (-state-url or ESA_STATE_URL) is no longer supported; unset it and set -database-url, see docs/ESA_OPERATIONS.md#postgres-state-store")
 	}
 	if databaseURL == "" {
-		return 0, fmt.Errorf("ESA keeps its state in Postgres: set ESA_DATABASE_URL or -database-url, see docs/ESA_OPERATIONS.md#postgres-state-store")
+		return fmt.Errorf("ESA keeps its state in Postgres: set ESA_DATABASE_URL or -database-url, see docs/ESA_OPERATIONS.md#postgres-state-store")
 	}
-	if importState != "" {
-		if ephemeral {
-			return 0, fmt.Errorf("-import-state cannot target an -ephemeral-schema")
-		}
-		return modeImport, nil
-	}
-	return modeServe, nil
-}
-
-// refuseUnimportedStore stops ESA from starting on an empty database while a
-// JSON store from before Postgres still exists, which would hide that state
-// and make a later import impossible.
-func refuseUnimportedStore(state esa.State, legacyPath string) error {
-	if legacyPath == "" || state.Tickets.Len() > 0 || state.Events.Len() > 0 {
-		return nil
-	}
-	if _, err := os.Stat(legacyPath); err != nil {
-		return nil
-	}
-	return fmt.Errorf("the database holds no ESA state, but a JSON store from before Postgres exists at %s: import it once with -import-state %s (docs/ESA_OPERATIONS.md#postgres-state-store), or move the file away to start empty", legacyPath, legacyPath)
+	return nil
 }
 
 // firstError prefers a server failure (such as a busy port) that ended the wait.
@@ -283,52 +244,4 @@ func firstError(serverErr <-chan error, err error) error {
 	default:
 	}
 	return err
-}
-
-// lockLegacyStore takes the file lock that ESA versions with a JSON store
-// held while writing it, so an import cannot read a file still in use.
-func lockLegacyStore(path string) (func(), error) {
-	lock, err := os.OpenFile(path+".lock", os.O_CREATE|os.O_RDWR, 0600)
-	if err != nil {
-		return nil, err
-	}
-	if err = syscall.Flock(int(lock.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
-		lock.Close()
-		return nil, fmt.Errorf("store already has a writer: %w", err)
-	}
-	return func() { lock.Close() }, nil
-}
-
-// importIntoPostgres imports a stopped JSON store into an empty ESA database,
-// verifies it in the same transaction, and exits. The file is never modified.
-func importIntoPostgres(databaseURL, jsonPath string) error {
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
-	if _, err := os.Stat(jsonPath); err != nil {
-		return err
-	}
-	unlock, err := lockLegacyStore(jsonPath)
-	if err != nil {
-		return fmt.Errorf("stop the ESA writer before importing: %w", err)
-	}
-	defer unlock()
-	source, err := esa.ReadLegacyStore(jsonPath)
-	if err != nil {
-		return err
-	}
-	persister, err := esa.OpenPostgres(ctx, databaseURL, esa.PostgresOptions{})
-	if err != nil {
-		return err
-	}
-	defer persister.Close()
-	wait, cancel := context.WithTimeout(ctx, 15*time.Second)
-	defer cancel()
-	if err = persister.AcquireWriter(wait, time.Second); err != nil {
-		return fmt.Errorf("another ESA process holds the state writer role; stop it before importing: %w", err)
-	}
-	if err = persister.Import(ctx, source); err != nil {
-		return err
-	}
-	slog.Info("State imported and verified; the source was not modified", "tickets", source.Tickets.Len(), "events", source.Events.Len(), "snapshots", source.Snapshots.Len())
-	return nil
 }

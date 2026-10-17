@@ -56,6 +56,10 @@ services:
       context: ../..
       dockerfile: deploy/redmine/Dockerfile.esa-db-init
     restart: "no"
+    # The postgres image declares a data volume this client never uses;
+    # tmpfs keeps Docker from leaving an anonymous volume per container.
+    tmpfs:
+      - /var/lib/postgresql/data
     environment:
       PGHOST: db
       PGPASSWORD: ${REDMINE_DB_PASSWORD:?Set REDMINE_DB_PASSWORD in .env}

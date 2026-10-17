@@ -65,7 +65,8 @@ and credentials are not printed. Do not start new work during shutdown.
 
 In the selected Docker context, it stops the `esa-redmine` Compose services, removes
 containers and scratch volumes with `esa.replay.session` or `system.replay.session`
-labels, and removes disposable `esa-deploy-<12 hex digits>` deployment-test resources
+labels and the disposable test database from `scripts/test_postgres.sh` (label
+`esa.test.database`, plus its `.tools/test-postgres` URL file), and removes disposable `esa-deploy-<12 hex digits>` deployment-test resources
 and their service image tags. It deletes stale generated session directories in this
 checkout only after Docker cleanup succeeds. Production volumes, attachments, ESA
 state, Issue projections, Jira data, reports and tool/build caches are preserved.

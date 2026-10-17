@@ -8,6 +8,7 @@
 #   sh scripts/test_postgres.sh stop
 #
 # DOCKER_CONTEXT selects the Docker daemon (for example colima-redmine).
+# scripts/shutdown.py also removes the server, by its esa.test.database label.
 set -eu
 cd "$(dirname "$0")/.."
 name=${ESA_TEST_POSTGRES_CONTAINER:-esa-test-postgres}
@@ -30,7 +31,7 @@ if [ ! -s "$dir/password" ]; then
 fi
 password=$(cat "$dir/password")
 if ! docker inspect "$name" >/dev/null 2>&1; then
-    docker run -d --name "$name" --tmpfs /var/lib/postgresql/data \
+    docker run -d --name "$name" --label esa.test.database=1 --tmpfs /var/lib/postgresql/data \
         -e POSTGRES_USER=esa -e POSTGRES_DB=esa_test -e POSTGRES_PASSWORD="$password" \
         -p "127.0.0.1:$port:5432" "$image" >/dev/null
 fi

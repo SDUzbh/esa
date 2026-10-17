@@ -1,4 +1,4 @@
-# ESA keeps its state in a JSON file or its own Postgres database; the Redmine
+# ESA keeps its state in its own Postgres database; the Redmine
 # state API that used these tables was removed. No installation stored state
 # here. Rolling back recreates the empty tables of migration 003.
 class DropEsaStateRecords < ActiveRecord::Migration[8.0]

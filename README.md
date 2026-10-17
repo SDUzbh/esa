@@ -27,8 +27,7 @@ The optional classifier runs locally in Go and supplies label suggestions only. 
 flowchart TD
     P["Redmine + ESA plugin"] <-->|Scoped APIs / outbox poll and ack| E["ESA Go service"]
     P --> D[("PostgreSQL: Redmine issues and outbox")]
-    E -->|Default state adapter| S[("Atomic JSON, single writer")]
-    E -->|Optional state store| G[("PostgreSQL: ESA's own database, one writer")]
+    E -->|State, one row per entity| G[("PostgreSQL: ESA's own database, one writer")]
     E <-->|Ticket + Issue directory path| A["Codex adapter: Routing → Engineering → Routing assignment"]
     E --> I[("Local Issue projection: proposals / solutions / investigating")]
     A -->|On-demand read-only search| I
@@ -76,13 +75,15 @@ The optional classifier supplies label suggestions alongside this workflow. Huma
 
 The local Compose configuration publishes Redmine at http://127.0.0.1:8080/. Follow [fresh-checkout setup](docs/DEPENDENCIES.md) for the required runtime and private deployment configuration. Enable the **ESA** project module and grant View ESA, Submit ESA, and Review ESA permissions to the appropriate roles. Uploading also requires Add issues permission.
 
-Build using Go 1.27 or the verified project-local toolchain:
+ESA keeps its state in its own Postgres database next to Redmine's. Set `ESA_DB_PASSWORD` in the private `deploy/redmine/.env` (`openssl rand -hex 24`); the one-shot `esa-db-init` service creates ESA's role and database before every ESA start.
+
+Build using Go 1.27 or the verified project-local toolchain. The build runs the tests first, which need a disposable Postgres (data in memory, `127.0.0.1:55432`):
 
 ```sh
+DOCKER_CONTEXT=colima-redmine sh scripts/test_postgres.sh && . .tools/test-postgres/env
 ./scripts/build_esa.sh
 mkdir -p runtime/esa/issues
-DOCKER_CONTEXT=colima-redmine docker-compose -f deploy/redmine/compose.yaml build redmine esa
-DOCKER_CONTEXT=colima-redmine docker-compose -f deploy/redmine/compose.yaml up -d
+DOCKER_CONTEXT=colima-redmine docker-compose -f deploy/redmine/compose.yaml up -d --build
 ```
 
 The build produces Linux ARM64 `bin/esa` and host binaries for `esa-host`, `esa-replay`, `esa-codex` and `esa-classifier`. Set `ESA_GO_ARCH=amd64` for an AMD64 service deployment. The Go service has one external module, the Postgres driver `github.com/jackc/pgx/v5`, pinned by `go.sum`; no Python packages are required. Building does not activate an existing deployment: rebuild and restart its images to use updated code. The Redmine service runs plugin migrations at startup, including the migration adding manual forwarding provenance to the outbox.
@@ -95,7 +96,8 @@ python3 -B scripts/shutdown.py
 ```
 
 Use `--dry-run` to preview or `--keep-vm` to leave Colima running. Persistent data,
-reports and tool caches are retained. Other projects' running containers prevent VM
+including ESA's database, reports and tool caches are retained; the disposable test
+database is removed. Other projects' running containers prevent VM
 shutdown. See [shutdown scope and cleanup](docs/ESA_OPERATIONS.md#shutdown-and-cleanup).
 
 For direct development, start a disposable Postgres, configure a service token and run ESA on a throwaway schema (`-ephemeral-schema` drops it on exit; without the flag ESA keeps its state in schema `esa`):
@@ -194,6 +196,10 @@ See [classifier operations](docs/CLASSIFIER.md) for the JSONL contract, feedback
 GitHub Actions reuses the existing deterministic tests and API replay fixtures,
 with no real Agent calls. Run the same check locally with
 `sh scripts/check_workflow.sh`; see [CI and build candidates](docs/CI.md).
+Tests need a disposable Postgres: start it with
+`sh scripts/test_postgres.sh && . .tools/test-postgres/env`, which sets
+`ESA_TEST_DATABASE_URL`. Each test and replay target uses its own throwaway schema;
+`sh scripts/test_postgres.sh stop` removes the server.
 The separate manual **Deployment acceptance** workflow starts an isolated real
 Redmine stack with the same fixture provider and verifies forwarding, review,
 permissions, restart persistence and cleanup without real Agent calls.
@@ -207,9 +213,10 @@ Use `examples/resolved-case.json` to import a resolved synthetic issue, manually
 
 ## External system replay
 
-Build the opaque application artifact and the tester separately. Run from the repository root; every output directory must be new:
+Build the opaque application artifact and the tester separately. Run from the repository root; every output directory must be new. The target keeps its state in a throwaway schema of `ESA_DATABASE_URL`:
 
 ```sh
+export ESA_DATABASE_URL="$ESA_TEST_DATABASE_URL"
 GOCACHE="$PWD/.tools/go-cache" GOTOOLCHAIN=local .tools/go/bin/go build -o bin/esa-host ./cmd/esa
 sh scripts/build_system_replay.sh
 python3 scripts/replay_pipeline.py --pipeline --manifest system_replay/examples/esa-api-lifecycle.json --output reports/new-lifecycle-run
@@ -217,7 +224,7 @@ python3 scripts/replay_pipeline.py --pipeline --manifest system_replay/examples/
 python3 scripts/replay_pipeline.py --pipeline --manifest system_replay/examples/esa-api-forwarding.json --output reports/new-forwarding-run
 ```
 
-The lifecycle example exercises the actual ESA public API: case collection/approval, duplicate and stale events, reopening, forwarded support requests and project permissions. It verifies that open tickets await configuration, even when an approved case exists; it does not test Agent-driven reuse. The Kafka example additionally runs historical client code before and after the upstream repair. Both start a fresh backend on port 18090 with a separate state file and disable Redmine synchronization. The lifecycle example needs no Kafka checkout or Jira export; the Kafka example needs those external inputs and Docker.
+The lifecycle example exercises the actual ESA public API: case collection/approval, duplicate and stale events, reopening, forwarded support requests and project permissions. It verifies that open tickets await configuration, even when an approved case exists; it does not test Agent-driven reuse. The Kafka example additionally runs historical client code before and after the upstream repair. Both start a fresh backend on port 18090 on its own schema, dropped on exit, and disable Redmine synchronization. The lifecycle example needs no Kafka checkout or Jira export; the Kafka example needs those external inputs and Docker.
 
 The defaults make no model calls. The explicitly forwarded Kafka ticket reaches `awaiting_configuration` without a provider; a successful runtime repair test does not establish engineering Agent accuracy. To test a provider, configure it in the system under test and update the external assertions. The tester never invokes that provider directly.
 
@@ -240,7 +247,7 @@ The Codex adapter disables native host tools and exposes the registered ESA tool
 
 This is a development implementation with synthetic workflow checks and focused Kafka runtime trials. These do not establish archive-wide Agent accuracy. Automatic customer environment inference, universal historical build profiles, document retrieval, recovery of unavailable historical comment bodies, archive-wide diagnosis/classifier accuracy validation, external release listening and universal runtime verification remain to be implemented. Replay profiles explicitly separate environment readiness from reproduction of a customer issue. Importing a current Jira export does not make it a valid historical snapshot.
 
-The default state adapter uses atomic JSON with a single-writer process lock. The optional Redmine PostgreSQL adapter is implemented, but still writes a whole-state frame through transactional CAS with a 64 MiB limit; it is not a scalable row-level work queue. Both preserve immutable inputs and audit records. The plugin limits access to 2,000 visible ESA issues per request. Database migration, load testing and scalable authorization remain necessary before importing the full Jira archive. The proposed storage redesign is in [docs/STORAGE_DESIGN.md](docs/STORAGE_DESIGN.md). Source edits, reopening and resolution do not automatically reach ESA; manually forward updated visible snapshots. The plugin excludes current private issues from forwarding. Privacy changes affecting previously forwarded snapshots, cross-project moves, deletions and retroactive ingestion need a dedicated reconciliation mechanism. Backend snapshots marked private are excluded from shared analysis, case recommendations and classifier operations.
+ESA keeps its state in its own Postgres database, one row per entity, and a write costs time proportional to what changed: the full 19,869-issue Kafka archive ingests in about 30 seconds at a flat 1.4 ms per ticket ([storage design](docs/STORAGE_DESIGN.md)). Single-ticket reads and the plugin's ticket list stay nearly flat as the archive grows (about 14 µs and 5 ms at 100k tickets). One process writes at a time; a second waits as a standby. The working set stays in memory (about 250 MB of live heap for that archive) and grows with it, and immutable inputs and audit records are never deleted. The plugin limits access to 2,000 visible ESA issues per request; scalable authorization remains to be done. Source edits, reopening and resolution do not automatically reach ESA; manually forward updated visible snapshots. The plugin excludes current private issues from forwarding. Privacy changes affecting previously forwarded snapshots, cross-project moves, deletions and retroactive ingestion need a dedicated reconciliation mechanism. Backend snapshots marked private are excluded from shared analysis, case recommendations and classifier operations.
 
 Original Jira export revisions are retained: organization preserves bytes, and incremental updates archive the previous revision. The `kafka/` checkout remains untouched. Old audit reports retain their original language and paths.
 
@@ -256,6 +263,7 @@ for dependencies, language coverage and output cleanup.
 | Fresh checkout and Redmine start/stop | [Dependencies](docs/DEPENDENCIES.md), [local deployment](deploy/redmine/README.md) |
 | Support and engineer UI | [Manual forwarding](docs/MANUAL_FORWARDING.md), [frontend](docs/ESA_PLUGIN_FRONTEND.md) |
 | Service, provider, storage, logs and limits | [Operations](docs/ESA_OPERATIONS.md), [backend/API workflow](docs/ESA_BACKEND_WORKFLOW.md) |
+| State store design and performance | [Storage design](docs/STORAGE_DESIGN.md) |
 | Issue search, grouping and retention | [Issue directory](docs/ISSUE_DIRECTORY.md) |
 | Preset images and approved tools | [Tool images](docs/TOOL_IMAGES.md) |
 | Optional supervised classifier | [Classifier](docs/CLASSIFIER.md) |

@@ -40,4 +40,16 @@ are separate checks. Cleanup owns only task-created resources.
 
 The independent replay tester freezes initial public results before inspecting
 future Git history. It does not substitute its own routing or engineering logic.
+
+@section state_storage State storage
+
+ESA keeps its state only in its own Postgres database, one row per entity. The
+working set stays in memory as persistent hash-trie Tables: an Update edits a
+copy, the Store diffs it against the published state in time proportional to
+the changes, and PostgresPersister commits only those rows in one transaction.
+Derived indexes answer per-ticket, per-Issue and worker lookups without
+scanning tables; they are rebuilt on load and never persisted. One process
+holds the writer role through an advisory lock, and every commit is fenced on a
+writer term. Tests and replay targets use throwaway schemas. See
+docs/STORAGE_DESIGN.md and docs/ESA_OPERATIONS.md.
 */

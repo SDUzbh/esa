@@ -6,23 +6,22 @@ import (
 	"errors"
 	"fmt"
 	"maps"
-	"os"
-	"path/filepath"
 	"slices"
 	"sync"
 	"time"
 )
 
-// Store serializes detached-state transactions over JSON or one authoritative backend.
+// Store serializes copy-on-write state transactions and hands each change to
+// its Persister (a JSON file or an authoritative backend).
 // Network analysis and other irreversible side effects must stay outside Update callbacks.
 type Store struct {
-	mu       sync.RWMutex
-	path     string
-	state    State
-	backend  StateBackend
-	revision uint64
-	// encoded is json.Marshal(state) as last published. Update compares
-	// against it instead of encoding the previous state again.
+	mu        sync.RWMutex
+	state     State
+	persister Persister
+	revision  uint64
+	// encoded is json.Marshal(state) as last published. It is kept only for
+	// whole-state persisters, to skip writes whose encoding did not change, and
+	// for the test guard; other persisters never encode the whole state.
 	encoded []byte
 	wakeMu  sync.Mutex
 	wake    chan struct{}
@@ -57,21 +56,12 @@ type StateBackend interface {
 }
 
 func (s *Store) refreshLocked() error {
-	var state State
-	var revision uint64
-	var err error
-	if backend, ok := s.backend.(interface {
-		LoadIfChanged(uint64) (State, uint64, bool, error)
-	}); ok {
-		var changed bool
-		state, revision, changed, err = backend.LoadIfChanged(s.revision)
-		if err != nil || !changed {
-			return err
-		}
-	} else {
-		state, revision, err = s.backend.Load()
+	r, ok := s.persister.(refresher)
+	if !ok {
+		return nil
 	}
-	if err != nil {
+	state, revision, changed, err := r.refresh(s.revision)
+	if err != nil || !changed {
 		return err
 	}
 	if err = validateState(state); err != nil {
@@ -79,22 +69,27 @@ func (s *Store) refreshLocked() error {
 	}
 	if revision >= s.revision {
 		s.state, s.revision = state, revision
-		s.publishLocked()
+		s.publishLocked(nil)
 	}
 	return nil
 }
 
 // OpenBackendStore loads and validates the remote authority without a JSON fallback.
 func OpenBackendStore(backend StateBackend) (*Store, error) {
-	state, revision, err := backend.Load()
+	return newStore(&backendPersister{backend: backend})
+}
+
+// newStore loads and validates the persister's state and publishes it.
+func newStore(p Persister) (*Store, error) {
+	state, revision, err := p.Load()
 	if err != nil {
 		return nil, err
 	}
 	if err = validateState(state); err != nil {
 		return nil, err
 	}
-	s := &Store{state: state, backend: backend, revision: revision}
-	s.publishLocked()
+	s := &Store{state: state, persister: p, revision: revision}
+	s.publishLocked(nil)
 	return s, nil
 }
 func validateState(s State) error {
@@ -104,7 +99,7 @@ func validateState(s State) error {
 	return nil
 }
 func (s *Store) Refresh() error {
-	if s.backend == nil {
+	if _, ok := s.persister.(refresher); !ok {
 		return nil
 	}
 	s.mu.Lock()
@@ -115,31 +110,7 @@ func (s *Store) Refresh() error {
 // OpenStore opens a JSON state frame; an empty path selects an in-memory store.
 // The service launcher, not this function, takes the cross-process writer lock.
 func OpenStore(path string) (*Store, error) {
-	s, err := openStore(path)
-	if err == nil {
-		s.publishLocked()
-	}
-	return s, err
-}
-func openStore(path string) (*Store, error) {
-	s := &Store{path: path, state: State{SchemaVersion: 1, Tickets: map[string]Ticket{}, Events: map[string]Event{}, Receipts: map[string]Receipt{}, Runs: map[string]Run{}, Latest: map[string]string{}, Cases: map[string]Case{}}}
-	if path == "" {
-		return s, nil
-	}
-	b, err := os.ReadFile(path)
-	if errors.Is(err, os.ErrNotExist) {
-		return s, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	if err = json.Unmarshal(b, &s.state); err != nil {
-		return nil, err
-	}
-	if s.state.SchemaVersion != 1 || s.state.Tickets == nil || s.state.Events == nil || s.state.Receipts == nil || s.state.Runs == nil || s.state.Latest == nil || s.state.Cases == nil {
-		return nil, errors.New("invalid store schema")
-	}
-	return s, nil
+	return newStore(&jsonPersister{path: path})
 }
 
 // Update commits a copy-on-write state atomically. Failed writes never alter memory.
@@ -151,14 +122,15 @@ func openStore(path string) (*Store, error) {
 func (s *Store) Update(fn func(*State) error) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	_, remote := s.persister.(refresher)
 	for attempt := 0; attempt < 64; attempt++ {
-		if s.backend != nil {
+		if remote {
 			if err := s.refreshLocked(); err != nil {
 				return err
 			}
 		}
 		err := s.updateLocked(fn)
-		if s.backend != nil && errors.Is(err, errStateCAS) {
+		if remote && errors.Is(err, errStateCAS) {
 			continue
 		}
 		return err
@@ -185,59 +157,23 @@ func (s *Store) updateLocked(fn func(*State) error) error {
 	if changes.Empty() {
 		return nil
 	}
-	updated, err := json.Marshal(next)
+	commit := Commit{State: next, Changes: changes, Revision: s.revision}
+	if _, whole := s.persister.(wholeStatePersister); whole {
+		if commit.Encoded, err = json.Marshal(next); err != nil {
+			return err
+		}
+		// A replaced entity with equal content is reported as changed; keep
+		// skipping writes whose encoding is unchanged, exactly as before.
+		if bytes.Equal(s.encoded, commit.Encoded) {
+			return nil
+		}
+	}
+	revision, err := s.persister.Apply(commit)
 	if err != nil {
 		return err
 	}
-	// A replaced entity with equal content is reported as changed; keep
-	// skipping writes whose encoding is unchanged, exactly as before.
-	if bytes.Equal(s.encoded, updated) {
-		return nil
-	}
-	if s.backend != nil {
-		revision, err := s.backend.Commit(next, s.revision)
-		if err != nil {
-			return err
-		}
-		s.revision = revision
-	}
-	if s.path != "" {
-		if err = os.MkdirAll(filepath.Dir(s.path), 0700); err != nil {
-			return err
-		}
-		f, err := os.CreateTemp(filepath.Dir(s.path), ".esa-state-*")
-		if err != nil {
-			return err
-		}
-		name := f.Name()
-		defer os.Remove(name)
-		if err = f.Chmod(0600); err == nil {
-			_, err = f.Write(updated)
-		}
-		if err == nil {
-			err = f.Sync()
-		}
-		closeErr := f.Close()
-		if err == nil {
-			err = closeErr
-		}
-		if err != nil {
-			return err
-		}
-		if err = os.Rename(name, s.path); err != nil {
-			return err
-		}
-		dir, err := os.Open(filepath.Dir(s.path))
-		if err != nil {
-			return err
-		}
-		err = dir.Sync()
-		dir.Close()
-		if err != nil {
-			return err
-		}
-	}
-	s.state, s.encoded = next, updated
+	s.state, s.revision = next, revision
+	s.publishLocked(commit.Encoded)
 	return nil
 }
 
@@ -247,10 +183,20 @@ func (s *Store) updateLocked(fn func(*State) error) error {
 // Tests turn it on (TestMain); it re-encodes the whole state per operation.
 var guardPublishedState bool
 
-// publishLocked records the encoding of a newly loaded state. Callers hold
-// s.mu for writing, or own s exclusively while constructing it.
-func (s *Store) publishLocked() {
-	s.encoded, _ = json.Marshal(s.state)
+// publishLocked records the encoding of the newly published state when a
+// whole-state persister or the test guard needs it; encoded may be passed in
+// when the caller already has it. Callers hold s.mu for writing, or own s
+// exclusively while constructing it.
+func (s *Store) publishLocked(encoded []byte) {
+	_, whole := s.persister.(wholeStatePersister)
+	switch {
+	case encoded != nil:
+		s.encoded = encoded
+	case whole || guardPublishedState:
+		s.encoded, _ = json.Marshal(s.state)
+	default:
+		s.encoded = nil
+	}
 }
 
 // verifyPublishedLocked panics if anyone changed the published state in place
@@ -286,8 +232,9 @@ func (s *Store) Snapshot() State {
 func (s *Store) Clone() State {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+	b, _ := json.Marshal(s.state)
 	var clone State
-	_ = json.Unmarshal(s.encoded, &clone)
+	_ = json.Unmarshal(b, &clone)
 	return clone
 }
 

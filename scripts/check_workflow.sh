@@ -9,6 +9,13 @@ export GOCACHE="$PWD/.tools/go-cache" GOTOOLCHAIN=local
 export ESA_TEST_RACE="${ESA_TEST_RACE:-1}"
 export ESA_API_TOKEN= ESA_ANALYZER_URL= ESA_ANALYZER_TOKEN= ESA_REDMINE_URL= ESA_STATE_URL=
 unset OPENAI_API_KEY CODEX_API_KEY
+# ESA keeps its state in Postgres. Tests and replay targets each use their own
+# throwaway schema in this database; scripts/test_postgres.sh starts one.
+if [ -z "${ESA_TEST_DATABASE_URL:-}" ]; then
+    echo 'ESA_TEST_DATABASE_URL is required; start a disposable server with scripts/test_postgres.sh' >&2
+    exit 1
+fi
+export ESA_DATABASE_URL="$ESA_TEST_DATABASE_URL"
 mkdir -p .tools
 if [ -n "${ESA_WORKFLOW_OUTPUT:-}" ]; then
     mkdir "$ESA_WORKFLOW_OUTPUT"
@@ -39,13 +46,8 @@ fi
 "$ESA_GO_BIN" vet ./...
 "$ESA_GO_BIN" -C system_replay vet ./...
 # Keep the store scaling benchmarks compiling and runnable (tiny size, one pass).
-ESA_BENCH_SIZES=50 "$ESA_GO_BIN" test ./internal/esa -run '^$' -bench 'Store|TicketGET|ReceiveClosed' -benchtime 1x > /dev/null
+ESA_BENCH_SIZES=50 "$ESA_GO_BIN" test ./internal/esa -run '^$' -bench . -benchtime 1x > /dev/null
 sh scripts/build_esa.sh
-# With a test database (CI provides one), rerun the store-backed suite on
-# Postgres, reloading and comparing the state after every commit.
-if [ -n "${ESA_TEST_DATABASE_URL:-}" ]; then
-    ESA_TEST_STORE=postgres "$ESA_GO_BIN" test ./internal/esa
-fi
 sh scripts/build_system_replay.sh
 python3 -B -m unittest discover -s scripts -p 'test_*.py'
 ruby scripts/test_label_payload.rb

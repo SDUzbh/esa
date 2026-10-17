@@ -2,13 +2,13 @@
   "schema_version": 1,
   "target": {
     "url": "http://127.0.0.1:18090",
+    "health_path": "/healthz?role=active",
     "start": {
       "args": [
         "{{manifest_dir}}/../../bin/esa-host",
         "-listen",
         "127.0.0.1:18090",
-        "-store",
-        "{{run_dir}}/target/state.json",
+        "-ephemeral-schema",
         "-rules",
         "{{manifest_dir}}/../../config/rules.json",
         "-replay-at",

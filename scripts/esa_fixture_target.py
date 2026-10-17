@@ -13,7 +13,7 @@ import threading
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--esa-bin')
-    parser.add_argument('--store', required=True)
+    parser.add_argument('--reports-dir', required=True, help='Directory for the provider call logs')
     parser.add_argument('--rules', required=True)
     parser.add_argument('--listen', required=True)
     parser.add_argument('--replay-at', default='')
@@ -23,7 +23,7 @@ def main():
     if not args.provider_only and not args.esa_bin:
         parser.error('--esa-bin is required unless --provider-only is selected')
     token = os.environ['ESA_API_TOKEN']
-    directory = Path(args.store).parent
+    directory = Path(args.reports_dir)
     directory.mkdir(parents=True, exist_ok=True)
     calls, routing_calls, lock = [], [], threading.Lock()
 
@@ -94,7 +94,8 @@ def main():
             thread.join(timeout=3)
         return
     environment = dict(os.environ, ESA_REDMINE_URL='', ESA_ANALYZER_URL='http://127.0.0.1:%d/analyze' % provider.server_port, ESA_ANALYZER_TOKEN=token)
-    command = [args.esa_bin, '-listen', args.listen, '-store', args.store, '-rules', args.rules]
+    # ESA_DATABASE_URL comes from the environment; each run gets its own schema.
+    command = [args.esa_bin, '-listen', args.listen, '-ephemeral-schema', '-rules', args.rules]
     if args.replay_at or args.replay_projects:
         command += ['-replay-at', args.replay_at, '-replay-projects', args.replay_projects]
     child = subprocess.Popen(command, env=environment)

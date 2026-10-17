@@ -218,11 +218,9 @@ func rowFor(s State, t Ticket) TicketRow {
 			}
 		}
 	}
-	for _, c := range s.Cases.All() {
-		if c.TicketID == t.ID {
-			row.Case = &c
-			break
-		}
+	if ids := s.casesOfTicket(t.ID); len(ids) > 0 {
+		c := s.Cases.Get(ids[0])
+		row.Case = &c
 	}
 	if row.Investigation != nil && row.Investigation.IssueID != "" {
 		if _, exists := s.Issues.Lookup(row.Investigation.IssueID); !exists {
@@ -400,16 +398,16 @@ func (api *API) ticket(w http.ResponseWriter, r *http.Request) {
 	}
 	history := []Run{}
 	seen := map[string]bool{}
-	for _, run := range s.Runs.All() {
-		if run.TicketID == t.ID {
-			history = append(history, visibleRun(r, s, run))
-			seen[run.ID] = true
-		}
+	for _, id := range s.runsOfTicket(t.ID) {
+		run := s.Runs.Get(id)
+		history = append(history, visibleRun(r, s, run))
+		seen[run.ID] = true
 	}
-	for _, link := range s.Memberships.All() {
+	for _, id := range s.membershipsOfTicket(t.ID) {
+		link := s.Memberships.Get(id)
 		task := s.Investigations.Get(link.InvestigationID)
 		run, ok := s.Runs.Lookup(task.RunID)
-		if ok && link.TicketID == t.ID && !seen[run.ID] {
+		if ok && !seen[run.ID] {
 			history = append(history, visibleRun(r, s, runForTicket(run, t)))
 			seen[run.ID] = true
 		}

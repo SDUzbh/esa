@@ -98,6 +98,8 @@ func (x tableIndex[V]) advance(current Table[V], key func(V) string) tableIndex[
 func linkTicket(l IssueTicketLink) string        { return l.TicketID }
 func linkInvestigation(l IssueTicketLink) string { return l.InvestigationID }
 func taskIssue(t Investigation) string           { return t.IssueID }
+func runTicket(r Run) string                     { return r.TicketID }
+func caseTicket(c Case) string                   { return c.TicketID }
 
 // taskLiveApplication indexes investigations whose solution application can
 // still be withdrawn.
@@ -116,6 +118,8 @@ type stateIndexes struct {
 	membershipsByInvestigation tableIndex[IssueTicketLink]
 	investigationsByIssue      tableIndex[Investigation]
 	liveApplications           tableIndex[Investigation]
+	runsByTicket               tableIndex[Run]
+	casesByTicket              tableIndex[Case]
 }
 
 func (s *State) advanceIndexes() {
@@ -124,6 +128,8 @@ func (s *State) advanceIndexes() {
 	x.membershipsByInvestigation = x.membershipsByInvestigation.advance(s.Memberships, linkInvestigation)
 	x.investigationsByIssue = x.investigationsByIssue.advance(s.Investigations, taskIssue)
 	x.liveApplications = x.liveApplications.advance(s.Investigations, taskLiveApplication)
+	x.runsByTicket = x.runsByTicket.advance(s.Runs, runTicket)
+	x.casesByTicket = x.casesByTicket.advance(s.Cases, caseTicket)
 }
 
 func (s State) membershipsOfTicket(ticketID string) []string {
@@ -136,6 +142,14 @@ func (s State) membershipsOfInvestigation(taskID string) []string {
 
 func (s State) investigationsOfIssue(issueID string) []string {
 	return s.indexes.investigationsByIssue.lookup(s.Investigations, taskIssue, issueID)
+}
+
+func (s State) runsOfTicket(ticketID string) []string {
+	return s.indexes.runsByTicket.lookup(s.Runs, runTicket, ticketID)
+}
+
+func (s State) casesOfTicket(ticketID string) []string {
+	return s.indexes.casesByTicket.lookup(s.Cases, caseTicket, ticketID)
 }
 
 func (s State) investigationsWithLiveApplication() []string {
@@ -160,4 +174,6 @@ func verifyIndexes(s *State) {
 	check("membershipsByInvestigation", x.membershipsByInvestigation.buckets, buildTableIndex(s.Memberships, linkInvestigation).buckets)
 	check("investigationsByIssue", x.investigationsByIssue.buckets, buildTableIndex(s.Investigations, taskIssue).buckets)
 	check("liveApplications", x.liveApplications.buckets, buildTableIndex(s.Investigations, taskLiveApplication).buckets)
+	check("runsByTicket", x.runsByTicket.buckets, buildTableIndex(s.Runs, runTicket).buckets)
+	check("casesByTicket", x.casesByTicket.buckets, buildTableIndex(s.Cases, caseTicket).buckets)
 }

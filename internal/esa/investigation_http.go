@@ -115,9 +115,10 @@ func taskVisible(r *http.Request, s State, task Investigation) bool {
 	if source, ok := s.Tickets.Lookup(s.Runs.Get(task.RunID).TicketID); ok && !source.Private && ticketAllowed(r, source.ID) {
 		return true
 	}
-	for _, link := range s.Memberships.All() {
+	for _, id := range s.membershipsOfInvestigation(task.ID) {
+		link := s.Memberships.Get(id)
 		t, ok := s.Tickets.Lookup(link.TicketID)
-		if ok && link.InvestigationID == task.ID && link.State == "tentative" && !t.Private && ticketAllowed(r, t.ID) {
+		if ok && link.State == "tentative" && !t.Private && ticketAllowed(r, t.ID) {
 			return true
 		}
 	}

@@ -181,6 +181,50 @@ func BenchmarkTicketGET(b *testing.B) {
 	}
 }
 
+// BenchmarkTicketsList measures the plugin's ESA index page: GET /v1/tickets
+// with no query parameters (default sort updated_at desc, page 1 of 25). The
+// plugin always scopes the request to the viewer's visible issues and refuses
+// more than 2,000 of them, so "scoped" sends 2,000 ticket IDs spread over the
+// archive; "unscoped" omits X-ESA-Ticket-IDs, which lets every ticket through.
+func BenchmarkTicketsList(b *testing.B) {
+	for _, n := range benchSizes(b) {
+		visible := make([]string, 0, 2000)
+		for i := 0; i < 2000 && i < n; i++ {
+			visible = append(visible, fmt.Sprintf("K-%d", i*n/min(n, 2000)))
+		}
+		for _, scope := range []struct {
+			name string
+			ids  []string
+		}{{"scoped", visible}, {"unscoped", nil}} {
+			b.Run(fmt.Sprintf("%s/%d", scope.name, n), func(b *testing.B) {
+				e := seedMemoryStore(b, n)
+				handler := (&API{Engine: e, Token: strings.Repeat("t", 24)}).Handler()
+				want := n
+				if scope.ids != nil {
+					want = len(scope.ids)
+				}
+				b.ResetTimer()
+				for i := 0; i < b.N; i++ {
+					req := httptest.NewRequest(http.MethodGet, "/v1/tickets", nil)
+					req.Header.Set("Authorization", "Bearer "+strings.Repeat("t", 24))
+					req.Header.Set("X-ESA-Project-IDs", "1")
+					if scope.ids != nil {
+						req.Header.Set("X-ESA-Ticket-IDs", strings.Join(scope.ids, ","))
+					}
+					w := httptest.NewRecorder()
+					handler.ServeHTTP(w, req)
+					if w.Code != http.StatusOK {
+						b.Fatalf("GET returned %d: %s", w.Code, w.Body.String())
+					}
+					if i == 0 && !strings.Contains(w.Body.String(), fmt.Sprintf(`"total_count":%d`, want)) {
+						b.Fatalf("GET did not list %d tickets: %.300s", want, w.Body.String())
+					}
+				}
+			})
+		}
+	}
+}
+
 // BenchmarkPostgresUpdateOneTicket measures a one-ticket write on the Postgres
 // store; it needs ESA_TEST_DATABASE_URL and skips without it.
 func BenchmarkPostgresUpdateOneTicket(b *testing.B) {

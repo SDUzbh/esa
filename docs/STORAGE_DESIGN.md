@@ -1,6 +1,6 @@
 # ESA storage: Phase 3 design
 
-**Status:** proposed, for review. Nothing here is implemented yet.
+**Status:** implemented by the rollout PRs (#12–#19). The in-memory State has since moved to persistent tables with derived indexes; see [After the rollout](#after-the-rollout-persistent-tables-and-indexes).
 **Scope:** REVIEW_ISSUES.md Issue 1 (store scaling), Phases 2 and 3 combined.
 
 ## Decisions already made (2026-10-17)
@@ -92,7 +92,7 @@ func sameBits[V any](a, b *V) bool {
 
 **Measured cost** of detach, a one-ticket change, projection and the diff over the seven large maps: **8.7 ms at 10k tickets and 24 ms at 20k**, with exactly one changed entity found. Today's one-ticket `Update` takes 366 ms at 10k.
 
-**Considered and rejected for now:** wrapping each map in a change-tracking `Table[V]` type. Detecting changes would then cost time proportional to the changes, but it would rewrite about 600 call sites (65 writes, 262 index reads and 50 loops in production code, plus 238 accesses in tests). We can do it later if the diff ever shows up in profiles.
+**Considered and rejected at first, adopted after the rollout:** wrapping each map in a `Table[V]` type, so that detecting changes costs time proportional to the changes. The 20k ingest showed the O(entries) diff and copy in the profile, so State now uses persistent tables; see [After the rollout](#after-the-rollout-persistent-tables-and-indexes). The bitwise comparison above still decides whether a replaced entry changed.
 
 ## Persisted model
 
@@ -338,12 +338,93 @@ After migration:
 
 Each step leaves `main` releasable. Steps 1–3 also speed up the JSON adapter.
 
+## After the rollout: persistent tables and indexes
+
+Ingesting the real 19,869-ticket archive on Postgres took 238 s after the rollout. Per-ticket latency rose from 1.7 ms to 20.7 ms as the archive grew. The database write was flat at about 1.2 ms; the rest was in-memory work proportional to the whole state on every `Update`:
+
+- `detach()` cloned every top-level map, and the diff walked every entry.
+- `projectInvestigationStates` reprojected every investigation and run.
+- Business code scanned whole tables to find a few records: a ticket's memberships, runs and case; an Issue's memberships, cases and solutions; the investigations a worker can claim.
+
+### Persistent tables
+
+Each State map is a `Table[V]` (`internal/esa/table.go`), a persistent hash array mapped trie:
+
+- Copying a table is O(1). `Put` and `Delete` copy only the path to the key (about log32(n) nodes), so the published State is never modified while an `Update` edits its copy.
+- `diffTable` walks both versions and skips subtrees that are pointer-identical, so the diff costs O(changes). At the leaves, `sameBits` still decides whether a replaced entry changed.
+- A table encodes to the same JSON object as `map[string]V`. The persisted format is unchanged, byte for byte.
+- `detach()` is a struct copy (plus `StoredFields`). `CaseHistory` and `MembershipHistory` are appended in place. Every published State keeps its own length, only one `Update` runs at a time, and no slot before that length is rewritten.
+- `projectChangedInvestigations` reprojects only the investigations and runs that the `Update` changed. A ticket whose privacy flips falls back to the full projection.
+
+### Derived indexes
+
+`State.indexes` (`internal/esa/state_index.go`) holds secondary indexes. They are derived from the tables and never persisted:
+
+| Index | Used by |
+|---|---|
+| memberships by ticket, by investigation | active membership, ticket GET, membership detach, investigation visibility |
+| tentative memberships, retained cases, usable solutions, overrides, groups, each by Issue | Issue retention and removal, solution publishing, the Issue list, membership review |
+| investigations by Issue, with a live application | canonical solution, application invalidation |
+| runs by ticket, cases by ticket | ticket GET |
+| investigations by work state (queued, running, investigating, awaiting configuration), queued runs | lease recovery, parked settlement, slot counting, routing, fair ordering, the idle check |
+
+Each index records the table version it was built from. A lookup adds the keys that changed since then (`diffTable`, O(changes)) and filters by current values, so it stays exact in the middle of an `Update`. After each commit the store advances every index by the changes. A State without indexes (decoded, or a test literal) falls back to a scan.
+
+Terminal investigations, the bulk of an archive, are in no work-state bucket. Each worker scan asks only for the states it needs, so a deployment without a provider does not pay for its `awaiting_configuration` backlog.
+
+### Guard checks
+
+In tests, `guardPublishedState` cross-checks each shortcut against the full computation on every `Update`:
+
+- the table diff against a full-encoding diff,
+- the incremental projection against the full projection,
+- every advanced index against a fresh build,
+- indexed Issue retention against the previous full scan, run on a copy. The resulting states must encode identically.
+
+Mutation checks against each index key, the projection input and the retention conditions all fail the suite.
+
+### Results
+
+Same machine, `main` (a3a293b) against this change, `go test ./internal/esa -run '^$' -bench . -benchmem` with `ESA_BENCH_SIZES`, median of three. `main` was measured at 100k only for the memory benchmarks: its Postgres benchmark cannot seed that size within its timeout.
+
+| | `main` 1k | `main` 10k | `main` 100k | now 1k | now 10k | now 100k |
+|---|---|---|---|---|---|---|
+| One-ticket `Update`, in memory | 0.56 ms | 6.3 ms | 77 ms | 1.6 µs | 1.9 µs | 2.0 µs |
+| Closed-ticket `Receive`, in memory | 1.9 ms | 7.6 ms | 96 ms | 27 µs | 28 µs | 32 µs |
+| Worker claim among n finished investigations | 6.7 ms | 32 ms | 418 ms | 10 µs | 10 µs | 12 µs |
+| One-ticket `Update`, Postgres | 1.8 ms | 7.5 ms | | 1.1 ms | 1.1 ms | 1.1 ms |
+| Ticket GET | 36 µs | 260 µs | | 14 µs | 14 µs | 14 µs |
+| One-ticket `Update`, JSON file (rewrites the file) | 31 ms | 330 ms | | 30 ms | 317 ms | 2.2 s |
+| `Snapshot` | 9 ns | 9 ns | | 22 ns | 22 ns | 22 ns |
+
+The JSON file adapter still rewrites the whole file on every write, by design; it is the dev and test adapter. `Table` implements jsonv2's `MarshalJSONTo` (on by default since Go 1.27), so encoding/json streams it instead of re-parsing its `MarshalJSON` output. Without that, the file write was 35% slower than with maps.
+
+Real archive, all 19,869 Kafka issues through `parseJira` and `Receive` into Postgres:
+
+| | `main` | now |
+|---|---|---|
+| Ingest | 238 s (83 tickets/s) | **29.9 s** (665 tickets/s) |
+| p50, first / middle / last 1,000 tickets | 1.67 / 10.5 / 20.7 ms | 1.36 / 1.37 / 1.37 ms |
+| p99, last 1,000 tickets | 27.8 ms | 2.3 ms |
+| Restart: load time, live heap | 1.7 s, 244 MB | 1.4 s, 252 MB |
+
+The trie nodes and indexes add about 3% to the live heap.
+
+### Still proportional to the archive
+
+These remain O(N), off the per-write path or on rare events:
+
+- `issueRecords`, once per analysis. It reconstructs the directory as of the task's observation cutoff, which includes finished investigations.
+- `withdrawSourceSolutions` on a reopened ticket, and withdrawal when a ticket becomes private.
+- `GET /v1/tickets` and solution history, which filter whole tables. They read a `Snapshot` outside the write lock.
+- Startup, which loads the hot set and builds the indexes once.
+
 ## Risks
 
 - **`unsafe` comparison.** It is correct only while the immutability contract holds. The test guard enforces the contract and cross-checks the diff. Comparing values of the same Go type is stable across Go versions.
 - **Memory footprint.** The working set stays in RAM: 280 MB of live heap for the full 19,869-issue Kafka archive (see [Memory](#memory)), about 0.6 GB of process memory with the default `GOGC`. Benchmark step 8 tracks it as the data grows. Run reports and `Case.Summary` copies are the next candidates if it ever needs to shrink.
 - **Postgres availability.** ESA fails closed when the database is unavailable, as it does today with the Redmine backend: `/v1/*` returns 503 and no writes are accepted.
-- **Diff cost stays O(entries)** (24 ms at 20k). That is acceptable for the targets. The `Table[V]` refactor is the fallback.
+- **Diff cost stays O(entries)** (24 ms at 20k). Resolved after the rollout by the `Table[V]` refactor: the diff is now O(changes).
 
 ## Review answers and open questions
 

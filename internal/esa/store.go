@@ -5,10 +5,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"maps"
 	"slices"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -25,9 +25,11 @@ type Store struct {
 	// for the test guard; other persisters never encode the whole state.
 	encoded []byte
 	// lost runs once when a commit fails with ErrLostWriter.
-	lost   func(error)
-	wakeMu sync.Mutex
-	wake   chan struct{}
+	lost func(error)
+	// updates counts Update calls; tests use it to prove a path did not write.
+	updates atomic.Uint64
+	wakeMu  sync.Mutex
+	wake    chan struct{}
 }
 
 // coldSnapshotReader is implemented by persisters that keep some snapshots
@@ -59,7 +61,7 @@ func (s *Store) OnLostWriter(fn func(error)) {
 
 // WorkSignal returns a channel that closes the next time a worker or an
 // engineering slot frees in this process. Idle workers wait on it together with
-// a slow poll, which covers other processes sharing the state and time limits.
+// a slow poll, which covers queue-wait limits and lease expiry.
 func (s *Store) WorkSignal() <-chan struct{} {
 	s.wakeMu.Lock()
 	defer s.wakeMu.Unlock()
@@ -76,42 +78,6 @@ func (s *Store) signalWork() {
 		close(s.wake)
 		s.wake = nil
 	}
-}
-
-// StateBackend provides authoritative, transactional persistence. JSON remains
-// a local single-process adapter; remote commits use optimistic CAS.
-//
-// Deprecated: the only remote backend, the Redmine state API, is retired as
-// ESA's store (see HTTPStateBackend). StateBackend and OpenBackendStore remain
-// for tests and are removed with the plugin's /esa/api/state endpoints.
-type StateBackend interface {
-	Load() (State, uint64, error)
-	Commit(State, uint64) (uint64, error)
-}
-
-func (s *Store) refreshLocked() error {
-	r, ok := s.persister.(refresher)
-	if !ok {
-		return nil
-	}
-	state, revision, changed, err := r.refresh(s.revision)
-	if err != nil || !changed {
-		return err
-	}
-	if err = validateState(state); err != nil {
-		return err
-	}
-	compactLegacyEvents(&state)
-	if revision >= s.revision {
-		s.state, s.revision = state, revision
-		s.publishLocked(nil)
-	}
-	return nil
-}
-
-// OpenBackendStore loads and validates the remote authority without a JSON fallback.
-func OpenBackendStore(backend StateBackend) (*Store, error) {
-	return newStore(&backendPersister{backend: backend})
 }
 
 // newStore loads and validates the persister's state and publishes it.
@@ -134,14 +100,6 @@ func validateState(s State) error {
 	}
 	return nil
 }
-func (s *Store) Refresh() error {
-	if _, ok := s.persister.(refresher); !ok {
-		return nil
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.refreshLocked()
-}
 
 // OpenStore opens a JSON state frame; an empty path selects an in-memory store.
 // The service launcher, not this function, takes the cross-process writer lock.
@@ -153,29 +111,17 @@ func OpenStore(path string) (*Store, error) {
 // The callback gets new top-level maps and slices that share unchanged entities:
 // replace an entity (s.Tickets[id] = t) and never edit a shared map, slice or
 // nested value in place.
-// Update callbacks may run again after a remote CAS conflict.
 // Keep callbacks repeatable and free of provider calls or external side effects.
 func (s *Store) Update(fn func(*State) error) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	_, remote := s.persister.(refresher)
-	for attempt := 0; attempt < 64; attempt++ {
-		if remote {
-			if err := s.refreshLocked(); err != nil {
-				return err
-			}
-		}
-		err := s.updateLocked(fn)
-		if remote && errors.Is(err, errStateCAS) {
-			continue
-		}
-		if errors.Is(err, ErrLostWriter) && s.lost != nil {
-			go s.lost(err)
-			s.lost = nil
-		}
-		return err
+	s.updates.Add(1)
+	err := s.updateLocked(fn)
+	if errors.Is(err, ErrLostWriter) && s.lost != nil {
+		go s.lost(err)
+		s.lost = nil
 	}
-	return fmt.Errorf("%w: state contention; retry the idempotent request", ErrConflict)
+	return err
 }
 func (s *Store) updateLocked(fn func(*State) error) error {
 	s.verifyPublishedLocked()

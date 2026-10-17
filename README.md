@@ -26,9 +26,9 @@ The optional classifier runs locally in Go and supplies label suggestions only. 
 ```mermaid
 flowchart TD
     P["Redmine + ESA plugin"] <-->|Scoped APIs / outbox poll and ack| E["ESA Go service"]
-    P --> D[("PostgreSQL: issues, outbox, optional ESA state")]
+    P --> D[("PostgreSQL: Redmine issues and outbox")]
     E -->|Default state adapter| S[("Atomic JSON, single writer")]
-    E -->|Optional transactional state API| P
+    E -->|Optional state store| G[("PostgreSQL: ESA's own database, one writer")]
     E <-->|Ticket + Issue directory path| A["Codex adapter: Routing → Engineering → Routing assignment"]
     E --> I[("Local Issue projection: proposals / solutions / investigating")]
     A -->|On-demand read-only search| I

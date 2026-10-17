@@ -11,8 +11,7 @@ import (
 // authoritative state and its revision. Apply commits one Update that changed
 // something, computed against Commit.Revision, and returns the new revision.
 // A failed Apply must leave the stored state as it was; the Store then keeps
-// its published state. Persisters whose stored revision can move on outside
-// this process return errStateCAS so the Store refreshes and retries.
+// its published state.
 type Persister interface {
 	Load() (State, uint64, error)
 	Apply(Commit) (uint64, error)
@@ -36,13 +35,6 @@ type Commit struct {
 type wholeStatePersister interface {
 	Persister
 	wholeState()
-}
-
-// refresher is implemented by persisters whose state can change outside this
-// process. The Store refreshes before every Update attempt and retries on
-// errStateCAS. changed is false when the known revision is still current.
-type refresher interface {
-	refresh(known uint64) (state State, revision uint64, changed bool, err error)
 }
 
 func initialState() State {
@@ -115,28 +107,4 @@ func (p *jsonPersister) Apply(c Commit) (uint64, error) {
 		return 0, err
 	}
 	return c.Revision + 1, nil
-}
-
-// backendPersister adapts a remote StateBackend (the Redmine state API): it
-// commits whole states with optimistic CAS and refreshes when they change.
-type backendPersister struct {
-	backend StateBackend
-}
-
-func (*backendPersister) wholeState() {}
-
-func (p *backendPersister) Load() (State, uint64, error) { return p.backend.Load() }
-
-func (p *backendPersister) Apply(c Commit) (uint64, error) {
-	return p.backend.Commit(c.State, c.Revision)
-}
-
-func (p *backendPersister) refresh(known uint64) (State, uint64, bool, error) {
-	if backend, ok := p.backend.(interface {
-		LoadIfChanged(uint64) (State, uint64, bool, error)
-	}); ok {
-		return backend.LoadIfChanged(known)
-	}
-	state, revision, err := p.backend.Load()
-	return state, revision, err == nil, err
 }

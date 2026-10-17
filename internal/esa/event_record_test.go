@@ -161,20 +161,3 @@ func TestLegacyEventsConvertOnLoad(t *testing.T) {
 		t.Fatal("rewritten file still copies the ticket into an accepted event")
 	}
 }
-
-func TestLegacyEventsConvertFromBackend(t *testing.T) {
-	e := testEngine(t)
-	receive(t, e, "accepted", fixture(e, "T1"))
-	legacy, err := os.ReadFile(legacyStateFile(t, e.Store.Snapshot(), ""))
-	if err != nil {
-		t.Fatal(err)
-	}
-	store, err := OpenBackendStore(&countingBackend{state: legacy})
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(store.verifyPublished)
-	if r := store.Snapshot().Events["accepted"]; r.Ticket != nil || r.SnapshotID == "" {
-		t.Fatal("backend-loaded legacy event was not compacted", r)
-	}
-}

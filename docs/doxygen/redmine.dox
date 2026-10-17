@@ -26,7 +26,7 @@ Accept JSON header. A separate report page contains findings and review forms.
 Filling metadata is reversible and does not save, forward or approve anything.
 
 @section redmine_storage State authority
-`app/controllers/esa_state_controller.rb` and `EsaBackendState` implement the
-optional authenticated transactional CAS authority. JSON and Redmine state are
-alternative adapters; neither is a replica fallback for the other.
+The plugin stores no ESA state. ESA keeps it in a JSON file or in its own
+Postgres database; the former Redmine state API was removed, and plugin
+migration `005_drop_esa_state_records.rb` drops its tables.
 */

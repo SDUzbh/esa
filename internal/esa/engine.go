@@ -115,10 +115,8 @@ func randomID(prefix string) string {
 	return prefix + hex.EncodeToString(b[:])
 }
 
+// Refresh advances the replay test clock to the stored replay time.
 func (e *Engine) Refresh() error {
-	if err := e.Store.Refresh(); err != nil {
-		return err
-	}
 	if e.Config.Replay.Enabled {
 		e.Store.mu.RLock()
 		at := e.Store.state.ReplayClock

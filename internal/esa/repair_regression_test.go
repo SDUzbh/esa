@@ -6,7 +6,6 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
-	"strconv"
 	"testing"
 	"time"
 )
@@ -99,34 +98,6 @@ func TestFailedAnalysisKeepsUsageAndAlerts(t *testing.T) {
 	run := e.Store.Snapshot().Runs[r.RunID]
 	if run.State != "failed" || run.Report.Usage.InputTokens != 123 || len(run.Report.Alerts) == 0 || len(e.Store.Snapshot().Solutions) != 0 {
 		t.Fatalf("failed spend or trust changed: %+v", run)
-	}
-}
-
-func TestUnchangedAuthoritySkipsArchiveTransfer(t *testing.T) {
-	seed, _ := OpenStore("")
-	state := seed.Snapshot()
-	revision := uint64(1)
-	fullReads := 0
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("If-None-Match") == strconv.Quote(strconv.FormatUint(revision, 10)) {
-			w.WriteHeader(http.StatusNotModified)
-			return
-		}
-		fullReads++
-		_ = json.NewEncoder(w).Encode(statePacket{State: state, Revision: revision})
-	}))
-	defer server.Close()
-	store, err := OpenBackendStore(HTTPStateBackend{URL: server.URL, Token: "123456789012345678901234"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err = store.Refresh(); err != nil || fullReads != 1 {
-		t.Fatal("unchanged archive was transferred", fullReads, err)
-	}
-	state.LastClaimedProject = "9"
-	revision++
-	if err = store.Refresh(); err != nil || fullReads != 2 || store.Snapshot().LastClaimedProject != "9" {
-		t.Fatal("changed authority was not refreshed", fullReads, err)
 	}
 }
 

@@ -35,7 +35,7 @@ JSON remains a single-process adapter with an exclusive writer lock. Stored even
 
 ## Postgres state store
 
-ESA can keep its state in its own Postgres database instead of the JSON file: one row per entity, written only where an update changed something, in one transaction per update. See the [storage design](STORAGE_DESIGN.md). Set `-database-url` or `ESA_DATABASE_URL`; the JSON `-store` is then not used. The retired `-state-url` is refused in every mode.
+ESA can keep its state in its own Postgres database instead of the JSON file: one row per entity, written only where an update changed something, in one transaction per update. See the [storage design](STORAGE_DESIGN.md). Set `-database-url` or `ESA_DATABASE_URL`; the JSON `-store` is then not used. The removed `-state-url` (`ESA_STATE_URL`) is refused in every mode.
 
 One-time setup with Compose (the private `.env` needs `ESA_DB_PASSWORD` and `ESA_DATABASE_URL`, see `deploy/redmine/.env.example`):
 
@@ -50,7 +50,7 @@ DOCKER_CONTEXT=colima-redmine docker-compose -f deploy/redmine/compose.yaml run 
 DOCKER_CONTEXT=colima-redmine docker-compose -f deploy/redmine/compose.yaml up -d esa
 ```
 
-The script is piped into the database container, so it needs no bind mount (Colima shares only the Issue directory). An installation that ran on the retired Redmine state API imports from it instead; see [below](#redmine-state-api-retired).
+The script is piped into the database container, so it needs no bind mount (Colima shares only the Issue directory).
 
 - **Import** runs in one transaction: it refuses a database that already has state, writes everything, reads it back and commits only if the stored state reproduces the source byte for byte, completely and as the working set ESA loads. It never modifies the source. It holds the JSON file lock and refuses to start while another ESA process holds the writer role.
 - **One writer.** A process waits as a **standby** until it holds the writer lock: `/healthz` answers 200 with `"role":"standby"`, `/healthz?role=active` and every `/v1/*` route answer 503, and no workers run. The writer bumps a term before loading; every commit is fenced on that term, so a process that lost the role can never commit. A standby takes over within about 5 seconds of a clean exit, or about 25 seconds after its connection dies.
@@ -59,22 +59,9 @@ The script is piped into the database container, so it needs no bind mount (Coli
 - **Not loaded into memory:** snapshots that no run, investigation contract or live membership references, membership history, and raw event payloads. They stay in the database: `GET /v1/snapshots/{id}` reads such a snapshot from storage on a separate connection, applies the same visibility checks, and does not load it into memory. If the database is unreachable it answers 503.
 - **Rollback:** the imported JSON file is unchanged, so unsetting `ESA_DATABASE_URL` returns to the state as of the import; changes made in Postgres afterwards are not exported back.
 
-## Redmine state API (retired)
+## Redmine state API (removed)
 
-ESA no longer runs on the plugin's `/esa/api/state` endpoints. With `-state-url` or `ESA_STATE_URL` set, ESA refuses to start and explains the migration instead of starting on a stale JSON file. The endpoints remain for one release, **disabled unless `ESA_STATE_API_ENABLED=1`**, so an installation that used them can import once into the Postgres store:
-
-```sh
-# In the private .env: ESA_DB_PASSWORD, ESA_DATABASE_URL and, for the import only, ESA_STATE_API_ENABLED=1.
-DOCKER_CONTEXT=colima-redmine docker-compose -f deploy/redmine/compose.yaml stop esa
-DOCKER_CONTEXT=colima-redmine docker-compose -f deploy/redmine/compose.yaml up -d db redmine
-DOCKER_CONTEXT=colima-redmine docker-compose -f deploy/redmine/compose.yaml exec -T db sh -s < deploy/redmine/postgres-init/10-esa-database.sh
-DOCKER_CONTEXT=colima-redmine docker-compose -f deploy/redmine/compose.yaml build esa
-DOCKER_CONTEXT=colima-redmine docker-compose -f deploy/redmine/compose.yaml run --rm esa -import-state-url http://redmine:3000/esa/api/state
-# Then remove ESA_STATE_URL and ESA_STATE_API_ENABLED from .env and start ESA on Postgres.
-DOCKER_CONTEXT=colima-redmine docker-compose -f deploy/redmine/compose.yaml up -d redmine esa
-```
-
-The import reads the whole state once (the API's 64 MiB limit still applies to that read), verifies it as described above, and never writes to Redmine. The state rows written by migration `003_create_esa_state_records.rb` are left untouched as a backup; they and the endpoints are removed in the next release.
+Earlier versions could keep ESA's state in Redmine's database through the plugin's `/esa/api/state` endpoints (`ESA_STATE_URL`). No installation used it, and it has been removed: plugin migration `005_drop_esa_state_records.rb` drops its two tables, and ESA refuses to start while `-state-url` or `ESA_STATE_URL` is set. Use the JSON store or the [Postgres state store](#postgres-state-store).
 
 ## Shutdown and cleanup
 
@@ -211,7 +198,6 @@ ruby scripts/test_esa_presentation.rb
 ruby scripts/test_esa_acknowledgement.rb
 node --test scripts/test_esa_ticket_ui.cjs
 python3 scripts/verify_label_frontend.py
-python3 scripts/verify_transactional_store.py
 python3 scripts/verify_shared_investigations.py
 python3 scripts/verify_sandbox_tools.py
 python3 scripts/verify_engineering_workspace.py

@@ -1,6 +1,7 @@
 package esa
 
 import (
+	"context"
 	"crypto/subtle"
 	"encoding/json"
 	"errors"
@@ -50,37 +51,50 @@ func decodeJSON(w http.ResponseWriter, r *http.Request, value any) error {
 	}
 	return nil
 }
-func projectScope(r *http.Request) []string {
-	ids := []string{}
-	for _, id := range strings.Split(r.Header.Get("X-ESA-Project-IDs"), ",") {
-		if id = strings.TrimSpace(id); id != "" {
-			ids = append(ids, id)
-		}
-	}
-	return ids
-}
-func allowed(r *http.Request, project string) bool {
-	for _, id := range projectScope(r) {
-		if id == project {
-			return true
-		}
-	}
-	return false
+
+// accessScope is a request's parsed X-ESA-Project-IDs and X-ESA-Ticket-IDs.
+// tickets is nil when the request has no ticket scope, which allows every
+// ticket. Handler parses it once per request: list endpoints check it for
+// each row, and the plugin sends up to 2,000 ticket IDs.
+type accessScope struct {
+	projects map[string]bool
+	tickets  map[string]bool
 }
 
-func ticketAllowed(r *http.Request, id string) bool {
-	ids, present := r.Header[http.CanonicalHeaderKey("X-ESA-Ticket-IDs")]
-	if !present {
-		return true
+type accessScopeKey struct{}
+
+func parseAccessScope(r *http.Request) accessScope {
+	scope := accessScope{projects: map[string]bool{}}
+	for _, id := range strings.Split(r.Header.Get("X-ESA-Project-IDs"), ",") {
+		if id = strings.TrimSpace(id); id != "" {
+			scope.projects[id] = true
+		}
 	}
-	for _, value := range ids {
-		for _, candidate := range strings.Split(value, ",") {
-			if candidate == id {
-				return true
+	if values, present := r.Header[http.CanonicalHeaderKey("X-ESA-Ticket-IDs")]; present {
+		scope.tickets = map[string]bool{}
+		for _, value := range values {
+			for _, id := range strings.Split(value, ",") {
+				scope.tickets[id] = true
 			}
 		}
 	}
-	return false
+	return scope
+}
+
+func requestScope(r *http.Request) accessScope {
+	if scope, ok := r.Context().Value(accessScopeKey{}).(accessScope); ok {
+		return scope
+	}
+	return parseAccessScope(r)
+}
+
+func allowed(r *http.Request, project string) bool {
+	return requestScope(r).projects[project]
+}
+
+func ticketAllowed(r *http.Request, id string) bool {
+	tickets := requestScope(r).tickets
+	return tickets == nil || tickets[id]
 }
 
 // Withhold a report if its case evidence is outside the user's issue visibility.
@@ -141,10 +155,12 @@ func (api *API) Handler() http.Handler {
 				writeJSON(w, 401, map[string]string{"error": "Authentication required."})
 				return
 			}
-			if len(projectScope(r)) == 0 {
+			scope := parseAccessScope(r)
+			if len(scope.projects) == 0 {
 				writeJSON(w, 403, map[string]string{"error": "An explicit authorized project scope is required."})
 				return
 			}
+			r = r.WithContext(context.WithValue(r.Context(), accessScopeKey{}, scope))
 			if err := api.Engine.Refresh(); err != nil {
 				writeJSON(w, 503, map[string]string{"error": "Authoritative ESA state is unavailable."})
 				return
@@ -242,8 +258,72 @@ func queryMatches(actual, wanted string) bool {
 func (api *API) tickets(w http.ResponseWriter, r *http.Request) {
 	s := api.Engine.Store.Snapshot()
 	q := r.URL.Query()
-	rows := []TicketRow{}
-	for _, t := range s.Tickets.All() {
+	var bounds [2]time.Time
+	for i, bound := range []string{"updated_from", "updated_to"} {
+		if value := q.Get(bound); value != "" {
+			at, err := time.Parse(time.RFC3339, value)
+			if err != nil {
+				writeError(w, fmt.Errorf("%w: time filters require RFC3339", ErrInvalid))
+				return
+			}
+			bounds[i] = at
+		}
+	}
+	sortKey := q.Get("sort")
+	if sortKey == "" {
+		sortKey = "updated_at"
+	}
+	if !contains([]string{"id", "subject", "project", "tracker", "status", "esa_state", "assignee", "source", "updated_at"}, sortKey) {
+		writeError(w, fmt.Errorf("%w: unsupported sort column", ErrInvalid))
+		return
+	}
+	direction := q.Get("direction")
+	if direction == "" {
+		direction = "desc"
+	}
+	if direction != "asc" && direction != "desc" {
+		writeError(w, fmt.Errorf("%w: direction must be asc or desc", ErrInvalid))
+		return
+	}
+	key := func(t Ticket, state string, updated time.Time) string {
+		switch sortKey {
+		case "id":
+			return t.ID
+		case "subject":
+			return lower(t.Subject)
+		case "project":
+			return lower(t.Project)
+		case "tracker":
+			return lower(t.Tracker)
+		case "status":
+			return lower(t.Status)
+		case "assignee":
+			return lower(t.Assignee)
+		case "source":
+			return t.Source
+		case "esa_state":
+			return state
+		}
+		return updated.UTC().Format("2006-01-02T15:04:05.000000000Z")
+	}
+	// A ticket-scoped request (every plugin request) visits only its scoped
+	// tickets, so the page costs O(scope), not O(archive).
+	candidates := s.Tickets.All()
+	if scoped := requestScope(r).tickets; scoped != nil {
+		candidates = func(yield func(string, Ticket) bool) {
+			for id := range scoped {
+				if t, ok := s.Tickets.Lookup(id); ok && !yield(id, t) {
+					return
+				}
+			}
+		}
+	}
+	type sortedRow struct {
+		row TicketRow
+		key string
+	}
+	rows := []sortedRow{}
+	for _, t := range candidates {
 		if t.ForwardedBy == "" || t.ForwardedAt.IsZero() || t.Private || !ticketAllowed(r, t.ID) || !allowed(r, t.ProjectID) || !queryMatches(t.ProjectID, q.Get("project_id")) || !queryMatches(t.Tracker, q.Get("tracker")) || !queryMatches(t.Status, q.Get("status")) || !queryMatches(t.Assignee, q.Get("assignee")) || !queryMatches(t.Source, q.Get("source")) {
 			continue
 		}
@@ -269,78 +349,15 @@ func (api *API) tickets(w http.ResponseWriter, r *http.Request) {
 		if search := lower(q.Get("q")); search != "" && !strings.Contains(lower(t.ID+" "+t.SourceKey+" "+t.Subject), search) {
 			continue
 		}
-		valid := true
-		for _, bound := range []string{"updated_from", "updated_to"} {
-			if value := q.Get(bound); value != "" {
-				at, err := time.Parse(time.RFC3339, value)
-				if err != nil {
-					writeError(w, fmt.Errorf("%w: time filters require RFC3339", ErrInvalid))
-					return
-				}
-				if bound == "updated_from" && updated.Before(at) || bound == "updated_to" && updated.After(at) {
-					valid = false
-				}
-			}
+		if !bounds[0].IsZero() && updated.Before(bounds[0]) || !bounds[1].IsZero() && updated.After(bounds[1]) {
+			continue
 		}
-		if valid {
-			rows = append(rows, row)
-		}
-	}
-	sortKey := q.Get("sort")
-	if sortKey == "" {
-		sortKey = "updated_at"
-	}
-	if !contains([]string{"id", "subject", "project", "tracker", "status", "esa_state", "assignee", "source", "updated_at"}, sortKey) {
-		writeError(w, fmt.Errorf("%w: unsupported sort column", ErrInvalid))
-		return
-	}
-	direction := q.Get("direction")
-	if direction == "" {
-		direction = "desc"
-	}
-	if direction != "asc" && direction != "desc" {
-		writeError(w, fmt.Errorf("%w: direction must be asc or desc", ErrInvalid))
-		return
-	}
-	key := func(row TicketRow) string {
-		t := row.Ticket
-		switch sortKey {
-		case "id":
-			return t.ID
-		case "subject":
-			return lower(t.Subject)
-		case "project":
-			return lower(t.Project)
-		case "tracker":
-			return lower(t.Tracker)
-		case "status":
-			return lower(t.Status)
-		case "assignee":
-			return lower(t.Assignee)
-		case "source":
-			return t.Source
-		case "esa_state":
-			if row.LatestRun != nil && !t.Closed {
-				return row.LatestRun.State
-			}
-			if row.Case != nil {
-				return row.Case.State
-			}
-		default:
-			at := t.UpdatedAt
-			if row.LatestRun != nil && !t.Closed {
-				at = row.LatestRun.UpdatedAt
-			} else if row.Case != nil {
-				at = row.Case.UpdatedAt
-			}
-			return at.UTC().Format("2006-01-02T15:04:05.000000000Z")
-		}
-		return ""
+		rows = append(rows, sortedRow{row, key(t, state, updated)})
 	}
 	sort.Slice(rows, func(i, j int) bool {
-		a, b := key(rows[i]), key(rows[j])
+		a, b := rows[i].key, rows[j].key
 		if a == b {
-			return rows[i].Ticket.ID < rows[j].Ticket.ID
+			return rows[i].row.Ticket.ID < rows[j].row.Ticket.ID
 		}
 		if direction == "asc" {
 			return a < b
@@ -370,7 +387,11 @@ func (api *API) tickets(w http.ResponseWriter, r *http.Request) {
 	if end > total {
 		end = total
 	}
-	writeJSON(w, 200, map[string]any{"tickets": rows[start:end], "total_count": total, "page": page, "limit": limit})
+	pageRows := make([]TicketRow, 0, end-start)
+	for _, row := range rows[start:end] {
+		pageRows = append(pageRows, row.row)
+	}
+	writeJSON(w, 200, map[string]any{"tickets": pageRows, "total_count": total, "page": page, "limit": limit})
 }
 
 func (api *API) ticket(w http.ResponseWriter, r *http.Request) {

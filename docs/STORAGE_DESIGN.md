@@ -114,12 +114,36 @@ Why the event change is safe:
 
 **The hot snapshot set** is loaded at startup:
 
-- the latest snapshot of every ticket,
 - every snapshot referenced by a run (`Run.SnapshotID`),
 - every snapshot referenced by an investigation contract,
-- every snapshot referenced by a membership link that is not detached. `detachChangedMemberships` reads `Snapshots[link.SnapshotID]` for tentative links.
+- every snapshot referenced by a membership link that is not detached. `detachChangedMemberships` and `taskHasActiveMembers` read `Snapshots[link.SnapshotID]` for tentative links.
 
-New snapshots start hot. All other snapshots are audit data, read only by `GET /v1/snapshots/{id}`. That handler falls back to the database outside any `Update`.
+The `latest_snapshot` *map* (ticket → snapshot ID) is always loaded, but the latest snapshot's *body* does not need to be:
+- `rowFor` and `ReviewMembership` read only the ID.
+- `enqueue` reads the body only right after `captureSnapshot` creates it in the same callback, and snapshots created since startup stay hot.
+
+This matters for an imported archive, which is mostly closed tickets: their snapshots have no run or link. In the real Kafka archive, 5,284 of 19,869 snapshots are hot.
+
+All other snapshots are audit data, read only by `GET /v1/snapshots/{id}`. That handler falls back to the database outside any `Update`.
+
+### Memory
+
+These measurements are from a temporary probe, since deleted. It ran all **19,869 real Kafka issues** from `data/jira/raw` through ESA's Jira parser (`parseJira`) and `Receive`:
+- 14,585 closed and 5,284 open tickets.
+- Half the open tickets carry the largest real Agent report from `runtime/ui-acceptance-20261014` (18 KB).
+- Real ticket text averages 4.6 KB (median 1.3 KB, p99 49 KB), 92 MB in total.
+
+The figure is live Go heap after loading state, the way a restart does:
+
+| Tickets | Whole-state JSON today | Heap today | Heap after Phase 3 | Snapshots in memory |
+|---|---|---|---|---|
+| 5,000 | 120 MB | 128 MB | **65 MB** | 572 / 5,000 |
+| 19,869 (full archive) | 492 MB | 509 MB | **280 MB** | 5,284 / 19,869 |
+
+- With the default `GOGC=100`, process memory can reach about twice the live heap between collections, so plan for **about 0.6 GB** for the full archive. `GOMEMLIMIT` can cap it.
+- The rest of the 280 MB is mostly ticket text plus `Case.Summary` and `CaseHistory` copies of the descriptions. Sharing those strings at load time is a possible later reduction, out of scope here.
+- The one-time import holds the 492 MB JSON source and its decoded state together. Expect a peak of 2–3 GB, offline, once.
+- Today every write re-encodes the 492 MB state. After Phase 3, a write encodes only the changed rows.
 
 ### Schema
 
@@ -184,15 +208,56 @@ CREATE TABLE esa.schema_migrations  (version int PRIMARY KEY, applied_at timesta
 
 The JSON adapter keeps its whole-file atomic write. It uses the same diff only to skip writes when nothing changed.
 
-## Startup, single writer and standby
+## Single writer and standby
 
-1. Open a dedicated lock connection and loop on `SELECT pg_try_advisory_lock(<esa key>)` every 5 s. While waiting, the process is a **standby**: `/healthz` reports `{"role":"standby"}`, every `/v1/*` route returns 503, and no workers run.
-2. Once it holds the lock: `UPDATE esa.meta SET writer_term = writer_term + 1 RETURNING writer_term`, apply schema migrations, then load the hot tables into memory and validate them (`validateState`).
-3. Start the HTTP API, the outbox poller and the workers. `Engine.Recover` and `recoverInvestigations` handle leases left by the previous writer, exactly as after a restart today.
-4. Check the lock connection every 5 s. If it fails, stop accepting writes and **exit**. Compose restarts the process, and it re-enters step 1.
-5. **Term fencing** covers a writer that has lost its lock but doesn't know it yet. Its next `UPDATE ... WHERE writer_term = $old` matches nothing, because the new writer already bumped the term. That Update fails with `ErrLostWriter`, and the process exits.
+The guarantee comes from two layers:
+- **Safety** (no two processes ever both commit) relies **only on term fencing inside the commit transaction**.
+- **The advisory lock is for liveness and efficiency.** It decides who *should* write and lets a standby wait without racing. It is never trusted on its own.
 
-Investigation leases (`Owner`/`Epoch`) are unchanged. They are in-memory state persisted like any other entity.
+### Mechanism
+
+**Taking over.** The order of these steps is part of the correctness argument:
+1. On a dedicated `pgx.Conn` (not a pool), loop on `SELECT pg_try_advisory_lock(<esa key>)` every 5 s.
+   - A session-level lock dies with its connection, and a single `pgx.Conn` never reconnects behind our back.
+   - On this connection, `SET idle_session_timeout = 0`, and enable TCP keepalives (`tcp_keepalives_idle=10`, `interval=5`, `count=3`) so the server detects a dead peer.
+2. Once the lock is held, **bump the term in its own committed transaction**: `UPDATE esa.meta SET writer_term = writer_term + 1 RETURNING writer_term`.
+3. **Only after that commit**, apply schema migrations, load the in-memory tables, validate them, and record the loaded `meta.revision` as the base.
+4. Start the HTTP API, the outbox poller and the workers. `Engine.Recover` and `recoverInvestigations` handle leases left by the previous writer, exactly as after a restart today.
+
+**While writing.** Every commit starts with `UPDATE esa.meta ... WHERE revision = $expected AND writer_term = $term`. Zero rows means `ErrLostWriter`, which is handled as described under Losing the lock.
+
+**Watching the lock** every 5 s on the lock connection: `SELECT pg_backend_pid()` must equal the PID recorded at acquisition, and `pg_locks` must show our advisory key `granted` for that PID.
+
+**Losing the lock** (a check fails, the lock connection errors, or an `ErrLostWriter`):
+1. **At once**, switch `/v1/*` to 503 and stop starting new `Update`s.
+2. Cancel the workers and the outbox poller.
+3. **Exit.** Compose's `restart: unless-stopped` restarts the process as a standby.
+
+**Standby behavior:**
+- `/healthz` returns 200 with `{"role":"standby"}`, so a supervisor doesn't kill it.
+- `/healthz?role=active` returns 503, so a health-aware proxy can route only to the writer.
+- Every `/v1/*` route returns 503 `"ESA standby: not the active writer"`. The plugin client already turns a non-2xx response into an "ESA unavailable" error.
+- No workers or outbox poller run.
+- **Deployment rule:** never put an active writer and a standby behind one round-robin service name. Compose runs a single instance by default. For high availability, run the standby as a separate service and route by `role=active`.
+
+### Why it is correct
+
+- **One row serializes everything.** Every commit and every takeover updates the single `esa.meta` row, so Postgres row locking orders them. Under `READ COMMITTED`, an `UPDATE` that waited for a concurrent update of the same row **re-checks its `WHERE` clause against the newly committed row**. There are only two orderings:
+  - **The old writer's commit gets the row first.** It commits, and then the takeover's term bump proceeds. The new writer loads *after* its bump commits (step 3), so it sees the old commit.
+  - **The bump gets the row first.** The old writer's `UPDATE ... WHERE writer_term = $old` is re-checked, matches nothing, and rolls back with `ErrLostWriter`.
+- **So after any term bump, only the new term can commit, and the new writer's base includes every commit from earlier terms.** Loading *before* the bump would allow a stale base. The `revision` check would then fail the first write, but step order rules it out anyway.
+- **The lock's role.** It only stops two processes from both *trying* to write and fencing each other. If the lock is lost without the writer noticing (for example a network partition while the process lives on), fencing still prevents any commit. The worst case is a few seconds of stale **reads** from the old process's memory, bounded by the 5 s check interval.
+- **How long takeover waits.** A crashed writer's session is dropped when its TCP connection dies: immediately on a clean exit, or after about 25 s (10 + 3×5) of keepalive failure. The standby then gets the lock on its next 5 s poll.
+
+**Effects outside the database during a takeover:**
+- **Outbox acknowledgements:** `SyncRedmine` acknowledges an event only after `Receive` commits. A fenced `Receive` fails, so the event is not acknowledged and is redelivered to the new writer. Event idempotency covers an acknowledgement that was lost after a successful commit.
+- **Provider calls in flight:** the old writer cannot record their results (fenced). The new writer finds the investigation's lease still owned by the old process. When the lease expires, `recoverInvestigations` marks it failed with "spend is uncertain", which is today's semantics after a crash. Provider work already started on the host may finish unrecorded, as with a crash today.
+- **Investigation leases** (`Owner`/`Epoch`) are unchanged. They are state persisted like any other entity.
+
+### Requirements
+
+- Connect directly to Postgres, or through **session** pooling. PgBouncer *transaction* pooling breaks session advisory locks and is not supported.
+- The advisory key is a fixed 64-bit constant derived from `"esa-writer"`, documented in `ESA_OPERATIONS.md`.
 
 ## Migration
 
@@ -223,8 +288,9 @@ After migration:
 - **Database:** an init script creates database `esa` and role `esa` with privileges only on `esa`.
   - `docker-entrypoint-initdb.d` runs only on a new volume, so existing installs need a documented one-time SQL step.
   - The password `ESA_DB_PASSWORD` is a new, separate secret. This is a first step for Issue 5.
-- **Dependency:** `pgx/v5` is pure Go, so the static `CGO_ENABLED=0` build into the `scratch` image is unaffected.
-  - Proposal: commit `vendor/`. Builds stay offline-capable, and every dependency change is reviewable in a diff.
+- **Dependency:** `github.com/jackc/pgx/v5` is a Go **library** (a module of packages) compiled into the `esa` binary. It is not a separate program or service; ESA talks to the existing Postgres server through it. It is pure Go, so the static `CGO_ENABLED=0` build into the `scratch` image is unaffected.
+  - pgx pulls in a few small modules of its own; `go mod graph` will list them exactly when it is added.
+  - Proposal: commit `vendor/`, a copy of the library source, so builds stay offline-capable and every dependency change shows up as a reviewable diff.
   - `docs/DEPENDENCIES.md` and README's "No external Go modules" line need updating.
 - **CI:** add a pinned `postgres:17` service container (by digest) to `.github/workflows/ci.yml`. Tests use `ESA_TEST_DATABASE_URL` and skip locally when it is unset; in CI it is required.
 
@@ -236,7 +302,7 @@ After migration:
 | A failed callback leaves memory unchanged | `detach` | Unchanged | Existing `TestUpdateFailureLeaves…` |
 | A failed write leaves memory unchanged | Write before publish | `Apply` before publish; unknown outcome settled by `meta.revision` | Fault injection: fail before, during and after `COMMIT` |
 | Multi-entity changes are atomic | Whole-file rename | One Postgres transaction | Fail after N of M rows; database and memory unchanged |
-| Single writer | `flock` / Redmine CAS | Advisory lock plus `writer_term` fencing | Two-process test: kill the lock connection; the old writer's next `Update` fails |
+| Single writer | `flock` / Redmine CAS | Term fencing in every commit (safety) plus an advisory lock (liveness); see [Why it is correct](#why-it-is-correct) | The fencing tests in test plan item 5 |
 | Stale investigation owners are rejected | Lease/epoch in state | Unchanged | Existing pipeline and lease tests |
 | Snapshots and solution revisions are immutable | Plugin check | Database trigger plus a Go check | Trigger test |
 | Nothing after the forwarding cutoff is used | State data | Unchanged; `CaseHistory` stays hot | Existing temporal tests, plus the hot-only reload |
@@ -248,7 +314,13 @@ After migration:
 2. **Diff cross-check in the guard:** in tests, every `Update` compares the bitwise diff against a full-encoding diff, across the whole `internal/esa` suite.
 3. **Store contract suite for both adapters:** the same tests run against the JSON and Postgres persisters. They cover idempotency, failed callbacks, failed writes, unknown commit outcomes and no-op `Update`s.
 4. **Reload-after-every-Update mode** (Postgres, tests only): after each commit, throw memory away, reload from the database (hot set only), and require the same encoding. Running the whole suite in this mode catches anything not persisted, and any read that the hot set misses.
-5. **Fencing:** standby waiting, lock loss, term bump, and the old writer's `ErrLostWriter` exit.
+5. **Single writer and fencing.** These run against real Postgres with two connections, and use explicit `BEGIN` and pauses to force each interleaving:
+   - *Old commit first:* the old writer locks `meta` and commits; the bump waits, then commits. The new writer's load contains the old commit.
+   - *Bump first:* the bump commits, then the old writer's `UPDATE ... WHERE writer_term = $old` matches no row and returns `ErrLostWriter`. The database and the new writer are unchanged.
+   - *Load order:* a writer that loaded before the bump cannot commit (revision mismatch). This pins the takeover step order.
+   - *Lock loss:* `pg_terminate_backend` on the lock connection. Within one check interval the writer returns 503 on `/v1/*` and exits, and the standby takes the lock on its next poll.
+   - *Outbox across a takeover:* an event whose `Receive` was fenced is not acknowledged, and the new writer receives it exactly once.
+   - *Standby endpoints:* `/healthz` returns `role=standby`, `/healthz?role=active` returns 503, and `/v1/*` returns 503.
 6. **Migration:** fixtures that include legacy runs without `SnapshotID`, unknown `StoredFields`, private tickets, rejections and `Raw` events. Import, verify byte for byte, refuse a non-pristine database, and leave the source untouched.
 7. **Cold reads:** `GET /v1/snapshots/{id}` for a cold snapshot, and Issue-directory export with only the hot set loaded.
 8. **Benchmarks:** the existing store benchmarks gain a Postgres variant at 1k, 10k and 20k. A 20k ingest script checks the "minutes" target. The ticket GET for a ticket *with* an Issue is measured too.
@@ -269,13 +341,13 @@ Each step leaves `main` releasable. Steps 1–3 also speed up the JSON adapter.
 ## Risks
 
 - **`unsafe` comparison.** It is correct only while the immutability contract holds. The test guard enforces the contract and cross-checks the diff. Comparing values of the same Go type is stable across Go versions.
-- **Memory footprint.** The working set stays in RAM. It is expected to be a few hundred MB at 20k tickets after normalization, but this is **not measured yet**; step 8 measures it. Run reports are the most likely next candidate to make cold.
+- **Memory footprint.** The working set stays in RAM: 280 MB of live heap for the full 19,869-issue Kafka archive (see [Memory](#memory)), about 0.6 GB of process memory with the default `GOGC`. Benchmark step 8 tracks it as the data grows. Run reports and `Case.Summary` copies are the next candidates if it ever needs to shrink.
 - **Postgres availability.** ESA fails closed when the database is unavailable, as it does today with the Redmine backend: `/v1/*` returns 503 and no writes are accepted.
 - **Diff cost stays O(entries)** (24 ms at 20k). That is acceptable for the targets. The `Table[V]` refactor is the fallback.
 
-## Open questions
+## Review answers and open questions
 
-1. Is a standby that returns 503 on `/v1/*` acceptable? Compose would still run a single ESA instance by default.
-2. Should `pgx` be vendored (proposed), or fetched by CI?
-3. Run reports and `Case.Summary` stay in memory for now. Should we revisit after the 20k memory measurement?
-4. Should the plugin's `/esa/api/state` endpoints be removed one release after migration?
+1. **Standby returning 503: accepted** (2026-10-17), on condition that the mechanism is correct. See [Single writer and standby](#single-writer-and-standby) for the mechanism, the correctness argument and the interleaving tests.
+2. **Vendoring `pgx`:** still open. The proposal is to commit `vendor/` (see [Configuration and deployment](#configuration-and-deployment)).
+3. **Memory:** measured at 280 MB of live heap for the full archive (see [Memory](#memory)). Run reports and `Case.Summary` stay in memory.
+4. **Plugin `/esa/api/state` endpoints: remove** them one release after migration, once no installation still uses them (2026-10-17).

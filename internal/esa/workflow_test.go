@@ -23,10 +23,7 @@ func testEngine(t testing.TB) *Engine {
 	if err = json.Unmarshal(b, &config); err != nil {
 		t.Fatal(err)
 	}
-	store, err := OpenStore("")
-	if err != nil {
-		t.Fatal(err)
-	}
+	store := newTestStore(t)
 	e, err := NewEngine(store, config)
 	if err != nil {
 		t.Fatal(err)

@@ -19,16 +19,16 @@ This repository contains ESA code and deployment definitions. Redmine is referen
 
 Redmine owns source issues and user permissions. The Ruby ESA plugin provides the UI, imports and a durable forwarding outbox stored in PostgreSQL. The Go service polls the outbox and acknowledges events after committing them; the plugin calls its scoped HTTP APIs to display results and submit human reviews.
 
-The Go service builds scoped local Issue directories and runs a bounded pipeline: intake routing, up to three engineering workers, then assignment routing. A persisted `investigating` claim lets matching tickets join work already in progress. It uses atomic JSON by default. Matching tickets share investigations and reviewed solutions. A transactional Redmine PostgreSQL adapter can replace JSON as the single state authority. The Codex Routing Agent searches this directory on demand. Reuse skips engineering; for new problems, the adapter resolves registered source and the engineering Agent plans approved tools and returns read-only findings plus an Issue grouping request. Routing Agent makes the final membership decision.
+The Go service builds scoped local Issue directories and runs a bounded pipeline: intake routing, up to three engineering workers, then assignment routing. A persisted `investigating` claim lets matching tickets join work already in progress. It uses atomic JSON by default. Matching tickets share investigations and reviewed solutions. An ESA-owned Postgres store can replace JSON as the single state authority, with one active writer and an optional standby ([Postgres state store](docs/ESA_OPERATIONS.md#postgres-state-store)). The Codex Routing Agent searches this directory on demand. Reuse skips engineering; for new problems, the adapter resolves registered source and the engineering Agent plans approved tools and returns read-only findings plus an Issue grouping request. Routing Agent makes the final membership decision.
 
 The optional classifier runs locally in Go and supplies label suggestions only. Human corrections are exported to the independent `esa-classifier` CLI for training and testing; an operator promotes a tested model and restarts the service. Classification does not control manual forwarding or engineering routing.
 
 ```mermaid
 flowchart TD
     P["Redmine + ESA plugin"] <-->|Scoped APIs / outbox poll and ack| E["ESA Go service"]
-    P --> D[("PostgreSQL: issues, outbox, optional ESA state")]
+    P --> D[("PostgreSQL: Redmine issues and outbox")]
     E -->|Default state adapter| S[("Atomic JSON, single writer")]
-    E -->|Optional transactional state API| P
+    E -->|Optional state store| G[("PostgreSQL: ESA's own database, one writer")]
     E <-->|Ticket + Issue directory path| A["Codex adapter: Routing → Engineering → Routing assignment"]
     E --> I[("Local Issue projection: proposals / solutions / investigating")]
     A -->|On-demand read-only search| I
@@ -85,7 +85,7 @@ DOCKER_CONTEXT=colima-redmine docker-compose -f deploy/redmine/compose.yaml buil
 DOCKER_CONTEXT=colima-redmine docker-compose -f deploy/redmine/compose.yaml up -d
 ```
 
-The build produces Linux ARM64 `bin/esa` and host binaries for `esa-host`, `esa-replay`, `esa-codex` and `esa-classifier`. Set `ESA_GO_ARCH=amd64` for an AMD64 service deployment. No external Go modules or Python packages are required. Building does not activate an existing deployment: rebuild and restart its images to use updated code. The Redmine service runs plugin migrations at startup, including the migration adding manual forwarding provenance to the outbox.
+The build produces Linux ARM64 `bin/esa` and host binaries for `esa-host`, `esa-replay`, `esa-codex` and `esa-classifier`. Set `ESA_GO_ARCH=amd64` for an AMD64 service deployment. The Go service has one external module, the Postgres driver `github.com/jackc/pgx/v5`, pinned by `go.sum`; no Python packages are required. Building does not activate an existing deployment: rebuild and restart its images to use updated code. The Redmine service runs plugin migrations at startup, including the migration adding manual forwarding provenance to the outbox.
 
 Stop ESA host processes, Redmine services and temporary test environments, then shut
 down the dedicated Colima VM:

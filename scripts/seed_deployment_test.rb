@@ -2,9 +2,10 @@
 require 'json'
 raise 'Not a deployment fixture' unless ENV['ESA_DEPLOYMENT_TEST'] == '1'
 raise 'Refusing to seed an existing installation' if Project.exists? || User.where(login: 'deployment_support').exists?
-%w[esa_events esa_ticket_sources esa_state_records].each do |table|
+%w[esa_events esa_ticket_sources].each do |table|
   raise "Plugin migration missing: #{table}" unless ActiveRecord::Base.connection.table_exists?(table)
 end
+raise 'Plugin migration 005 missing: esa_state_records still exists' if ActiveRecord::Base.connection.table_exists?('esa_state_records')
 Redmine::DefaultData::Loader.load('en') if Redmine::DefaultData::Loader.no_data?
 Setting.default_language = 'en'
 project = Project.create!(name: 'Deployment acceptance', identifier: 'deployment-check', is_public: false)

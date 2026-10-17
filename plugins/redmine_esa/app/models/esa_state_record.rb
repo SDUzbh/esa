@@ -1,2 +1,0 @@
-class EsaStateRecord < ApplicationRecord
-end

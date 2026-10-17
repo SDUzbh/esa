@@ -131,7 +131,7 @@ func TestClassifierPredictionHumanFeedbackExportAndPersistence(t *testing.T) {
 	if w.Code != 200 || !strings.Contains(w.Body.String(), `"reviewer":"engineer"`) {
 		t.Fatal("ticket view missing human feedback", w.Body)
 	}
-	loaded, err := OpenStore(e.Store.path)
+	loaded, err := OpenStore(e.Store.persister.(*jsonPersister).path)
 	if err != nil || len(loaded.Snapshot().ClassifierFeedback) != 1 {
 		t.Fatal("feedback not durable", err)
 	}

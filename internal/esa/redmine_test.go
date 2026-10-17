@@ -160,7 +160,7 @@ func TestSyncRedmineRejectsReusedEventIDWithoutTouchingOriginal(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := e.Store.Snapshot()
-	if s.Events["redmine_event_1"].Ticket.Subject != original.Subject || s.Receipts["redmine_event_1"].Action == "" {
+	if s.Events["redmine_event_1"].TicketHash != hash(s.Snapshots[s.Events["redmine_event_1"].SnapshotID].Ticket) || s.Snapshots[s.Events["redmine_event_1"].SnapshotID].Ticket.Subject != original.Subject || s.Receipts["redmine_event_1"].Action == "" {
 		t.Fatal("original accepted event or receipt changed")
 	}
 	if !strings.Contains(s.Rejections["redmine_event_1"].Reason, "reused with different content") || len(outbox.acked) != 2 {

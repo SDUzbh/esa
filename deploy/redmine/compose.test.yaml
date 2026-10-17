@@ -12,6 +12,7 @@ services:
     image: ${ESA_TEST_PROJECT}-esa
     environment:
       ESA_STATE_URL: ''
+      ESA_DATABASE_URL: ''
       ESA_ANALYZER_URL: http://fixture:8091/analyze
     depends_on:
       - fixture

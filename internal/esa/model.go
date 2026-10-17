@@ -70,6 +70,38 @@ type Event struct {
 	Raw         json.RawMessage `json:"raw,omitempty"`
 }
 
+// EventRecord is the stored form of a received forwarding event. An event that
+// captured a snapshot references it instead of copying the ticket; events that
+// captured none (ignored stale or self events) keep their own Ticket, so no
+// forwarded content is dropped. TicketHash keeps event-ID idempotency exact.
+type EventRecord struct {
+	ID          string          `json:"id"`
+	Origin      string          `json:"origin"`
+	Force       bool            `json:"force,omitempty"`
+	ForwardedBy string          `json:"forwarded_by"`
+	ForwardedAt time.Time       `json:"forwarded_at"`
+	OccurredAt  time.Time       `json:"occurred_at"`
+	ReceivedAt  time.Time       `json:"received_at"`
+	TicketID    string          `json:"ticket_id"`
+	TicketHash  string          `json:"ticket_hash"`
+	SnapshotID  string          `json:"snapshot_id,omitempty"`
+	Ticket      *Ticket         `json:"ticket,omitempty"`
+	Raw         json.RawMessage `json:"raw,omitempty"`
+}
+
+// UnmarshalJSON also reads events stored before EventRecord, which carried
+// only a full ticket copy; compactLegacyEvents later drops redundant copies.
+func (r *EventRecord) UnmarshalJSON(data []byte) error {
+	type plain EventRecord
+	if err := json.Unmarshal(data, (*plain)(r)); err != nil {
+		return err
+	}
+	if r.TicketHash == "" && r.Ticket != nil {
+		r.TicketID, r.TicketHash = r.Ticket.ID, hash(*r.Ticket)
+	}
+	return nil
+}
+
 type Config struct {
 	Version    string           `json:"version"`
 	Budget     Budget           `json:"budget"`
@@ -299,7 +331,7 @@ type State struct {
 	ClassifierFeedback    map[string]ClassifierFeedback   `json:"classifier_feedback,omitempty"`
 	SchemaVersion         int                             `json:"schema_version"`
 	Tickets               map[string]Ticket               `json:"tickets"`
-	Events                map[string]Event                `json:"events"`
+	Events                map[string]EventRecord          `json:"events"`
 	Receipts              map[string]Receipt              `json:"receipts"`
 	Rejections            map[string]EventRejection       `json:"event_rejections,omitempty"`
 	Runs                  map[string]Run                  `json:"runs"`

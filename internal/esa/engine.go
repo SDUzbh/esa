@@ -115,10 +115,8 @@ func randomID(prefix string) string {
 	return prefix + hex.EncodeToString(b[:])
 }
 
+// Refresh advances the replay test clock to the stored replay time.
 func (e *Engine) Refresh() error {
-	if err := e.Store.Refresh(); err != nil {
-		return err
-	}
 	if e.Config.Replay.Enabled {
 		e.Store.mu.RLock()
 		at := e.Store.state.ReplayClock
@@ -254,11 +252,13 @@ func (e *Engine) Receive(event Event) (Receipt, error) {
 		}
 	}
 	event.Ticket = t
+	ticketHash := hash(t)
 	var receipt Receipt
 	err := e.update(func(s *State) error {
 		previousRunID := s.Latest[t.ID]
+		record := EventRecord{ID: event.ID, Origin: event.Origin, Force: event.Force, ForwardedBy: event.ForwardedBy, ForwardedAt: event.ForwardedAt, OccurredAt: event.OccurredAt, ReceivedAt: event.ReceivedAt, TicketID: t.ID, TicketHash: ticketHash, Raw: event.Raw}
 		if old, ok := s.Events[event.ID]; ok {
-			if hash(old.Ticket) != hash(t) || old.Origin != event.Origin || old.Force != event.Force {
+			if old.TicketHash != ticketHash || old.Origin != event.Origin || old.Force != event.Force {
 				return reject(fmt.Errorf("%w: event ID was reused with different content", ErrConflict))
 			}
 			receipt = s.Receipts[event.ID]
@@ -278,7 +278,7 @@ func (e *Engine) Receive(event Event) (Receipt, error) {
 				e.withdrawSourceSolutions(s, t.ID, "Source was reopened or its applicability scope changed")
 			}
 			s.Tickets[t.ID] = t
-			captureSnapshot(s, event)
+			record.SnapshotID = captureSnapshot(s, event)
 			e.detachChangedMemberships(s, t)
 			if t.Private {
 				if c, ok := s.Cases["case_"+hash(t.ID)[:24]]; ok && c.State != "invalidated" {
@@ -314,7 +314,12 @@ func (e *Engine) Receive(event Event) (Receipt, error) {
 			touchTicketIssue(s, t.ID, now)
 		}
 		e.invalidateApplications(s)
-		s.Events[event.ID] = event
+		if record.SnapshotID == "" {
+			// No snapshot holds this ticket; keep it with the event.
+			ticket := t
+			record.Ticket = &ticket
+		}
+		s.Events[event.ID] = record
 		s.Receipts[event.ID] = receipt
 		return nil
 	})

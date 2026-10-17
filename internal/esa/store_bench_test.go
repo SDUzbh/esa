@@ -8,6 +8,7 @@ package esa
 // ESA_BENCH_SIZES overrides the ticket counts, e.g. ESA_BENCH_SIZES=1000,10000.
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -16,6 +17,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 var benchDescription = strings.Repeat("stack trace line at org.apache.kafka.Foo(Foo.java:123)\n", 40)
@@ -59,7 +61,7 @@ func seedClosedTickets(b *testing.B, n int) *Engine {
 			ticket := s.Tickets["K-0"]
 			ticket.ID, ticket.SourceKey = ticketID, ticketID
 			s.Tickets[ticketID] = ticket
-			event.ID, event.Ticket = eventID, ticket
+			event.ID, event.TicketID, event.TicketHash, event.SnapshotID = eventID, ticketID, hash(ticket), snapshotIDFor(eventID)
 			s.Events[eventID] = event
 			snapshot.ID, snapshot.EventID, snapshot.Ticket, snapshot.Hash = "snapshot_"+hash(eventID), eventID, ticket, hash(ticket)
 			s.Snapshots[snapshot.ID] = snapshot
@@ -173,6 +175,42 @@ func BenchmarkTicketGET(b *testing.B) {
 				handler.ServeHTTP(w, req)
 				if w.Code != http.StatusOK {
 					b.Fatalf("GET returned %d: %s", w.Code, w.Body.String())
+				}
+			}
+		})
+	}
+}
+
+// BenchmarkPostgresUpdateOneTicket measures a one-ticket write on the Postgres
+// store; it needs ESA_TEST_DATABASE_URL and skips without it.
+func BenchmarkPostgresUpdateOneTicket(b *testing.B) {
+	for _, n := range benchSizes(b) {
+		b.Run(fmt.Sprint(n), func(b *testing.B) {
+			url := testDatabaseURL(b)
+			seed := seededEngine(b, "write", n).Store.Snapshot()
+			p := openTestPostgres(b, url, testSchema(b, url))
+			ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+			defer cancel()
+			if err := p.AcquireWriter(ctx, 20*time.Millisecond); err != nil {
+				b.Fatal(err)
+			}
+			store, err := newStore(p)
+			if err != nil {
+				b.Fatal(err)
+			}
+			if err = store.Update(func(s *State) error { *s = seed.detach(); return nil }); err != nil {
+				b.Fatal(err)
+			}
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				err := store.Update(func(s *State) error {
+					ticket := s.Tickets["K-1"]
+					ticket.Assignee = fmt.Sprint(i)
+					s.Tickets[ticket.ID] = ticket
+					return nil
+				})
+				if err != nil {
+					b.Fatal(err)
 				}
 			}
 		})

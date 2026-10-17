@@ -40,6 +40,11 @@ func run() error {
 	runs := flag.String("runs", ".esa/codex-runs", "Private invocation audit directory")
 	tokenFile := flag.String("token-env-file", "deploy/redmine/.env", "Private environment file containing ESA_API_TOKEN")
 	cli := flag.String("codex", "codex", "Installed Codex CLI")
+	var acceptedFeatures []string
+	flag.Func("accept-cli-feature", "Start even though the Codex CLI does not honour ESA's setting for this feature (repeatable; logged as a warning)", func(name string) error {
+		acceptedFeatures = append(acceptedFeatures, name)
+		return nil
+	})
 	model := flag.String("model", "", "Use the configured local model when unspecified")
 	effort := flag.String("effort", "", "Use the configured local reasoning effort when unspecified")
 	toolsConfig := flag.String("tools-config", "", "Operator-created isolated replay tool registration")
@@ -100,6 +105,15 @@ func run() error {
 	}
 	if err != nil {
 		return err
+	}
+	check, cancelCheck := context.WithTimeout(context.Background(), 30*time.Second)
+	warnings, err := codex.CheckCLIFeatures(check, path, acceptedFeatures)
+	cancelCheck()
+	if err != nil {
+		return err
+	}
+	for _, warning := range warnings {
+		slog.Warn("Codex CLI feature not honoured; accepted by -accept-cli-feature", "feature", warning)
 	}
 	dir, err := filepath.Abs(*runs)
 	if err != nil {

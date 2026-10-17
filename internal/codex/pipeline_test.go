@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -224,5 +225,35 @@ func TestNativePipelineEngineeringSlotsDoNotBlockIntakeRouting(t *testing.T) {
 	wg.Wait()
 	if registrations.Load() != 4 {
 		t.Fatal("fourth task did not drain")
+	}
+}
+
+// The provider keeps each run's stage state under RunsDir, not in memory, so a
+// restart between stages continues the run (docs/ESA_OPERATIONS.md): usage
+// stays cumulative and nothing is analyzed twice. A provider that lost the
+// runs directory refuses to continue instead of starting over.
+func TestNativePipelineSurvivesProviderRestartBetweenStages(t *testing.T) {
+	p, in, sourceCalls := routingFixture(t, "new")
+	p.CheckRelease = (&Registry{Releases: []ReleaseRegistration{{ProjectID: in.Ticket.ProjectID, Version: "1", AvailableAt: in.Contract.ObservationCutoff}}}).CheckRelease
+	restart := func(runs string) *Provider {
+		return &Provider{CLI: p.CLI, ToolCommand: p.ToolCommand, Model: p.Model, RunsDir: runs, IssuesRoot: p.IssuesRoot, Resolve: p.Resolve, CheckRelease: p.CheckRelease}
+	}
+	in.Stage = "route"
+	if routed, err := p.Analyze(context.Background(), in); err != nil || routed.Routing == nil || routed.Routing.Action != "analyze" || routed.Usage.Calls != 1 {
+		t.Fatal("routing failed", routed, err)
+	}
+	in.Stage = "engineer"
+	engineered, err := restart(p.RunsDir).Analyze(context.Background(), in)
+	if err != nil || engineered.IssueRequest == nil || engineered.Usage.Calls != 2 || *sourceCalls != 1 {
+		t.Fatal("engineering after a restart lost the routing state", engineered, err, *sourceCalls)
+	}
+	in.Stage = "assign"
+	report, err := restart(p.RunsDir).Analyze(context.Background(), in)
+	if err != nil || report.Usage.Calls != 3 || report.AssignmentRouting == nil || len(report.Findings) != 1 || *sourceCalls != 1 {
+		t.Fatal("assignment after a restart lost earlier stages or spent again", report, err, *sourceCalls)
+	}
+	in.Stage = "engineer"
+	if _, err := restart(t.TempDir()).Analyze(context.Background(), in); err == nil || !strings.Contains(err.Error(), "no intake routing audit exists") || *sourceCalls != 1 {
+		t.Fatal("a provider without the run continued it", err, *sourceCalls)
 	}
 }

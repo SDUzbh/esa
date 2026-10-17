@@ -160,35 +160,36 @@ func (s *Server) owned(ctx context.Context) error {
 	if err != nil || strings.TrimSpace(string(b)) != s.Config.Session {
 		return errors.New("replay container ownership check failed")
 	}
-	if s.Config.ProfilesRoot != "" {
-		b, err = s.docker(ctx, "inspect", s.Config.Container)
-		var info []struct {
-			Config     struct{ User string }
-			HostConfig struct {
-				ReadonlyRootfs bool
-				NetworkMode    string
-				CapDrop        []string
-				Memory         int64
-				NanoCpus       int64
-				PidsLimit      int64
-				SecurityOpt    []string
-			}
-			Mounts []struct {
-				Source, Destination string
-				RW                  bool
-			}
+	// The isolation policy applies to every task container, with or without
+	// Profiles: read-only root, no network, uid 1000, no capabilities, resource
+	// limits, a read-only /input and no Docker socket.
+	b, err = s.docker(ctx, "inspect", s.Config.Container)
+	var info []struct {
+		Config     struct{ User string }
+		HostConfig struct {
+			ReadonlyRootfs bool
+			NetworkMode    string
+			CapDrop        []string
+			Memory         int64
+			NanoCpus       int64
+			PidsLimit      int64
+			SecurityOpt    []string
 		}
-		if err != nil || json.Unmarshal(b, &info) != nil || len(info) != 1 {
-			return errors.New("sandbox readiness inspection failed")
+		Mounts []struct {
+			Source, Destination string
+			RW                  bool
 		}
-		c := info[0]
-		if !c.HostConfig.ReadonlyRootfs || c.HostConfig.NetworkMode != "none" || c.Config.User != "1000:1000" || !has(c.HostConfig.CapDrop, "ALL") || c.HostConfig.Memory <= 0 || c.HostConfig.NanoCpus <= 0 || c.HostConfig.PidsLimit <= 0 {
-			return errors.New("sandbox does not satisfy task isolation policy")
-		}
-		for _, mount := range c.Mounts {
-			if strings.Contains(mount.Source, "docker.sock") || strings.Contains(mount.Destination, "docker.sock") || mount.Destination == "/input" && mount.RW {
-				return errors.New("sandbox exposes forbidden writable product input or host socket")
-			}
+	}
+	if err != nil || json.Unmarshal(b, &info) != nil || len(info) != 1 {
+		return errors.New("sandbox readiness inspection failed")
+	}
+	c := info[0]
+	if !c.HostConfig.ReadonlyRootfs || c.HostConfig.NetworkMode != "none" || c.Config.User != "1000:1000" || !has(c.HostConfig.CapDrop, "ALL") || c.HostConfig.Memory <= 0 || c.HostConfig.NanoCpus <= 0 || c.HostConfig.PidsLimit <= 0 {
+		return errors.New("sandbox does not satisfy task isolation policy")
+	}
+	for _, mount := range c.Mounts {
+		if strings.Contains(mount.Source, "docker.sock") || strings.Contains(mount.Destination, "docker.sock") || mount.Destination == "/input" && mount.RW {
+			return errors.New("sandbox exposes forbidden writable product input or host socket")
 		}
 	}
 	return nil

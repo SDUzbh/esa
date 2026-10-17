@@ -7,6 +7,7 @@ import (
 	"flag"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -35,11 +36,15 @@ func run() error {
 	rules := flag.String("rules", "config/rules.json", "Workflow configuration and analysis budget")
 	replayAt := flag.String("replay-at", "", "Test-only observation clock initial time (RFC3339)")
 	replayProjects := flag.String("replay-projects", "", "Comma-separated operator project scope for the test clock")
-	health := flag.Bool("healthcheck", false, "Check that the local ESA HTTP server is the active writer and exit")
+	health := flag.Bool("healthcheck", false, "Check that the ESA server at -listen is the active writer and exit")
 	flag.Parse()
 	if *health {
+		url, err := healthURL(*address)
+		if err != nil {
+			return err
+		}
 		client := &http.Client{Timeout: 3 * time.Second}
-		resp, err := client.Get("http://127.0.0.1:8090/healthz?role=active")
+		resp, err := client.Get(url)
 		if err != nil {
 			return err
 		}
@@ -232,6 +237,22 @@ func checkStoreFlags(databaseURL, stateURL string) error {
 		return fmt.Errorf("ESA keeps its state in Postgres: set ESA_DATABASE_URL or -database-url, see docs/ESA_OPERATIONS.md#postgres-state-store")
 	}
 	return nil
+}
+
+// healthURL is the active-writer health endpoint of a server listening on
+// address. A wildcard host (empty, 0.0.0.0 or ::) is checked on loopback.
+func healthURL(address string) (string, error) {
+	host, port, err := net.SplitHostPort(address)
+	if err != nil {
+		return "", fmt.Errorf("invalid -listen %q: %w", address, err)
+	}
+	switch host {
+	case "", "0.0.0.0":
+		host = "127.0.0.1"
+	case "::":
+		host = "::1"
+	}
+	return "http://" + net.JoinHostPort(host, port) + "/healthz?role=active", nil
 }
 
 // firstError prefers a server failure (such as a busy port) that ended the wait.

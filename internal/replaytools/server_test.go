@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -71,5 +72,44 @@ func TestMCPStdioHandshakeAndDiscovery(t *testing.T) {
 	}
 	if a["result"].(map[string]any)["protocolVersion"] != "2025-03-26" || len(b["result"].(map[string]any)["tools"].([]any)) != 4 {
 		t.Fatal("incorrect tool surface")
+	}
+}
+
+// The isolation policy must hold for every task container, including sessions
+// without Profiles, where it used to be skipped.
+func TestOwnedEnforcesIsolationWithoutProfiles(t *testing.T) {
+	bin := t.TempDir()
+	inspect := filepath.Join(bin, "inspect.json")
+	script := "#!/bin/sh\nfor a in \"$@\"; do [ \"$a\" = --format ] && { echo fixture; exit 0; }; done\ncat " + inspect + "\n"
+	if err := os.WriteFile(filepath.Join(bin, "docker"), []byte(script), 0700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	compliant := `{"Config":{"User":"1000:1000"},"HostConfig":{"ReadonlyRootfs":true,"NetworkMode":"none","CapDrop":["ALL"],"Memory":1,"NanoCpus":1,"PidsLimit":1},"Mounts":[{"Source":"v","Destination":"/input","RW":false}]}`
+	for name, tc := range map[string]struct {
+		container string
+		ok        bool
+	}{
+		"compliant":        {compliant, true},
+		"writable root":    {strings.Replace(compliant, `"ReadonlyRootfs":true`, `"ReadonlyRootfs":false`, 1), false},
+		"network":          {strings.Replace(compliant, `"NetworkMode":"none"`, `"NetworkMode":"bridge"`, 1), false},
+		"root user":        {strings.Replace(compliant, `"User":"1000:1000"`, `"User":"0:0"`, 1), false},
+		"capabilities":     {strings.Replace(compliant, `["ALL"]`, `[]`, 1), false},
+		"no memory limit":  {strings.Replace(compliant, `"Memory":1`, `"Memory":0`, 1), false},
+		"writable input":   {strings.Replace(compliant, `"RW":false`, `"RW":true`, 1), false},
+		"docker socket":    {strings.Replace(compliant, `"Source":"v"`, `"Source":"/var/run/docker.sock"`, 1), false},
+		"inspection fails": {`not json`, false},
+	} {
+		if err := os.WriteFile(inspect, []byte("["+tc.container+"]"), 0600); err != nil {
+			t.Fatal(err)
+		}
+		s := Server{Config: Config{Container: "task", Session: "fixture"}}
+		if err := s.owned(context.Background()); (err == nil) != tc.ok {
+			t.Errorf("%s: owned() = %v, want ok=%v", name, err, tc.ok)
+		}
+	}
+	s := Server{Config: Config{Container: "task", Session: "another-session"}}
+	if err := s.owned(context.Background()); err == nil {
+		t.Error("a container labelled for another session was accepted")
 	}
 }

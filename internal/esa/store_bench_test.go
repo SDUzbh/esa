@@ -188,10 +188,7 @@ func BenchmarkTicketGET(b *testing.B) {
 // archive; "unscoped" omits X-ESA-Ticket-IDs, which lets every ticket through.
 func BenchmarkTicketsList(b *testing.B) {
 	for _, n := range benchSizes(b) {
-		visible := make([]string, 0, 2000)
-		for i := 0; i < 2000 && i < n; i++ {
-			visible = append(visible, fmt.Sprintf("K-%d", i*n/min(n, 2000)))
-		}
+		visible := pluginTicketScope(n)
 		for _, scope := range []struct {
 			name string
 			ids  []string
@@ -222,6 +219,59 @@ func BenchmarkTicketsList(b *testing.B) {
 				}
 			})
 		}
+	}
+}
+
+// pluginTicketScope is the plugin's largest X-ESA-Ticket-IDs scope: 2,000
+// ticket IDs spread evenly over an archive of n, starting with K-0.
+func pluginTicketScope(n int) []string {
+	ids := make([]string, 0, 2000)
+	for i := 0; i < 2000 && i < n; i++ {
+		ids = append(ids, fmt.Sprintf("K-%d", i*n/min(n, 2000)))
+	}
+	return ids
+}
+
+// BenchmarkSolutionHistory measures GET /v1/investigations/{id}/solutions,
+// the plugin's solution history, in an archive where each of n tickets has an
+// investigation with one solution revision.
+func BenchmarkSolutionHistory(b *testing.B) {
+	for _, n := range benchSizes(b) {
+		b.Run(fmt.Sprint(n), func(b *testing.B) {
+			cacheKey := fmt.Sprintf("solutions/%d", n)
+			if _, ok := seeded.Load(cacheKey); !ok {
+				s := seedFinishedInvestigations(b, n).Store.Snapshot().detach()
+				for i := 0; i < n; i++ {
+					taskID, solutionID := fmt.Sprintf("inv-%d", i), fmt.Sprintf("sol-%d", i)
+					task := s.Investigations.Get(taskID)
+					task.SolutionID = solutionID
+					s.Investigations.Put(taskID, task)
+					s.Solutions.Put(solutionID, SolutionRevision{ID: solutionID, InvestigationID: taskID, ProjectID: "1", SourceTicketID: fmt.Sprintf("K-%d", i), State: "agent_proposed", Revision: 1})
+				}
+				store, err := newStore(discardPersister{initial: s})
+				if err != nil {
+					b.Fatal(err)
+				}
+				e := testEngine(b)
+				e.Store = store
+				seeded.Store(cacheKey, e)
+			}
+			e, _ := seeded.Load(cacheKey)
+			handler := (&API{Engine: e.(*Engine), Token: strings.Repeat("t", 24)}).Handler()
+			scope := strings.Join(pluginTicketScope(n), ",")
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				req := httptest.NewRequest(http.MethodGet, "/v1/investigations/inv-0/solutions", nil)
+				req.Header.Set("Authorization", "Bearer "+strings.Repeat("t", 24))
+				req.Header.Set("X-ESA-Project-IDs", "1")
+				req.Header.Set("X-ESA-Ticket-IDs", scope)
+				w := httptest.NewRecorder()
+				handler.ServeHTTP(w, req)
+				if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"id":"sol-0"`) {
+					b.Fatalf("GET returned %d: %.300s", w.Code, w.Body.String())
+				}
+			}
+		})
 	}
 }
 

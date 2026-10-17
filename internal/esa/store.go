@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"maps"
-	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -228,13 +227,13 @@ func (s *Store) Clone() State {
 // detach returns a state that an Update can change without touching s, in
 // O(1): Tables are persistent, so the copy shares every node and a write
 // copies only its own path. Entities are shared too and must be replaced, not
-// edited in place. History slices are clipped so an append always reallocates
-// instead of writing into an array the published state still references.
+// edited in place. History slices are append-only: an append may write past
+// the published length into the shared array, which no reader sees, since
+// every published State carries its own length and only one Update runs at a
+// time; elements before that length are never written.
 func (s State) detach() State {
 	next := s
 	next.StoredFields = maps.Clone(s.StoredFields)
-	next.MembershipHistory = slices.Clip(s.MembershipHistory)
-	next.CaseHistory = slices.Clip(s.CaseHistory)
 	return next
 }
 

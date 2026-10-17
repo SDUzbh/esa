@@ -63,6 +63,11 @@ func diffHistory[V any](old, next []V) HistoryChange {
 	if len(next) < len(old) {
 		return HistoryChange{Rewritten: true}
 	}
+	// Appending in place keeps the backing array: the prefix is the same
+	// memory and unchanged by construction (the guard rejects in-place edits).
+	if len(old) == 0 || &old[0] == &next[0] {
+		return HistoryChange{Appended: len(next) - len(old)}
+	}
 	for i := range old {
 		if !sameBits(&old[i], &next[i]) {
 			return HistoryChange{Rewritten: true}

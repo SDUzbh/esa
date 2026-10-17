@@ -5,7 +5,7 @@ This repository contains ESA application code, its Redmine plugin, replay orches
 | Dependency | Reference | Use |
 | --- | --- | --- |
 | Redmine | Official `redmine:7.0.2-bookworm` Docker image | Base application; the Dockerfile adds only the ESA plugin |
-| PostgreSQL | Official `postgres:17-alpine` Docker image | Redmine database; also ESA's own state schema once the Postgres store is deployed ([storage design](STORAGE_DESIGN.md)) |
+| PostgreSQL | Official `postgres:17-alpine` Docker image | Redmine database and ESA's own state database ([storage design](STORAGE_DESIGN.md)); tests use a disposable server from `scripts/test_postgres.sh` |
 | Eclipse Temurin | Official JDK 8 replay image; digest-pinned JDK 8/21 bases for the preset toolkit | Product JVM and separate analysis JVM; see [tool image operations](TOOL_IMAGES.md) |
 | Soot, SootUp, async-profiler and OS tools | Approved versions/checksums in `deploy/tools/toolset.release.txt` | Shared engineering toolkit, built by `scripts/update_tool_images.py` |
 | Apache Kafka | `https://github.com/apache/kafka.git` | External historical source checkout for replay |
@@ -31,8 +31,8 @@ The `kafka/` directory is ignored by Git. Jira exports in `data/`, runtime evide
 
 1. Install Go 1.27+, Python 3.9+, Docker and Docker Compose independently.
 2. Build with `./scripts/build_esa.sh`; it uses the project-local toolchain when present and otherwise uses `go` from PATH.
-3. Copy `deploy/redmine/.env.example` to `deploy/redmine/.env`. Fill its database password, session secret and ESA token with unique random values; keep the generated file private.
-4. Pre-create the shared Issue directory, configure its ownership and choose JSON or the optional PostgreSQL state adapter; follow [local deployment](../deploy/redmine/README.md). Outside this Mac, replace `colima-redmine` with the appropriate Docker context and set `ESA_GO_ARCH` as needed.
+3. Copy `deploy/redmine/.env.example` to `deploy/redmine/.env`. Fill its database passwords (`REDMINE_DB_PASSWORD`, and `ESA_DB_PASSWORD` in hex), session secret and ESA token with unique random values; keep the generated file private.
+4. Pre-create the shared Issue directory, and configure its ownership; follow [local deployment](../deploy/redmine/README.md). Outside this Mac, replace `colima-redmine` with the appropriate Docker context and set `ESA_GO_ARCH` as needed.
 5. Configure Redmine users, project modules and ESA roles. Local administrator bootstrap scripts read the password from an environment variable; no credentials are shipped.
 
 The standalone tester is built separately with `sh scripts/build_system_replay.sh`; its module has no ESA imports or third-party Go/Python packages. The lifecycle manifest requires a separately built host ESA binary but no Jira archive or Kafka checkout. The Kafka manifest additionally requires the external source checkout, preserved Jira export and Docker runtime. These are separate inputs, not repository contents. Live Codex analysis requires local CLI authentication, a private provider token file and the shared Issue directory. Source analysis requires a time-eligible local release registry; managed runtime analysis also requires a verified preset tool image. Prior evidence bundles are optional registered scenarios. A fresh checkout does not include the local release registry, product dependencies or generated image registry. Ruby and Node.js are needed only for the host UI unit tests; container template checks use Ruby from the Redmine image. Third-party images and archives retain their upstream licensing and notices.

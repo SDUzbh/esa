@@ -402,7 +402,7 @@ func (api *API) ticket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Record the access only when it would advance an Issue's LRU order; a write
-	// re-encodes the whole state, so plain reads must not pay for one.
+	// is a database transaction, so plain reads must not pay for one.
 	if !t.Private && ticketTouchTarget(s, t.ID, api.Engine.Now()) != "" {
 		if err := api.Engine.update(func(state *State) error {
 			current := state.Tickets.Get(t.ID)

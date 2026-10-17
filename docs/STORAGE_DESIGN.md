@@ -289,8 +289,8 @@ After migration:
   - `docker-entrypoint-initdb.d` runs only on a new volume, so existing installs need a documented one-time SQL step.
   - The password `ESA_DB_PASSWORD` is a new, separate secret. This is a first step for Issue 5.
 - **Dependency:** `github.com/jackc/pgx/v5` is a Go **library** (a module of packages) compiled into the `esa` binary. It is not a separate program or service; ESA talks to the existing Postgres server through it. It is pure Go, so the static `CGO_ENABLED=0` build into the `scratch` image is unaffected.
-  - pgx pulls in a few small modules of its own; `go mod graph` will list them exactly when it is added.
-  - Proposal: commit `vendor/`, a copy of the library source, so builds stay offline-capable and every dependency change shows up as a reviewable diff.
+  - It is added as a **normal `go.mod` requirement, not vendored** (decided 2026-10-17). `go.sum` pins the exact content of pgx and of each small module it pulls in, and builds verify downloads against those checksums and against `sum.golang.org`. Local builds and CI already download through `proxy.golang.org`, and the Docker image copies a prebuilt binary, so no build needs to run offline.
+  - CI adds `go mod verify`. Dependency changes are reviewed through the `go.mod`/`go.sum` diff; `go mod graph` lists the exact modules when pgx is added.
   - `docs/DEPENDENCIES.md` and README's "No external Go modules" line need updating.
 - **CI:** add a pinned `postgres:17` service container (by digest) to `.github/workflows/ci.yml`. Tests use `ESA_TEST_DATABASE_URL` and skip locally when it is unset; in CI it is required.
 
@@ -331,7 +331,7 @@ After migration:
 1. **Diff-based change detection** in `Store`, in memory only. The JSON adapter skips no-op writes without encoding, and the guard cross-checks the diff. No format change.
 2. **`Persister` interface** (`Load`, `Apply(changes)`), with the JSON adapter behind it.
 3. **`EventRecord`** in memory, plus a JSON loader that converts old events. This is the first persisted-format change, and the loader handles it.
-4. **Postgres adapter:** schema and migrations, `Apply`, hot-set loading, advisory lock and term fencing, vendored `pgx`, and the CI Postgres service.
+4. **Postgres adapter:** schema and migrations, `Apply`, hot-set loading, advisory lock and term fencing, the `pgx` requirement with `go mod verify` in CI, and the CI Postgres service.
 5. **Import and verification tool,** compose and init SQL, `.env.example`, and docs.
 6. **Cold snapshot reads** for `GET /v1/snapshots/{id}`.
 7. **Retire ESA's use of the Redmine state API:** deprecate `-state-url` and keep the plugin endpoint for one release.
@@ -348,6 +348,6 @@ Each step leaves `main` releasable. Steps 1–3 also speed up the JSON adapter.
 ## Review answers and open questions
 
 1. **Standby returning 503: accepted** (2026-10-17), on condition that the mechanism is correct. See [Single writer and standby](#single-writer-and-standby) for the mechanism, the correctness argument and the interleaving tests.
-2. **Vendoring `pgx`:** still open. The proposal is to commit `vendor/` (see [Configuration and deployment](#configuration-and-deployment)).
+2. **`pgx` as a dependency:** a normal `go.mod` requirement pinned by `go.sum`, **not vendored** (2026-10-17). See [Configuration and deployment](#configuration-and-deployment).
 3. **Memory:** measured at 280 MB of live heap for the full archive (see [Memory](#memory)). Run reports and `Case.Summary` stay in memory.
 4. **Plugin `/esa/api/state` endpoints: remove** them one release after migration, once no installation still uses them (2026-10-17).

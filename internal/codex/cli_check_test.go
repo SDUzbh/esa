@@ -42,12 +42,12 @@ func TestCLIFeatureCheckRequiresEveryOverride(t *testing.T) {
 	if warnings, err := CheckCLIFeatures(ctx, fakeFeatureCLI(t, honoured()), nil); err != nil || len(warnings) != 0 {
 		t.Fatal("a CLI that honours every override was refused:", warnings, err)
 	}
-	ignored := fakeFeatureCLI(t, strings.Replace(honoured(), "unified_exec   under development   false", "unified_exec   stable   true", 1))
-	if _, err := CheckCLIFeatures(ctx, ignored, nil); err == nil || !strings.Contains(err.Error(), "unified_exec is true, want false") || !strings.Contains(err.Error(), "codex-cli 9.9.9") {
+	ignored := fakeFeatureCLI(t, strings.Replace(honoured(), "shell_tool   under development   false", "shell_tool   stable   true", 1))
+	if _, err := CheckCLIFeatures(ctx, ignored, nil); err == nil || !strings.Contains(err.Error(), "shell_tool is true, want false") || !strings.Contains(err.Error(), "codex-cli 9.9.9") {
 		t.Fatal("an override the CLI ignores was accepted:", err)
 	}
 	// An operator may accept that one named feature differs; nothing else.
-	if warnings, err := CheckCLIFeatures(ctx, ignored, []string{"unified_exec"}); err != nil || len(warnings) != 1 || warnings[0] != "unified_exec is true, want false" {
+	if warnings, err := CheckCLIFeatures(ctx, ignored, []string{"shell_tool"}); err != nil || len(warnings) != 1 || warnings[0] != "shell_tool is true, want false" {
 		t.Fatal("an explicitly accepted feature was not reported as a warning:", warnings, err)
 	}
 	if _, err := CheckCLIFeatures(ctx, ignored, []string{"hooks"}); err == nil {

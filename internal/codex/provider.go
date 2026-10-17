@@ -106,7 +106,11 @@ func ValidateEvidence(r esa.Report, p Packet) error {
 // CLIArgs constructs an isolated invocation without inherited tools, hooks or session reuse.
 func CLIArgs(model, effort, dir string) []string {
 	args := []string{"--no-daemon", "-a", "never", "exec", "--ignore-user-config", "--ignore-rules", "--ephemeral", "--skip-git-repo-check", "--sandbox", "read-only", "--color", "never", "--json", "-C", dir, "--output-schema", filepath.Join(dir, "schema.json"), "-o", filepath.Join(dir, "answer.json"), "-c", "web_search=\"disabled\"", "-c", "project_doc_max_bytes=0", "-c", "model_instructions_file=" + strconv.Quote(filepath.Join(dir, "instructions.txt"))}
-	for _, feature := range []string{"shell_tool", "unified_exec", "apps", "plugins", "hooks", "browser_use", "browser_use_external", "computer_use", "multi_agent", "code_mode", "code_mode_host", "view_image", "workspace_dependencies", "skill_search", "goals", "sleep_tool"} {
+	// unified_exec (resumable command execution) is not listed: the CLI keeps it
+	// on, since only managed requirements can disable it. Command execution is
+	// kept out by shell_tool=false, the read-only sandbox, and the event check
+	// in invoke that cancels a run on any command item.
+	for _, feature := range []string{"shell_tool", "apps", "plugins", "hooks", "browser_use", "browser_use_external", "computer_use", "multi_agent", "code_mode", "code_mode_host", "view_image", "workspace_dependencies", "skill_search", "goals", "sleep_tool"} {
 		args = append(args, "-c", "features."+feature+"=false")
 	}
 	args = append(args, "-c", "features.skip_host_skill_discovery=true")

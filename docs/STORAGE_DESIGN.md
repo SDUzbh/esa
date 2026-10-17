@@ -1,6 +1,6 @@
 # ESA storage: Phase 3 design
 
-**Status:** implemented by the rollout PRs (#12–#19). The in-memory State has since moved to persistent tables with derived indexes; see [After the rollout](#after-the-rollout-persistent-tables-and-indexes).
+**Status:** implemented by the rollout PRs (#12–#19). The in-memory State has since moved to persistent tables with derived indexes; see [After the rollout](#after-the-rollout-persistent-tables-and-indexes). Postgres has since become ESA's only store, and the JSON file adapter was removed; see [Postgres only](#postgres-only).
 **Scope:** REVIEW_ISSUES.md Issue 1 (store scaling), Phases 2 and 3 combined.
 
 ## Decisions already made (2026-10-17)
@@ -206,7 +206,7 @@ CREATE TABLE esa.schema_migrations  (version int PRIMARY KEY, applied_at timesta
 - `revision = expected` means it did not: memory stays unchanged and the `Update` returns an error.
 - Anything else means another writer exists: stop (see below).
 
-The JSON adapter keeps its whole-file atomic write. It uses the same diff only to skip writes when nothing changed.
+The JSON adapter kept its whole-file atomic write and used the same diff only to skip writes when nothing changed. It has since been removed ([Postgres only](#postgres-only)).
 
 ## Single writer and standby
 
@@ -260,6 +260,8 @@ The guarantee comes from two layers:
 - The advisory key is a fixed 64-bit constant derived from `"esa-writer"`, documented in `ESA_OPERATIONS.md`.
 
 ## Migration
+
+*Removed with the JSON store (see [Postgres only](#postgres-only)); kept here as the record of the design.*
 
 Done once, with ESA stopped:
 
@@ -397,7 +399,7 @@ Same machine, `main` (a3a293b) against this change, `go test ./internal/esa -run
 | One-ticket `Update`, JSON file (rewrites the file) | 31 ms | 330 ms | | 30 ms | 317 ms | 2.2 s |
 | `Snapshot` | 9 ns | 9 ns | | 22 ns | 22 ns | 22 ns |
 
-The JSON file adapter still rewrites the whole file on every write, by design; it is the dev and test adapter. `Table` implements jsonv2's `MarshalJSONTo` (on by default since Go 1.27), so encoding/json streams it instead of re-parsing its `MarshalJSON` output. Without that, the file write was 35% slower than with maps.
+The JSON file adapter rewrote the whole file on every write, by design; it was the dev and test adapter until it was removed. `Table` implements jsonv2's `MarshalJSONTo` (on by default since Go 1.27), so encoding/json streams it instead of re-parsing its `MarshalJSON` output. Without that, the file write was 35% slower than with maps.
 
 Real archive, all 19,869 Kafka issues through `parseJira` and `Receive` into Postgres:
 
@@ -418,6 +420,14 @@ These remain O(N), off the per-write path or on rare events:
 - `withdrawSourceSolutions` on a reopened ticket, and withdrawal when a ticket becomes private.
 - `GET /v1/tickets` and solution history, which filter whole tables. They read a `Snapshot` outside the write lock.
 - Startup, which loads the hot set and builds the indexes once.
+
+## Postgres only
+
+The JSON file adapter is removed (2026-10-18), and so is the one-time migration in [Migration](#migration): no installation had JSON state to keep. ESA requires `-database-url`; nothing reads or writes JSON state, and the pre-EventRecord event shape is no longer decoded.
+
+- Compose provisions ESA's role and database with the one-shot `esa-db-init` service from `ESA_DB_PASSWORD`, before every ESA start.
+- Tests and harnesses use throwaway schemas. Every `testEngine` test runs on its own schema with the reload-after-commit check; replay targets and local scripts run ESA with `-ephemeral-schema`, which drops its schema on exit. `scripts/test_postgres.sh` starts a disposable server.
+- A standby answers `/healthz` while `/v1/*` returns 503, so `-healthcheck` and every harness wait for `/healthz?role=active`.
 
 ## Risks
 

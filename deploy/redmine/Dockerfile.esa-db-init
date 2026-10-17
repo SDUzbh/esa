@@ -1,0 +1,6 @@
+# One-shot provisioner for ESA's Postgres role and database (compose service
+# esa-db-init). The script is copied in because Colima shares no repo folder.
+FROM postgres:17-alpine
+COPY deploy/redmine/postgres-init/10-esa-database.sh /esa-database.sh
+USER postgres
+CMD ["sh", "/esa-database.sh"]

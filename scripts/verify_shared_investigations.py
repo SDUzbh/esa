@@ -23,7 +23,7 @@ def main():
     with tempfile.TemporaryDirectory(prefix='esa-shared-http-') as temporary:
         directory = Path(temporary)
         log = (directory / 'target.log').open('w')
-        process = subprocess.Popen(['python3', str(ROOT / 'scripts/esa_fixture_target.py'), '--esa-bin', str(ROOT / 'bin/esa-host'), '--store', str(directory / 'state.json'), '--rules', str(ROOT / 'config/rules.json'), '--listen', '127.0.0.1:%d' % port, '--replay-at', '2020-01-01T00:00:00Z', '--replay-projects', '1'], env=dict(os.environ, ESA_API_TOKEN=token), stdout=log, stderr=log, start_new_session=True)
+        process = subprocess.Popen(['python3', str(ROOT / 'scripts/esa_fixture_target.py'), '--esa-bin', str(ROOT / 'bin/esa-host'), '--reports-dir', str(directory), '--rules', str(ROOT / 'config/rules.json'), '--listen', '127.0.0.1:%d' % port, '--replay-at', '2020-01-01T00:00:00Z', '--replay-projects', '1'], env=dict(os.environ, ESA_API_TOKEN=token), stdout=log, stderr=log, start_new_session=True)
 
         def request(path, value=None, tickets=None):
             headers = {'Authorization': 'Bearer ' + token, 'X-ESA-Project-IDs': '1', 'Content-Type': 'application/json'}
@@ -36,11 +36,11 @@ def main():
             return {'id': 'customer-%d' % index, 'source_key': 'customer-%d' % index, 'project_id': '1', 'subject': 'Consumer empty assignment crash', 'description': 'NullPointerException during empty assignment', 'tracker': 'Bug', 'status': 'Open', 'components': ['consumer'], 'versions': ['1.0'], 'environment': {'jdk': '8'}, 'created_at': '2020-01-01T00:00:00Z', 'updated_at': '2020-01-01T00:00:00Z'}
 
         try:
-            for _ in range(100):
+            for _ in range(300):
                 if process.poll() is not None:
                     raise RuntimeError('Owned target failed to start')
                 try:
-                    request('/healthz')
+                    request('/healthz?role=active')
                     break
                 except OSError:
                     time.sleep(0.05)

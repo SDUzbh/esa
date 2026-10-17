@@ -22,6 +22,7 @@ class FakeDocker:
                           ('sandbox', {'esa.replay.session': 'a' * 32}),
                           ('external', {'system.replay.session': 'b' * 32}),
                           ('test', {'com.docker.compose.project': 'esa-deploy-123456abcdef'}),
+                          ('test-postgres', {'esa.test.database': '1'}),
                           ('unrelated', {'com.docker.compose.project': 'other'})],
             'volume': [('database', {'com.docker.compose.project': 'esa-redmine'}),
                        ('scratch', {'esa.replay.session': 'a' * 32}),
@@ -65,14 +66,15 @@ class ShutdownTests(unittest.TestCase):
 
     def test_cleanup_preserves_database_and_unrelated_resources(self):
         docker = FakeDocker()
-        shutdown.clean_docker(docker)
+        self.assertTrue(shutdown.clean_docker(docker))
         self.assertIn(('stop', '--time', '30', 'redmine'), docker.actions)
+        self.assertIn(('rm', '--force', '--volumes', 'test-postgres'), docker.actions)
         self.assertIn(('rm', '--force', '--volumes', 'sandbox'), docker.actions)
         self.assertIn(('rm', '--force', '--volumes', 'external'), docker.actions)
         self.assertEqual([row[0] for row in docker.items['volume']], ['database', 'other-data'])
         self.assertEqual([row[0] for row in docker.items['network']], ['main-net'])
         self.assertTrue(all('unrelated' not in args for args in docker.actions))
-        self.assertEqual(len([args for args in docker.actions if args[:2] == ('image', 'rm')]), 3)
+        self.assertEqual(len([args for args in docker.actions if args[:2] == ('image', 'rm')]), 4)
         for project in ('esa-deploy-user', 'esa-redmine-copy', 'other'):
             self.assertEqual(shutdown.resource_scope({'com.docker.compose.project': project}), 'foreign')
 

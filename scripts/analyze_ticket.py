@@ -103,6 +103,8 @@ def main(argv=None):
     parser.add_argument("--routing-provider", default="http://127.0.0.1:8091", help="Provider base URL; Routing Agent decides whether engineering is needed")
     parser.add_argument("--esa-url", help="Use an existing ESA service configured for the same provider; otherwise start an isolated local service")
     parser.add_argument("--esa-bin", type=Path, default=ROOT / "bin/esa-host")
+    parser.add_argument("--database-url", default=os.environ.get("ESA_DATABASE_URL", ""),
+                        help="Postgres for the isolated local service (default: $ESA_DATABASE_URL); it runs in a throwaway schema")
     parser.add_argument("--rules", type=Path, default=ROOT / "config/rules.json")
     parser.add_argument("--issues-directory", type=Path, default=ROOT / "runtime/esa/issues", help="Must match the provider's shared Issue projection root")
     parser.add_argument("--token-env-file", type=Path, default=ROOT / "deploy/redmine/.env")
@@ -129,6 +131,8 @@ def main(argv=None):
     request(provider, "/runs/run_probe/logs?stage=route&offset=0", token)
     if not esa_url and not args.esa_bin.is_file():
         raise ValueError("Build bin/esa-host first: .tools/go/bin/go build -o bin/esa-host ./cmd/esa")
+    if not esa_url and not args.database_url:
+        raise ValueError("The isolated local service keeps its state in Postgres: set ESA_DATABASE_URL or --database-url")
     output = (args.output or ROOT / "runtime/ticket-runs" / ("ticket_" + secrets.token_hex(8))).resolve()
     output.mkdir(parents=True, exist_ok=False, mode=0o700)
     process = None
@@ -145,17 +149,18 @@ def main(argv=None):
             esa_url = f"http://127.0.0.1:{port}"
             service_token = secrets.token_urlsafe(32)
             env = {k: v for k, v in os.environ.items() if not k.startswith("ESA_")}
-            env.update(ESA_API_TOKEN=service_token, ESA_ANALYZER_TOKEN=token, ESA_ANALYZER_URL=provider + "/analyze")
+            env.update(ESA_API_TOKEN=service_token, ESA_ANALYZER_TOKEN=token, ESA_ANALYZER_URL=provider + "/analyze",
+                       ESA_DATABASE_URL=args.database_url)
             server_log = (output / "service.log").open("wb")
             process = subprocess.Popen([str(args.esa_bin.resolve()), "-listen", f"127.0.0.1:{port}",
-                                        "-store", str(output / "state.json"), "-rules", str(args.rules.resolve()),
+                                        "-ephemeral-schema", "-rules", str(args.rules.resolve()),
                                         "-issues-directory", str(args.issues_directory.resolve())],
                                        cwd=ROOT, env=env, stdout=server_log, stderr=server_log)
             for _ in range(100):
                 if process.poll() is not None:
                     raise RuntimeError("ESA exited during startup; inspect service.log")
                 try:
-                    request(esa_url, "/healthz")
+                    request(esa_url, "/healthz?role=active")
                     break
                 except (OSError, urllib.error.URLError):
                     time.sleep(0.1)

@@ -44,6 +44,7 @@ func TestTicketScriptRunsPipelineAndDownloadsOriginalEvents(t *testing.T) {
 			p, _, _ := routingFixture(t, tc.decision)
 			token := strings.Repeat("t", 32)
 			t.Setenv("ESA_API_TOKEN", token)
+			t.Setenv("ESA_DATABASE_URL", os.Getenv("ESA_TEST_DATABASE_URL"))
 			server := httptest.NewServer(p.Handler(token))
 			defer server.Close()
 			folder := t.TempDir()

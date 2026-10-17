@@ -2,14 +2,15 @@
   "schema_version": 1,
   "target": {
     "url": "http://127.0.0.1:18090",
+    "health_path": "/healthz?role=active",
     "start": {
       "args": [
         "python3",
         "{{manifest_dir}}/../../scripts/esa_fixture_target.py",
         "--esa-bin",
         "{{manifest_dir}}/../../bin/esa-host",
-        "--store",
-        "{{run_dir}}/target/state.json",
+        "--reports-dir",
+        "{{run_dir}}/target",
         "--rules",
         "{{manifest_dir}}/../../config/rules.json",
         "--listen",

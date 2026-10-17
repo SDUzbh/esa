@@ -1,6 +1,6 @@
 # Local Issue directory and routing
 
-ESA keeps its database/JSON store as the authority. The local Issue directory is a generated read-only projection for Agent retrieval, not another editable issue database. Neither Issue bodies nor a top-N candidate list are sent in the initial Agent context. The provider receives a relative directory path and manifest hash; it resolves the path under its operator-configured local root.
+ESA keeps its Postgres store as the authority. The local Issue directory is a generated read-only projection for Agent retrieval, not another editable issue database. Neither Issue bodies nor a top-N candidate list are sent in the initial Agent context. The provider receives a relative directory path and manifest hash; it resolves the path under its operator-configured local root.
 
 ## Workflow
 
@@ -70,7 +70,8 @@ Views are immutable and published atomically. Identical eligible record sets reu
 
 ```sh
 mkdir -p runtime/esa/issues
-bin/esa-host -store runtime/esa/state.json -issues-directory runtime/esa/issues
+ESA_DATABASE_URL='postgres://esa:<password>@127.0.0.1:5432/esa?sslmode=disable' \
+  bin/esa-host -issues-directory runtime/esa/issues
 bin/esa-codex -registry runtime/releases.json -runs runtime/codex \
   -issues-directory runtime/esa/issues
 ```

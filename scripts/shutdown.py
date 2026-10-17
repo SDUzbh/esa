@@ -14,6 +14,9 @@ import time
 
 ROOT = Path(__file__).resolve().parents[1]
 SESSION_LABELS = ('esa.replay.session', 'system.replay.session')
+# scripts/test_postgres.sh labels its disposable test database with this.
+TEST_DATABASE_LABEL = 'esa.test.database'
+TEST_DATABASE_FILES = ROOT / '.tools/test-postgres'
 DEPLOYMENT = re.compile(r'esa-deploy-[0-9a-f]{12}\Z')
 BINARIES = {'esa', 'esa-host', 'esa-codex', 'esa-replay', 'system-replay'}
 
@@ -133,7 +136,7 @@ def stop_processes(dry_run, timeout):
 
 
 def resource_scope(labels):
-    if any(labels.get(key) for key in SESSION_LABELS):
+    if any(labels.get(key) for key in SESSION_LABELS + (TEST_DATABASE_LABEL,)):
         return 'temporary'
     project = labels.get('com.docker.compose.project', '')
     if DEPLOYMENT.fullmatch(project):
@@ -169,7 +172,9 @@ class Docker:
 
 
 def clean_docker(docker):
+    """Returns whether a disposable test database was removed."""
     projects = set()
+    test_database = False
     containers = list(docker.resources('container'))
     # Stop producers and consumers before the persistent database.
     priority = {'esa': 0, 'redmine': 1, 'db': 2}
@@ -180,6 +185,7 @@ def clean_docker(docker):
             docker.change('stop', '--time', '30', name)
         elif scope == 'temporary':
             docker.change('rm', '--force', '--volumes', name)
+            test_database = test_database or bool(labels.get(TEST_DATABASE_LABEL))
             if DEPLOYMENT.fullmatch(labels.get('com.docker.compose.project', '')):
                 projects.add(labels['com.docker.compose.project'])
     for kind in ('volume', 'network'):
@@ -190,7 +196,7 @@ def clean_docker(docker):
                     projects.add(labels['com.docker.compose.project'])
     # Remove disposable deployment tags only, retaining release/base/build caches.
     for project in sorted(projects):
-        for service in ('redmine', 'esa', 'fixture'):
+        for service in ('redmine', 'esa-db-init', 'esa', 'fixture'):
             tag = project + '-' + service + ':latest'
             if docker.read('image', 'ls', '-q', tag):
                 docker.change('image', 'rm', tag)
@@ -201,6 +207,7 @@ def clean_docker(docker):
                     raise RuntimeError('Temporary Docker resource survived cleanup: ' + name)
         if docker.read('container', 'ls', '-q', '--filter', 'label=com.docker.compose.project=esa-redmine'):
             raise RuntimeError('Redmine services survived shutdown')
+    return test_database
 
 
 def clean_session_directories(context, dry_run):
@@ -245,7 +252,11 @@ def main():
                 print('Colima is already stopped. No Docker runtime is active; orphan cleanup requires a running daemon.')
                 return 0
         raise RuntimeError('Docker is unavailable; resource cleanup could not be verified')
-    clean_docker(docker)
+    if clean_docker(docker) and TEST_DATABASE_FILES.exists():
+        # Its password and URL are useless once the container is gone.
+        print(('Would remove: ' if args.dry_run else 'Removing: ') + str(TEST_DATABASE_FILES), flush=True)
+        if not args.dry_run:
+            shutil.rmtree(TEST_DATABASE_FILES)
     clean_session_directories(args.context, args.dry_run)
     if profile and not args.keep_vm:
         # A dedicated ESA VM normally has no remaining running containers.

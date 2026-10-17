@@ -15,19 +15,18 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-// Postgres tests need ESA_TEST_DATABASE_URL. They skip locally without it and
-// fail in CI, where the workflow provides a Postgres service.
+// Every store-backed test needs ESA_TEST_DATABASE_URL, since ESA keeps its
+// state only in Postgres; scripts/test_postgres.sh starts a disposable server.
 func testDatabaseURL(t testing.TB) string {
 	t.Helper()
 	url := os.Getenv("ESA_TEST_DATABASE_URL")
 	if url == "" {
-		if os.Getenv("CI") != "" {
-			t.Fatal("ESA_TEST_DATABASE_URL is required in CI")
-		}
-		t.Skip("set ESA_TEST_DATABASE_URL to run Postgres tests")
+		t.Fatal(missingTestDatabase)
 	}
 	return url
 }
+
+const missingTestDatabase = "ESA_TEST_DATABASE_URL is required: ESA keeps its state in Postgres. Start a disposable server with scripts/test_postgres.sh"
 
 var pgSchemaSeq atomic.Int64
 
@@ -122,18 +121,11 @@ func requireReloadMatches(t testing.TB, p *PostgresPersister, want State) {
 	}
 }
 
-// newTestStore backs testEngine. With ESA_TEST_STORE=postgres every
-// testEngine-based test runs on its own Postgres schema, and after every
-// commit a reload must reproduce the committed state (hot projection).
+// newTestStore backs testEngine: every test runs on its own Postgres schema,
+// and after every commit a reload must reproduce the committed state (hot
+// projection).
 func newTestStore(t testing.TB) *Store {
 	t.Helper()
-	if os.Getenv("ESA_TEST_STORE") != "postgres" {
-		s, err := OpenStore("")
-		if err != nil {
-			t.Fatal(err)
-		}
-		return s
-	}
 	url := testDatabaseURL(t)
 	p := openTestPostgres(t, url, testSchema(t, url))
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -146,6 +138,23 @@ func newTestStore(t testing.TB) *Store {
 		t.Fatal(err)
 	}
 	return s
+}
+
+// reopenTestStore simulates a restart: it releases s's writer role and loads
+// the same schema into a new Store. Do not use s afterwards.
+func reopenTestStore(t testing.TB, s *Store) *Store {
+	t.Helper()
+	var p *PostgresPersister
+	switch q := s.persister.(type) {
+	case reloadChecking:
+		p = q.PostgresPersister
+	case *PostgresPersister:
+		p = q
+	default:
+		t.Fatalf("store has no Postgres persister: %T", s.persister)
+	}
+	p.Close()
+	return openTestPostgresStore(t, openTestPostgres(t, p.url, p.schema))
 }
 
 // reloadChecking verifies every commit by reloading it from the database.
@@ -457,4 +466,25 @@ func TestPostgresWatchLockReportsLoss(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("lock loss not reported")
 	}
+}
+
+// hotProjection is the part of s that a working-set Load reproduces: snapshots
+// referenced in memory, no membership history and no raw event payloads.
+func hotProjection(s State) State {
+	out := s.detach()
+	hot := map[string]bool{}
+	for _, id := range hotSnapshotIDs(&s) {
+		hot[id] = true
+	}
+	for id := range out.Snapshots.All() {
+		if !hot[id] {
+			out.Snapshots.Delete(id)
+		}
+	}
+	for id, r := range out.Events.All() {
+		r.Raw = nil
+		out.Events.Put(id, r)
+	}
+	out.MembershipHistory = nil
+	return out
 }

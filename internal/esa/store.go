@@ -12,16 +12,15 @@ import (
 )
 
 // Store serializes copy-on-write state transactions and hands each change to
-// its Persister (a JSON file or an authoritative backend).
+// its Persister, Postgres in production.
 // Network analysis and other irreversible side effects must stay outside Update callbacks.
 type Store struct {
 	mu        sync.RWMutex
 	state     State
 	persister Persister
 	revision  uint64
-	// encoded is json.Marshal(state) as last published. It is kept only for
-	// whole-state persisters, to skip writes whose encoding did not change, and
-	// for the test guard; other persisters never encode the whole state.
+	// encoded is json.Marshal(state) as last published, kept only for the
+	// test guard.
 	encoded []byte
 	// lost runs once when a commit fails with ErrLostWriter.
 	lost func(error)
@@ -88,10 +87,9 @@ func newStore(p Persister) (*Store, error) {
 	if err = validateState(state); err != nil {
 		return nil, err
 	}
-	compactLegacyEvents(&state)
 	state.advanceIndexes()
 	s := &Store{state: state, persister: p, revision: revision}
-	s.publishLocked(nil)
+	s.publishLocked()
 	return s, nil
 }
 
@@ -103,12 +101,6 @@ func validateState(s State) error {
 		return errors.New("invalid store schema")
 	}
 	return nil
-}
-
-// OpenStore opens a JSON state frame; an empty path selects an in-memory store.
-// The service launcher, not this function, takes the cross-process writer lock.
-func OpenStore(path string) (*Store, error) {
-	return newStore(&jsonPersister{path: path})
 }
 
 // Update commits a copy-on-write state atomically. Failed writes never alter memory.
@@ -146,16 +138,6 @@ func (s *Store) updateLocked(fn func(*State) error) error {
 		return nil
 	}
 	commit := Commit{State: next, Changes: changes, Revision: s.revision}
-	if _, whole := s.persister.(wholeStatePersister); whole {
-		if commit.Encoded, err = json.Marshal(next); err != nil {
-			return err
-		}
-		// A replaced entity with equal content is reported as changed; keep
-		// skipping writes whose encoding is unchanged, exactly as before.
-		if bytes.Equal(s.encoded, commit.Encoded) {
-			return nil
-		}
-	}
 	revision, err := s.persister.Apply(commit)
 	if err != nil {
 		return err
@@ -163,7 +145,7 @@ func (s *Store) updateLocked(fn func(*State) error) error {
 	next.advanceIndexes()
 	verifyIndexes(&next)
 	s.state, s.revision = next, revision
-	s.publishLocked(commit.Encoded)
+	s.publishLocked()
 	return nil
 }
 
@@ -173,19 +155,13 @@ func (s *Store) updateLocked(fn func(*State) error) error {
 // Tests turn it on (TestMain); it re-encodes the whole state per operation.
 var guardPublishedState bool
 
-// publishLocked records the encoding of the newly published state when a
-// whole-state persister or the test guard needs it; encoded may be passed in
-// when the caller already has it. Callers hold s.mu for writing, or own s
-// exclusively while constructing it.
-func (s *Store) publishLocked(encoded []byte) {
-	_, whole := s.persister.(wholeStatePersister)
-	switch {
-	case encoded != nil:
-		s.encoded = encoded
-	case whole || guardPublishedState:
+// publishLocked records the encoding of the newly published state for the
+// test guard. Callers hold s.mu for writing, or own s exclusively while
+// constructing it.
+func (s *Store) publishLocked() {
+	s.encoded = nil
+	if guardPublishedState {
 		s.encoded, _ = json.Marshal(s.state)
-	default:
-		s.encoded = nil
 	}
 }
 

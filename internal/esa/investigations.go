@@ -21,22 +21,6 @@ func captureSnapshot(s *State, event Event) string {
 
 func snapshotIDFor(eventID string) string { return "snapshot_" + hash(eventID) }
 
-// compactLegacyEvents drops the ticket copy from loaded events whose own
-// snapshot holds the identical ticket. Events without a snapshot, or whose copy
-// differs from it, keep their ticket, so nothing is lost.
-func compactLegacyEvents(s *State) {
-	for id, r := range s.Events.All() {
-		if r.Ticket == nil || r.SnapshotID != "" {
-			continue
-		}
-		snapID := snapshotIDFor(id)
-		if snap, ok := s.Snapshots.Lookup(snapID); ok && snap.EventID == id && snap.Hash == r.TicketHash {
-			r.SnapshotID, r.Ticket = snapID, nil
-			s.Events.Put(id, r)
-		}
-	}
-}
-
 // Conservative operational deduplication: exact diagnostic content and exact
 // context, not a generic exception or a similarity score. This does not prove
 // common causality. Critical parameter values and public comment text remain.

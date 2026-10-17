@@ -8,14 +8,17 @@ services:
     environment:
       ESA_DEPLOYMENT_TEST: '1'
       ESA_TEST_PASSWORD: ${ESA_TEST_PASSWORD:?Fixture password required}
+  esa-db-init:
+    image: ${ESA_TEST_PROJECT}-esa-db-init
   esa:
     image: ${ESA_TEST_PROJECT}-esa
     environment:
       ESA_STATE_URL: ''
-      ESA_DATABASE_URL: ''
       ESA_ANALYZER_URL: http://fixture:8091/analyze
     depends_on:
-      - fixture
+      fixture:
+        condition: service_started
+    # The Issue directory lives in a volume; Colima shares no host folder.
     volumes: !override
       - esa_state:/var/lib/esa
   fixture:
@@ -23,7 +26,7 @@ services:
     build:
       context: ../..
       dockerfile: deploy/redmine/Dockerfile.fixture
-    command: [python3, /fixture.py, --provider-only, --store, /reports/state.json,
+    command: [python3, /fixture.py, --provider-only, --reports-dir, /reports,
               --rules, unused, --listen, '0.0.0.0:8091']
     environment:
       ESA_API_TOKEN: ${ESA_API_TOKEN}
@@ -39,4 +42,5 @@ networks:
     internal: true
   frontend: {}
 volumes:
+  esa_state:
   provider_data:

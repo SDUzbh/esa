@@ -19,7 +19,7 @@ This repository contains ESA code and deployment definitions. Redmine is referen
 
 Redmine owns source issues and user permissions. The Ruby ESA plugin provides the UI, imports and a durable forwarding outbox stored in PostgreSQL. The Go service polls the outbox and acknowledges events after committing them; the plugin calls its scoped HTTP APIs to display results and submit human reviews.
 
-The Go service builds scoped local Issue directories and runs a bounded pipeline: intake routing, up to three engineering workers, then assignment routing. A persisted `investigating` claim lets matching tickets join work already in progress. It uses atomic JSON by default. Matching tickets share investigations and reviewed solutions. An ESA-owned Postgres store can replace JSON as the single state authority, with one active writer and an optional standby ([Postgres state store](docs/ESA_OPERATIONS.md#postgres-state-store)). The Codex Routing Agent searches this directory on demand. Reuse skips engineering; for new problems, the adapter resolves registered source and the engineering Agent plans approved tools and returns read-only findings plus an Issue grouping request. Routing Agent makes the final membership decision.
+The Go service builds scoped local Issue directories and runs a bounded pipeline: intake routing, up to three engineering workers, then assignment routing. A persisted `investigating` claim lets matching tickets join work already in progress. Matching tickets share investigations and reviewed solutions. ESA keeps its state in its own Postgres database, with one active writer and an optional standby ([Postgres state store](docs/ESA_OPERATIONS.md#postgres-state-store)). The Codex Routing Agent searches this directory on demand. Reuse skips engineering; for new problems, the adapter resolves registered source and the engineering Agent plans approved tools and returns read-only findings plus an Issue grouping request. Routing Agent makes the final membership decision.
 
 The optional classifier runs locally in Go and supplies label suggestions only. Human corrections are exported to the independent `esa-classifier` CLI for training and testing; an operator promotes a tested model and restarts the service. Classification does not control manual forwarding or engineering routing.
 
@@ -98,16 +98,19 @@ Use `--dry-run` to preview or `--keep-vm` to leave Colima running. Persistent da
 reports and tool caches are retained. Other projects' running containers prevent VM
 shutdown. See [shutdown scope and cleanup](docs/ESA_OPERATIONS.md#shutdown-and-cleanup).
 
-For direct development, configure a service token and use a separate store:
+For direct development, start a disposable Postgres, configure a service token and run ESA on a throwaway schema (`-ephemeral-schema` drops it on exit; without the flag ESA keeps its state in schema `esa`):
 
 ```sh
-export ESA_API_TOKEN='<at least 24 random characters>'
-.tools/go/bin/go run ./cmd/esa -listen 127.0.0.1:8090 -store runtime/dev/state.json
+sh scripts/test_postgres.sh && . .tools/test-postgres/env
+export ESA_API_TOKEN='<at least 24 random characters>' ESA_DATABASE_URL="$ESA_TEST_DATABASE_URL"
+.tools/go/bin/go run ./cmd/esa -listen 127.0.0.1:8090 -ephemeral-schema
 ```
+
+The same disposable server serves the tests, which need it: `ESA_TEST_DATABASE_URL` must be set (see [CI](docs/CI.md)).
 
 The service token in `deploy/redmine/.env` is private. The browser never receives it. The plugin derives project and issue visibility from the current Redmine user. The Go service is reachable only inside the Compose network.
 
-Run a JSON ticket through Routing Agent and download the provider's runtime events:
+Run a JSON ticket through Routing Agent and download the provider's runtime events. The isolated local ESA it starts keeps its state in a throwaway schema of `ESA_DATABASE_URL`:
 
 ```sh
 python3 scripts/analyze_ticket.py examples/agent-ticket.json \

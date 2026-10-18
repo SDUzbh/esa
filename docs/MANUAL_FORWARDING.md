@@ -10,7 +10,7 @@ An outbox event that can never be accepted as sent is rejected without blocking 
 
 New/edit hooks, import and metadata saves do not forward issues. Imports create ordinary Redmine issues; users forward selected ones separately. Metadata remains local until forwarding. The issue detail can open before the first forwarding even though the backend has no record yet.
 
-`POST /v1/events` requires the usual service token and authorized project scope, plus `forwarded_by` and a nonfuture `forwarded_at` timestamp. This is a trusted integration assertion of a human action; the backend does not independently authenticate a Redmine person from that string. The plugin enforces issue visibility and Submit ESA permission and supplies the logged-in identity. Automated producers must not fabricate forwarding metadata.
+`POST /v1/events` requires the operator token (`ESA_OPERATOR_TOKEN`) and authorized project scope; the plugin forwards through its outbox instead. It also needs `forwarded_by` and a nonfuture `forwarded_at` timestamp. This is a trusted integration assertion of a human action; the backend does not independently authenticate a Redmine person from that string. The plugin enforces issue visibility and Submit ESA permission and supplies the logged-in identity. Automated producers must not fabricate forwarding metadata.
 
 ```json
 {

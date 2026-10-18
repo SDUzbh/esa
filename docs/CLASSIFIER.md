@@ -67,7 +67,7 @@ The model's latest training review must be no later than the ticket's forwarding
 
 ## APIs and continuous learning
 
-All endpoints require the existing Bearer service token and explicit authorized `X-ESA-Project-IDs`; the Redmine client also supplies visible `X-ESA-Ticket-IDs`.
+All endpoints require a Bearer token and explicit authorized `X-ESA-Project-IDs`. The Redmine plugin's token must also supply the visible `X-ESA-Ticket-IDs`; the unscoped feedback export below uses the operator token ([service tokens](ESA_OPERATIONS.md#service-tokens)).
 
 | Method and path | Purpose |
 | --- | --- |
@@ -83,7 +83,7 @@ To collect feedback, request the export through an authorized service client and
 ```sh
 # Set the token privately; do not put its literal value in shell history.
 curl --fail --silent --show-error --get \
-  -H "Authorization: Bearer $ESA_API_TOKEN" \
+  -H "Authorization: Bearer $ESA_OPERATOR_TOKEN" \
   -H 'X-ESA-Project-IDs: 1' \
   --data-urlencode 'before=2026-10-12T00:00:00Z' \
   http://127.0.0.1:8090/v1/classifier/feedback \

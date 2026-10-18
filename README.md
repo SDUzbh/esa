@@ -110,7 +110,7 @@ export ESA_API_TOKEN='<at least 24 random characters>' ESA_DATABASE_URL="$ESA_TE
 
 The same disposable server serves the tests, which need it: `ESA_TEST_DATABASE_URL` must be set (see [CI](docs/CI.md)).
 
-The service token in `deploy/redmine/.env` is private. The browser never receives it. The plugin derives project and issue visibility from the current Redmine user. The Go service is reachable only inside the Compose network.
+Set `ESA_OPERATOR_TOKEN` as well to call that ESA directly with `curl` or scripts; the plugin's `ESA_API_TOKEN` requests must carry a ticket scope ([service tokens](docs/ESA_OPERATIONS.md#service-tokens)). The tokens in `deploy/redmine/.env` are private. The browser never receives it. The plugin derives project and issue visibility from the current Redmine user. The Go service is reachable only inside the Compose network.
 
 Run a JSON ticket through Routing Agent and download the provider's runtime events. The isolated local ESA it starts keeps its state in a throwaway schema of `ESA_DATABASE_URL`:
 

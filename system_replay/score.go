@@ -29,6 +29,9 @@ type JobLabel struct {
 	ExpectedRoute string `json:"expected_route"`
 	Original      string `json:"original,omitempty"`
 	Stratum       string `json:"stratum,omitempty"`
+	// Selected says why a bug is in the set: stratified sampling, or as the
+	// original of a sampled duplicate.
+	Selected string `json:"selected,omitempty"`
 }
 
 // Rate is a proportion with its 95% Wilson interval.

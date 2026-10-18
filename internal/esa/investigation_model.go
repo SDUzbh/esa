@@ -43,6 +43,11 @@ type EngineeringIssue struct {
 	Title               string    `json:"title"`
 	State               string    `json:"state,omitempty"`
 	CreatedAt           time.Time `json:"created_at"`
+	// RetiredAt is set when a solved Issue went unmatched for the retirement
+	// period: it leaves the active Issue directory but stays searchable in its
+	// archive. RevivedAt is the last time a new ticket matched it again.
+	RetiredAt time.Time `json:"retired_at,omitzero"`
+	RevivedAt time.Time `json:"revived_at,omitzero"`
 }
 type IssueTicketLink struct {
 	Version         int       `json:"version"`
@@ -55,6 +60,9 @@ type IssueTicketLink struct {
 	State           string    `json:"state"`
 	Basis           string    `json:"basis"`
 	AvailableAt     time.Time `json:"available_at"`
+	// PossibleRegression marks a ticket assigned to a retired, solved Issue:
+	// a problem that was fixed and unseen for a long time has come back.
+	PossibleRegression bool `json:"possible_regression,omitempty"`
 }
 
 // MembershipReview uses expected snapshot/link IDs to reject stale human edits.

@@ -6,7 +6,7 @@ import "time"
 // the by-Issue indexes, beside the indexed one and requires identical states.
 func init() { issueRetentionReference = maintainIssuesByScan }
 
-func maintainIssuesByScan(s *State, at time.Time) bool {
+func maintainIssuesByScan(s *State, at time.Time, retireAfter time.Duration) bool {
 	live := map[string]bool{}
 	for _, link := range s.Memberships.All() {
 		t, ok := s.Tickets.Lookup(link.TicketID)
@@ -53,10 +53,49 @@ func maintainIssuesByScan(s *State, at time.Time) bool {
 			removed = true
 		}
 	}
-	if s.Issues.Len() <= IssueLimit {
+	reviewed := map[string]bool{}
+	for _, sol := range s.Solutions.All() {
+		if sol.State == "trusted" && s.Investigations.Get(sol.InvestigationID).SolutionID == sol.ID {
+			reviewed[sol.IssueID] = true
+		}
+	}
+	for _, c := range s.Cases.All() {
+		if c.State == "trusted" {
+			reviewed[c.IssueID] = true
+		}
+	}
+	open := map[string]bool{}
+	for _, link := range s.Memberships.All() {
+		if t, ok := s.Tickets.Lookup(link.TicketID); ok && !t.Closed && link.State == "tentative" {
+			open[link.IssueID] = true
+		}
+	}
+	var capped []EngineeringIssue
+	for _, id := range s.Issues.Keys() {
+		issue := s.Issues.Get(id)
+		if !issue.RetiredAt.IsZero() {
+			continue
+		}
+		last := issue.CreatedAt
+		if issue.LastAccessedAt.After(last) {
+			last = issue.LastAccessedAt
+		}
+		if issue.RevivedAt.After(last) {
+			last = issue.RevivedAt
+		}
+		if reviewed[id] && !open[id] && !last.Add(retireAfter).After(at) {
+			issue.RetiredAt = at
+			s.Issues.Put(id, issue)
+			continue
+		}
+		if !reviewed[id] {
+			capped = append(capped, issue)
+		}
+	}
+	if len(capped) <= IssueLimit {
 		return removed
 	}
-	for _, issue := range leastRecentIssues(*s) {
+	for _, issue := range leastRecent(capped) {
 		removeIssueByScan(s, issue.ID, "least recently used", at)
 	}
 	return true

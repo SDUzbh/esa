@@ -3,6 +3,7 @@ package esa
 import (
 	"fmt"
 	"strings"
+	"time"
 )
 
 func boundedIssueText(value string) string {
@@ -110,6 +111,14 @@ func (e *Engine) applyIssueAssignment(s *State, task *Investigation, report Repo
 		s.Cases.Put(c.ID, c)
 		s.CaseHistory = append(s.CaseHistory, c)
 	}
+	// A ticket landing on a retired, solved Issue revives it: the problem was
+	// fixed and unseen for the retirement period, so it may have regressed.
+	regression := false
+	if issue := s.Issues.Get(id); !issue.RetiredAt.IsZero() {
+		issue.RetiredAt, issue.RevivedAt = time.Time{}, e.Now()
+		s.Issues.Put(id, issue)
+		regression = true
+	}
 	task.IssueID = id
 	touchIssue(s, id, e.Now())
 	for key, group := range s.Groups.All() {
@@ -126,6 +135,10 @@ func (e *Engine) applyIssueAssignment(s *State, task *Investigation, report Repo
 			link.IssueID = id
 			link.Version++
 			link.Basis = "Agent proposed family: " + reason
+			if regression {
+				link.Basis += " (possible regression of a retired, solved Issue)"
+			}
+			link.PossibleRegression = regression
 			link.AvailableAt = e.Now()
 			s.Memberships.Put(key, link)
 			s.MembershipHistory = append(s.MembershipHistory, link)

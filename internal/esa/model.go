@@ -94,7 +94,10 @@ type Config struct {
 	Budget     Budget           `json:"budget"`
 	Classifier ClassifierConfig `json:"classifier"`
 	Worker     WorkerConfig     `json:"worker"`
-	Replay     ReplayConfig     `json:"-"`
+	// IssueRetirementDays is how long a solved Issue may go unmatched before
+	// it is retired to the Issue directory's archive (default 180).
+	IssueRetirementDays int          `json:"issue_retirement_days,omitempty"`
+	Replay              ReplayConfig `json:"-"`
 }
 
 type ClassifierConfig struct {

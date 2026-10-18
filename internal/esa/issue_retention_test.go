@@ -2,6 +2,7 @@ package esa
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -124,21 +125,11 @@ func TestStartupPrunesEmptyAndExcessIssues(t *testing.T) {
 	}
 }
 
-func TestLRUEvictionCannotResurrectLinkedCase(t *testing.T) {
-	e := testEngine(t)
-	ticket, run := analyzedTicket(t, e, "case-source")
-	ticket.Closed = true
-	ticket.Resolution = Resolution{Cause: "cause", Solution: "repair", Validation: "regression"}
-	closed := receive(t, e, "closed", ticket)
-	if _, err := e.ReviewCase(closed.CaseID, Review{Action: "approve", Reviewer: "engineer"}); err != nil {
-		t.Fatal(err)
-	}
-	if e.Store.Snapshot().Issues.Get(run.IssueID).ID == "" {
-		t.Fatal("closed case was incorrectly considered empty")
-	}
+// crowdOut adds IssueLimit unreviewed Issues, all more recent than any other.
+func crowdOut(t *testing.T, e *Engine) {
+	t.Helper()
 	seedIssueCatalogue(t, e, IssueLimit)
 	if err := e.update(func(s *State) error {
-		// Make all new issues more recent, at the same replay timestamp.
 		for i := 0; i < IssueLimit; i++ {
 			id := fmt.Sprintf("issue_%03d", i)
 			issue := s.Issues.Get(id)
@@ -150,9 +141,34 @@ func TestLRUEvictionCannotResurrectLinkedCase(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+}
+
+// closedCase analyzes a ticket, closes it with a resolution and returns the
+// collected case, approved or left as a draft.
+func closedCase(t *testing.T, e *Engine, approve bool) (Run, Receipt) {
+	t.Helper()
+	ticket, run := analyzedTicket(t, e, "case-source")
+	ticket.Closed = true
+	ticket.Resolution = Resolution{Cause: "cause", Solution: "repair", Validation: "regression"}
+	closed := receive(t, e, "closed", ticket)
+	if approve {
+		if _, err := e.ReviewCase(closed.CaseID, Review{Action: "approve", Reviewer: "engineer"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if e.Store.Snapshot().Issues.Get(run.IssueID).ID == "" {
+		t.Fatal("closed case was incorrectly considered empty")
+	}
+	return run, closed
+}
+
+func TestLRUEvictionCannotResurrectLinkedCase(t *testing.T) {
+	e := testEngine(t)
+	run, closed := closedCase(t, e, false)
+	crowdOut(t, e)
 	state := e.Store.Snapshot()
-	if state.Issues.Len() != IssueLimit || state.Issues.Get(run.IssueID).ID != "" || state.Cases.Get(closed.CaseID).State != "trusted" {
-		t.Fatal("capacity eviction changed the retained case audit")
+	if state.Issues.Len() != IssueLimit || state.Issues.Get(run.IssueID).ID != "" || state.Cases.Get(closed.CaseID).ID == "" {
+		t.Fatal("capacity eviction kept the unreviewed Issue or lost the case audit")
 	}
 	for _, record := range issueRecords(state, Investigation{Contract: TaskContract{ObservationCutoff: e.Now()}}, fixture(e, "query")) {
 		if record.IssueID == run.IssueID {
@@ -162,6 +178,27 @@ func TestLRUEvictionCannotResurrectLinkedCase(t *testing.T) {
 	response := classifierRequest(e, "GET", "/v1/tickets/case-source", "", "1", "case-source")
 	if response.Code != 200 || !strings.Contains(response.Body.String(), `"state":"issue_removed"`) {
 		t.Fatal("retired current result was not distinguished from audit history", response.Body)
+	}
+}
+
+// Review Issue 4: the count cap must not evict engineer-approved knowledge.
+func TestCountCapNeverEvictsReviewedKnowledge(t *testing.T) {
+	e := testEngine(t)
+	run, closed := closedCase(t, e, true)
+	crowdOut(t, e)
+	state := e.Store.Snapshot()
+	if state.Issues.Len() != IssueLimit+1 || state.Issues.Get(run.IssueID).ID == "" || state.Cases.Get(closed.CaseID).State != "trusted" {
+		t.Fatal("the count cap evicted an Issue with an approved case", state.Issues.Len())
+	}
+	found := false
+	for _, record := range issueRecords(state, Investigation{Contract: TaskContract{ObservationCutoff: e.Now()}}, fixture(e, "query")) {
+		found = found || record.IssueID == run.IssueID && record.Kind == "engineer_resolved" && !record.Retired
+	}
+	if !found {
+		t.Fatal("approved knowledge left the active directory")
+	}
+	if _, err := e.ReviewCase(closed.CaseID, Review{Action: "approve", Reviewer: "engineer", Note: "re-review"}); errors.Is(err, ErrConflict) && strings.Contains(err.Error(), "removed") {
+		t.Fatal("a protected Issue's case could no longer be reviewed", err)
 	}
 }
 
@@ -251,7 +288,7 @@ func TestUsableAnalysisKeepsIssueUnlessReassigned(t *testing.T) {
 			if indexed {
 				s.advanceIndexes()
 			}
-			maintainIssues(&s, at)
+			maintainIssues(&s, at, 180*24*time.Hour)
 			if _, kept := s.Issues.Lookup("issue_a"); kept != tc.kept {
 				t.Fatalf("override %q, indexed %v: issue kept = %v, want %v", tc.override, indexed, kept, tc.kept)
 			}

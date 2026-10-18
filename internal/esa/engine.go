@@ -118,6 +118,12 @@ func configuredEngine(config Config) (*Engine, error) {
 	if e.Config.Worker.MaxQueueWaitSeconds < 1 || e.Config.Worker.MaxQueueWaitSeconds > 86400 {
 		return nil, fmt.Errorf("%w: max_queue_wait_seconds must be 1..86400", ErrInvalid)
 	}
+	if config.IssueRetirementDays == 0 {
+		e.Config.IssueRetirementDays = 180
+	}
+	if e.Config.IssueRetirementDays < 1 || e.Config.IssueRetirementDays > 3650 {
+		return nil, fmt.Errorf("%w: issue_retirement_days must be 1..3650", ErrInvalid)
+	}
 	if config.Replay.Enabled && (config.Replay.InitialTime.IsZero() || len(config.Replay.Projects) == 0) {
 		return nil, fmt.Errorf("%w: replay clock requires initial_time and clock_projects", ErrInvalid)
 	}

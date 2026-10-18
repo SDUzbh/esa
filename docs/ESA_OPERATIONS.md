@@ -17,11 +17,17 @@ A later case approval does not match open tickets, replace unrelated investigati
 
 ## Issue retention
 
-ESA retains at most **100 Engineering Issues globally across projects**. Startup and every successful business transaction first remove empty Issues, then evict the least recently accessed until the catalogue is within the limit. Empty means no current public ticket membership, eligible closed case, or usable analysis source still associated with that Issue. A pending unassigned replacement task does not erase its usable prior analysis; moving the source to another Issue releases that association.
+Startup and every successful business transaction apply three rules, in order:
+
+1. **Remove empty Issues.** Empty means no current public ticket membership, eligible closed case, or usable analysis source still associated with that Issue. A pending unassigned replacement task does not erase its usable prior analysis; moving the source to another Issue releases that association.
+2. **Retire solved Issues.** An Issue that holds engineer-reviewed knowledge (a trusted current solution or a trusted case), has no open member ticket, and was not created, matched or opened for `issue_retirement_days` (default 180, in `config/rules.json`, on ESA's clock) gets `retired_at`. Its records stay in the Issue directory, marked `retired`: `issue_search` leaves them out unless `archive` is true, so old solved problems stop competing with current ones without being lost.
+3. **Cap the rest.** At most **100 Issues without reviewed knowledge** stay active across projects; beyond that the least recently accessed are evicted. Issues with reviewed knowledge are never evicted by count.
+
+**Revival.** When routing reuses, or assignment joins, a retired Issue, ESA clears `retired_at`, sets `revived_at`, and marks the ticket's membership `possible_regression`: a problem that was fixed and unseen for the retirement period has come back. The Redmine report page shows a warning, and the Issue list marks retired Issues.
 
 Creation, assignment, reuse, review, authorized ticket/investigation detail reads, and successful hash-verified Agent record reads update access order. Listing tickets/Issues, exporting an index, and search results alone do not. Agent reads are reported on successful stage completion and constrained to that task's frozen directory. A persisted sequence preserves operation order even when replay timestamps are equal; legacy Issues fall back to creation time and ID until accessed. Historical cutoffs use the replay clock rather than wall time.
 
-Eviction removes the current Issue entry, detaches its active memberships, clears human overrides and invalidates dependent solution applications. Snapshots, runs, solution revisions, cases and membership history remain as audit records. Removed Issue IDs cannot re-enter the directory through those retained records, be reviewed as current knowledge, or be automatically restored by stale Agent output. Explicit forwarding can start a new analysis. The 100 limit applies to Engineering Issues, not Redmine tickets, standalone cases or audit storage size. This policy needs no scheduler or manual cleanup command.
+Eviction (rules 1 and 3) removes the current Issue entry, detaches its active memberships, clears human overrides and invalidates dependent solution applications. Snapshots, runs, solution revisions, cases and membership history remain as audit records. Removed Issue IDs cannot re-enter the directory through those retained records, be reviewed as current knowledge, or be automatically restored by stale Agent output. Explicit forwarding can start a new analysis. The 100 limit applies to Engineering Issues without reviewed knowledge, not to Redmine tickets, standalone cases or audit storage size. Retirement removes nothing. This policy needs no scheduler or manual cleanup command.
 
 ## Run and persist
 

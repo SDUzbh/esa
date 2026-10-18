@@ -7,6 +7,7 @@
 <% if task %><div class="box"><h3>Shared engineering investigation</h3>
 <p><strong>Engineering issue:</strong> <%= engineering_issue ? engineering_issue['id'] : 'Unassigned until analysis completes' %> · <strong>Investigation:</strong> <%= esa_label(task['state']) %></p>
 <% if %w[running investigating].include?(task['state']) && task['phase'].present? %><p><strong>Stage:</strong> <%= esa_label(task['phase']) %><% if task['phase'] == 'waiting_engineering' %> · Waiting for an available engineering worker.<% end %></p><% end %>
+<% if @row.dig('membership', 'possible_regression') %><p class="warning">Possible regression: this ticket matched a solved engineering issue that had been retired after a long time without new reports.</p><% end %>
 <p><%= link_to 'Engineering issue list', esa_engineering_issues_path %></p>
 <p>Identical inputs share an investigation automatically. Routing Agent can also join matching symptoms within the same version, component and environment scope. Membership remains tentative until reviewed.</p>
 <% if @row['solution_application'] %><p><strong>Applicability:</strong> <%= esa_label(@row.dig('solution_application', 'state')) %>. This references existing knowledge; it does not create a new solution.</p><% end %>

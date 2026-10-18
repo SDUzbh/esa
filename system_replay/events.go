@@ -3,6 +3,7 @@ package systemreplay
 import (
 	"context"
 	"fmt"
+	"time"
 )
 
 func checked(value any, expected []Assertion, message string) ([]Check, error) {
@@ -61,6 +62,7 @@ func (c *Client) event(ctx context.Context, event Event, vars map[string]any) (r
 	if event.Request != nil {
 		request = *event.Request
 	}
+	started := time.Now()
 	record.Receipt, err = c.request(ctx, request, vars)
 	if err != nil {
 		return
@@ -78,6 +80,7 @@ func (c *Client) event(ctx context.Context, event Event, vars map[string]any) (r
 		observe = *event.Observe
 	}
 	record.Observation, err = c.poll(ctx, observe, vars)
+	record.ElapsedMS = time.Since(started).Milliseconds()
 	if err != nil {
 		return
 	}

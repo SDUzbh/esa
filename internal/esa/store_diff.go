@@ -114,7 +114,11 @@ func diffState(old, next *State) StateChanges {
 	c.CaseHistory = diffHistory(old.CaseHistory, next.CaseHistory)
 	c.MembershipHistory = diffHistory(old.MembershipHistory, next.MembershipHistory)
 	oldFrame, nextFrame := frameOf(old), frameOf(next)
-	c.Frame = !sameBits(&oldFrame, &nextFrame) || !maps.EqualFunc(old.StoredFields, next.StoredFields, func(a, b json.RawMessage) bool { return bytes.Equal(a, b) })
+	c.Frame = !sameBits(&oldFrame, &nextFrame) || !maps.EqualFunc(
+		old.StoredFields,
+		next.StoredFields,
+		func(a, b json.RawMessage) bool { return bytes.Equal(a, b) },
+	)
 	return c
 }
 

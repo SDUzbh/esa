@@ -81,7 +81,13 @@ func ValidateConfig(config Config) error {
 // configuredEngine validates the configuration, applies its defaults and
 // loads classifier models; NewEngine then binds the store.
 func configuredEngine(config Config) (*Engine, error) {
-	if config.Version == "" || config.Budget.MaxCalls < 0 || config.Budget.MaxCalls > 1 || config.Budget.TimeoutSeconds < 1 || config.Budget.MaxInputTokens < 1 || config.Budget.MaxOutputTokens < 1 || !config.Budget.validWeights() {
+	if config.Version == "" ||
+		config.Budget.MaxCalls < 0 ||
+		config.Budget.MaxCalls > 1 ||
+		config.Budget.TimeoutSeconds < 1 ||
+		config.Budget.MaxInputTokens < 1 ||
+		config.Budget.MaxOutputTokens < 1 ||
+		!config.Budget.validWeights() {
 		return nil, fmt.Errorf("%w: invalid workflow configuration or budget", ErrInvalid)
 	}
 	e := &Engine{Config: config, Now: func() time.Time { return time.Now().UTC() }, classifiers: map[string]*classifier.Model{}}
@@ -215,7 +221,7 @@ func CasesAt(history []Case, at time.Time) []Case {
 	}
 	out := []Case{}
 	for _, c := range latest {
-		if c.State == "trusted" && !c.TrustedAt.IsZero() && !c.TrustedAt.After(at) {
+		if c.State == CaseTrusted && !c.TrustedAt.IsZero() && !c.TrustedAt.After(at) {
 			out = append(out, c)
 		}
 	}
@@ -280,7 +286,18 @@ func (e *Engine) Receive(event Event) (Receipt, error) {
 	var receipt Receipt
 	err := e.update(func(s *State) error {
 		previousRunID := s.Latest.Get(t.ID)
-		record := EventRecord{ID: event.ID, Origin: event.Origin, Force: event.Force, ForwardedBy: event.ForwardedBy, ForwardedAt: event.ForwardedAt, OccurredAt: event.OccurredAt, ReceivedAt: event.ReceivedAt, TicketID: t.ID, TicketHash: ticketHash, Raw: event.Raw}
+		record := EventRecord{
+			ID:          event.ID,
+			Origin:      event.Origin,
+			Force:       event.Force,
+			ForwardedBy: event.ForwardedBy,
+			ForwardedAt: event.ForwardedAt,
+			OccurredAt:  event.OccurredAt,
+			ReceivedAt:  event.ReceivedAt,
+			TicketID:    t.ID,
+			TicketHash:  ticketHash,
+			Raw:         event.Raw,
+		}
 		if old, ok := s.Events.Lookup(event.ID); ok {
 			if old.TicketHash != ticketHash || old.Origin != event.Origin || old.Force != event.Force {
 				return reject(fmt.Errorf("%w: event ID was reused with different content", ErrConflict))
@@ -305,8 +322,8 @@ func (e *Engine) Receive(event Event) (Receipt, error) {
 			record.SnapshotID = captureSnapshot(s, event)
 			e.detachChangedMemberships(s, t)
 			if t.Private {
-				if c, ok := s.Cases.Lookup("case_" + hash(t.ID)[:24]); ok && c.State != "invalidated" {
-					c.State = "invalidated"
+				if c, ok := s.Cases.Lookup("case_" + hash(t.ID)[:24]); ok && c.State != CaseInvalidated {
+					c.State = CaseInvalidated
 					c.Version++
 					c.UpdatedAt = now
 					c.ReviewNote = "The source ticket became private."
@@ -314,7 +331,7 @@ func (e *Engine) Receive(event Event) (Receipt, error) {
 					s.CaseHistory = append(s.CaseHistory, c)
 				}
 				if r, ok := s.Runs.Lookup(s.Latest.Get(t.ID)); ok && r.InvestigationID == "" {
-					r.State = "restricted"
+					r.State = RunRestricted
 					s.Runs.Put(r.ID, r)
 				}
 				receipt.Action = "restricted_private_ticket"
@@ -323,8 +340,8 @@ func (e *Engine) Receive(event Event) (Receipt, error) {
 				receipt.Action = "case_collected"
 				receipt.CaseID = c.ID
 			} else {
-				if c, ok := s.Cases.Lookup("case_" + hash(t.ID)[:24]); ok && c.State != "invalidated" {
-					c.State = "invalidated"
+				if c, ok := s.Cases.Lookup("case_" + hash(t.ID)[:24]); ok && c.State != CaseInvalidated {
+					c.State = CaseInvalidated
 					c.ReviewNote = "The source ticket was reopened."
 					c.Version++
 					c.UpdatedAt = now
@@ -351,7 +368,22 @@ func (e *Engine) Receive(event Event) (Receipt, error) {
 }
 
 func (e *Engine) collectCase(s *State, t Ticket, now time.Time) Case {
-	c := Case{ID: "case_" + hash(t.ID)[:24], TicketID: t.ID, ProjectID: t.ProjectID, SourceKey: t.SourceKey, Subject: t.Subject, Summary: t.Description, Components: unique(t.Components), Versions: unique(t.Versions), Environment: t.Environment, Resolution: t.Resolution, State: "draft", CreatedAt: now, UpdatedAt: now, Version: 1}
+	c := Case{
+		ID:          "case_" + hash(t.ID)[:24],
+		TicketID:    t.ID,
+		ProjectID:   t.ProjectID,
+		SourceKey:   t.SourceKey,
+		Subject:     t.Subject,
+		Summary:     t.Description,
+		Components:  unique(t.Components),
+		Versions:    unique(t.Versions),
+		Environment: t.Environment,
+		Resolution:  t.Resolution,
+		State:       CaseDraft,
+		CreatedAt:   now,
+		UpdatedAt:   now,
+		Version:     1,
+	}
 	c.IssueID = s.Runs.Get(s.Latest.Get(t.ID)).IssueID
 	if override := s.IssueOverrides.Get(t.ID); override != "" {
 		c.IssueID = override
@@ -361,23 +393,23 @@ func (e *Engine) collectCase(s *State, t Ticket, now time.Time) Case {
 		Resolution Resolution
 	}{diagnosticHash(t), t.Resolution})
 	if lower(t.Resolution.Reason) == "duplicate" {
-		c.State = "duplicate"
+		c.State = CaseDuplicate
 	} else if contains([]string{"rejected", "cancelled", "won't fix", "wontfix", "not a problem", "invalid"}, t.Resolution.Reason) {
-		c.State = "archived"
+		c.State = CaseArchived
 	}
 	if old, ok := s.Cases.Lookup(c.ID); ok {
 		if c.IssueID == "" {
 			c.IssueID = old.IssueID
 		}
-		if old.SourceHash == c.SourceHash && old.State != "invalidated" {
+		if old.SourceHash == c.SourceHash && old.State != CaseInvalidated {
 			return old
 		}
 		c.CreatedAt = old.CreatedAt
 		c.Version = old.Version + 1
 	}
-	if sol, ok := canonicalSolution(*s, c.IssueID, caseScope(c)); ok && sol.State == "trusted" && sameResolution(sol.Resolution, c.Resolution) {
+	if sol, ok := canonicalSolution(*s, c.IssueID, caseScope(c)); ok && sol.State == SolutionTrusted && sameResolution(sol.Resolution, c.Resolution) {
 		c.SolutionID = sol.ID
-		c.State = "trusted"
+		c.State = CaseTrusted
 		c.ReviewedBy = sol.Reviewer
 		c.ReviewNote = sol.Note
 		c.TrustedAt = sol.AvailableAt
@@ -418,14 +450,14 @@ func (e *Engine) ReviewCase(id string, review Review) (Case, error) {
 		}
 		if review.Action == "approve" {
 			t, ok := s.Tickets.Lookup(c.TicketID)
-			if !ok || !t.Closed || t.Private || c.State == "duplicate" || c.State == "archived" || c.State == "invalidated" {
+			if !ok || !t.Closed || t.Private || c.State == CaseDuplicate || c.State == CaseArchived || c.State == CaseInvalidated {
 				return fmt.Errorf("%w: source ticket is not eligible", ErrInvalid)
 			}
 			if c.Resolution.Cause == "" || c.Resolution.Solution == "" || c.Resolution.Validation == "" || len(c.Components) == 0 || len(c.Versions) == 0 {
 				return fmt.Errorf("%w: confirmed cause, solution, verification and scope required", ErrInvalid)
 			}
 		}
-		state := map[string]string{"approve": "trusted", "reject": "rejected", "withdraw": "withdrawn"}[review.Action]
+		state := map[string]SolutionState{"approve": SolutionTrusted, "reject": SolutionRejected, "withdraw": SolutionWithdrawn}[review.Action]
 		if sol, ok := canonicalSolution(*s, c.IssueID, caseScope(c)); ok && c.IssueID != "" {
 			c.SolutionID = sol.ID
 			s.Cases.Put(id, c)
@@ -450,16 +482,17 @@ func (e *Engine) ReviewCase(id string, review Review) (Case, error) {
 			}
 			return nil
 		}
-		if c.State == state && sameResolution(s.Cases.Get(id).Resolution, c.Resolution) {
+		// Without a canonical solution the case takes the review state itself.
+		if c.State == CaseState(state) && sameResolution(s.Cases.Get(id).Resolution, c.Resolution) {
 			result = c
 			return nil
 		}
-		c.State = state
+		c.State = CaseState(state)
 		c.ReviewedBy = review.Reviewer
 		c.ReviewNote = review.Note
 		c.Version++
 		c.UpdatedAt = e.Now()
-		if state == "trusted" {
+		if state == SolutionTrusted {
 			c.TrustedAt = e.Now()
 		} else {
 			c.TrustedAt = time.Time{}
@@ -483,5 +516,13 @@ func (e *Engine) AnalyzeTicket(id string, force bool, actor string) (Receipt, er
 	if ticket.Closed {
 		return Receipt{}, fmt.Errorf("%w: forward the latest closed snapshot to collect a case", ErrInvalid)
 	}
-	return e.Receive(Event{ID: randomID("manual_"), Origin: "manual_forward", ForwardedBy: actor, ForwardedAt: e.Now(), OccurredAt: e.Now(), Force: force, Ticket: ticket})
+	return e.Receive(Event{
+		ID:          randomID("manual_"),
+		Origin:      "manual_forward",
+		ForwardedBy: actor,
+		ForwardedAt: e.Now(),
+		OccurredAt:  e.Now(),
+		Force:       force,
+		Ticket:      ticket,
+	})
 }

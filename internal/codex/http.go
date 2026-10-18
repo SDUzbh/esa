@@ -24,7 +24,12 @@ func (p *Provider) Handler(token string) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok", "provider": "codex_cli", "registered_source": p.Packet.Ticket.SourceKey, "model": p.Model})
+		_ = json.NewEncoder(w).Encode(map[string]string{
+			"status":            "ok",
+			"provider":          "codex_cli",
+			"registered_source": p.Packet.Ticket.SourceKey,
+			"model":             p.Model,
+		})
 	})
 	mux.HandleFunc("POST /analyze", func(w http.ResponseWriter, r *http.Request) {
 		r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
@@ -51,7 +56,9 @@ func (p *Provider) Handler(token string) http.Handler {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		if r.URL.Path != "/healthz" {
 			header := r.Header.Get("Authorization")
-			if token == "" || !strings.HasPrefix(header, "Bearer ") || subtle.ConstantTimeCompare([]byte(strings.TrimPrefix(header, "Bearer ")), []byte(token)) != 1 {
+			if token == "" ||
+				!strings.HasPrefix(header, "Bearer ") ||
+				subtle.ConstantTimeCompare([]byte(strings.TrimPrefix(header, "Bearer ")), []byte(token)) != 1 {
 				http.Error(w, "Authentication required", 401)
 				return
 			}

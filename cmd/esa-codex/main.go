@@ -38,7 +38,11 @@ func run() error {
 	concurrency := flag.Int("concurrency", 3, "Maximum engineering environments running simultaneously (1..3)")
 	issuesRoot := flag.String("issues-directory", "runtime/esa/issues", "Local read-only root of ESA Issue projections shared with the service")
 	runs := flag.String("runs", ".esa/codex-runs", "Private invocation audit directory")
-	tokenFile := flag.String("token-env-file", "deploy/redmine/.env", "Private environment file with ESA_ANALYZER_TOKEN, used when that variable is not set; only that key is read")
+	tokenFile := flag.String(
+		"token-env-file",
+		"deploy/redmine/.env",
+		"Private environment file with ESA_ANALYZER_TOKEN, used when that variable is not set; only that key is read",
+	)
 	cli := flag.String("codex", "codex", "Installed Codex CLI")
 	var acceptedFeatures []string
 	flag.Func("accept-cli-feature", "Start even though the Codex CLI does not honour ESA's setting for this feature (repeatable; logged as a warning)", func(name string) error {
@@ -80,7 +84,9 @@ func run() error {
 	if *registryPath != "" && (*once || *toolsConfig != "" || *reviewFile != "") {
 		return fmt.Errorf("registry mode requires the HTTP provider with task-local tool registrations")
 	}
-	if *reviewFile == "" && *registryPath == "" && ((len(packet.Documents) == 0 && *toolsConfig == "") || packet.Ticket.SourceKey == "" || packet.Cutoff.IsZero()) {
+	if *reviewFile == "" &&
+		*registryPath == "" &&
+		((len(packet.Documents) == 0 && *toolsConfig == "") || packet.Ticket.SourceKey == "" || packet.Cutoff.IsZero()) {
 		return fmt.Errorf("invalid evidence packet")
 	}
 	// ESA authenticates to this provider with ESA_ANALYZER_TOKEN, a secret of
@@ -165,7 +171,17 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	provider := &codex.Provider{IssuesRoot: issueRoot, CLI: path, Model: *model, Effort: *effort, RunsDir: dir, Packet: packet, ToolsConfig: *toolsConfig, ToolCommand: toolCommand, ProfilesRoot: profileDir}
+	provider := &codex.Provider{
+		IssuesRoot:   issueRoot,
+		CLI:          path,
+		Model:        *model,
+		Effort:       *effort,
+		RunsDir:      dir,
+		Packet:       packet,
+		ToolsConfig:  *toolsConfig,
+		ToolCommand:  toolCommand,
+		ProfilesRoot: profileDir,
+	}
 	if *toolCatalog != "" {
 		data, err := os.ReadFile(*toolCatalog)
 		if err != nil {
@@ -262,7 +278,14 @@ func run() error {
 		}
 		return json.NewEncoder(os.Stdout).Encode(report)
 	}
-	server := &http.Server{Addr: *listen, Handler: provider.Handler(token), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 16 * time.Minute, BaseContext: func(_ net.Listener) context.Context { return ctx }}
+	server := &http.Server{
+		Addr:              *listen,
+		Handler:           provider.Handler(token),
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       15 * time.Second,
+		WriteTimeout:      16 * time.Minute,
+		BaseContext:       func(_ net.Listener) context.Context { return ctx },
+	}
 	shutdownDone := make(chan struct{})
 	go func() {
 		defer close(shutdownDone)

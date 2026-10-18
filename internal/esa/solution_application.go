@@ -12,10 +12,10 @@ func applicationSource(s State, app SolutionApplication) (SolutionRevision, bool
 			return sol, false
 		}
 		owner := s.Investigations.Get(sol.InvestigationID)
-		return sol, owner.SolutionID == sol.ID && (sol.State == "trusted" || sol.State == "proposed") && !s.Tickets.Get(sol.SourceTicketID).Private
+		return sol, owner.SolutionID == sol.ID && (sol.State == SolutionTrusted || sol.State == SolutionProposed) && !s.Tickets.Get(sol.SourceTicketID).Private
 	}
 	c, ok := s.Cases.Lookup(app.CaseID)
-	if !ok || c.Version != app.CaseVersion || c.State != "trusted" || s.Tickets.Get(c.TicketID).Private {
+	if !ok || c.Version != app.CaseVersion || c.State != CaseTrusted || s.Tickets.Get(c.TicketID).Private {
 		return SolutionRevision{}, false
 	}
 	if c.IssueID != "" {
@@ -23,7 +23,16 @@ func applicationSource(s State, app SolutionApplication) (SolutionRevision, bool
 			return SolutionRevision{}, false
 		}
 	}
-	return SolutionRevision{ID: c.ID, IssueID: c.IssueID, ProjectID: c.ProjectID, SourceTicketID: c.TicketID, Origin: "engineer", State: c.State, Resolution: c.Resolution, AvailableAt: c.UpdatedAt}, true
+	return SolutionRevision{
+		ID:             c.ID,
+		IssueID:        c.IssueID,
+		ProjectID:      c.ProjectID,
+		SourceTicketID: c.TicketID,
+		Origin:         "engineer",
+		State:          SolutionTrusted,
+		Resolution:     c.Resolution,
+		AvailableAt:    c.UpdatedAt,
+	}, true
 }
 func taskSolution(s State, task Investigation) (SolutionRevision, bool) {
 	if task.Application != nil {
@@ -48,7 +57,7 @@ func (e *Engine) reviewApplication(s *State, task Investigation, review Solution
 	if review.Action == "approve" && !valid {
 		return source, fmt.Errorf("%w: source solution is no longer available", ErrConflict)
 	}
-	state := map[string]string{"approve": "accepted", "reject": "rejected", "withdraw": "withdrawn"}[review.Action]
+	state := map[string]ApplicationState{"approve": ApplicationAccepted, "reject": ApplicationRejected, "withdraw": ApplicationWithdrawn}[review.Action]
 	if app.State == state {
 		return source, nil
 	}
@@ -57,7 +66,11 @@ func (e *Engine) reviewApplication(s *State, task Investigation, review Solution
 	app.Reviews = append(app.Reviews, ApplicationReview{State: state, Reviewer: review.Reviewer, Note: review.Note, AvailableAt: e.Now()})
 	task.Application = &app
 	task.UpdatedAt = e.Now()
-	task.State = map[string]string{"accepted": "applied", "rejected": "rejected", "withdrawn": "withdrawn"}[state]
+	task.State = map[ApplicationState]InvestigationState{
+		ApplicationAccepted:  InvestigationApplied,
+		ApplicationRejected:  InvestigationRejected,
+		ApplicationWithdrawn: InvestigationWithdrawn,
+	}[state]
 	s.Investigations.Put(task.ID, task)
 	return source, nil
 }
@@ -68,11 +81,16 @@ func (e *Engine) invalidateApplications(s *State) {
 			continue
 		}
 		app := *task.Application
-		app.State = "withdrawn"
+		app.State = ApplicationWithdrawn
 		app.Revision++
-		app.Reviews = append(app.Reviews, ApplicationReview{State: "withdrawn", Reviewer: "system", Note: "The referenced source changed or was withdrawn", AvailableAt: e.Now()})
+		app.Reviews = append(app.Reviews, ApplicationReview{
+			State:       ApplicationWithdrawn,
+			Reviewer:    "system",
+			Note:        "The referenced source changed or was withdrawn",
+			AvailableAt: e.Now(),
+		})
 		task.Application = &app
-		task.State = "withdrawn"
+		task.State = InvestigationWithdrawn
 		task.UpdatedAt = e.Now()
 		s.Investigations.Put(id, task)
 	}

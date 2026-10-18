@@ -137,14 +137,14 @@ func solutionTask(sol SolutionRevision) string   { return sol.InvestigationID }
 // indexed.
 func workState(t Investigation) string {
 	switch t.State {
-	case "queued", "running", "investigating", "awaiting_configuration":
-		return t.State
+	case InvestigationQueued, InvestigationRunning, InvestigationInvestigating, InvestigationAwaitingConfiguration:
+		return string(t.State)
 	}
 	return ""
 }
 
 func queuedRun(r Run) string {
-	if r.State == "queued" {
+	if r.State == RunQueued {
 		return "queued"
 	}
 	return ""
@@ -154,21 +154,21 @@ func queuedRun(r Run) string {
 // that can keep an Issue alive, judged by their own fields; Issue retention
 // checks the ticket-dependent conditions at lookup time.
 func tentativeIssue(l IssueTicketLink) string {
-	if l.State != "tentative" {
+	if l.State != MembershipTentative {
 		return ""
 	}
 	return l.IssueID
 }
 
 func retainedCaseIssue(c Case) string {
-	if c.State == "invalidated" || c.State == "duplicate" || c.State == "archived" {
+	if c.State == CaseInvalidated || c.State == CaseDuplicate || c.State == CaseArchived {
 		return ""
 	}
 	return c.IssueID
 }
 
 func usableSolutionIssue(sol SolutionRevision) string {
-	if sol.State != "proposed" && sol.State != "trusted" {
+	if sol.State != SolutionProposed && sol.State != SolutionTrusted {
 		return ""
 	}
 	return sol.IssueID
@@ -177,7 +177,7 @@ func usableSolutionIssue(sol SolutionRevision) string {
 // taskLiveApplication indexes investigations whose solution application can
 // still be withdrawn.
 func taskLiveApplication(t Investigation) string {
-	if t.Application == nil || t.Application.State == "withdrawn" || t.Application.State == "rejected" {
+	if t.Application == nil || t.Application.State == ApplicationWithdrawn || t.Application.State == ApplicationRejected {
 		return ""
 	}
 	return "live"
@@ -247,10 +247,10 @@ func (s State) solutionsOfInvestigation(taskID string) []string {
 
 // investigationsIn returns the investigations in any of the given work
 // states (see workState), ordered by ID.
-func (s State) investigationsIn(states ...string) []Investigation {
+func (s State) investigationsIn(states ...InvestigationState) []Investigation {
 	var ids []string
 	for _, state := range states {
-		ids = append(ids, s.indexes.investigationsByWorkState.lookup(s.Investigations, workState, state)...)
+		ids = append(ids, s.indexes.investigationsByWorkState.lookup(s.Investigations, workState, string(state))...)
 	}
 	slices.Sort(ids)
 	rows := make([]Investigation, len(ids))

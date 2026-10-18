@@ -57,7 +57,8 @@ func CheckCLIFeatures(ctx context.Context, cli string, accepted []string) ([]str
 	}
 	if len(problems) > 0 {
 		version, _ := exec.CommandContext(ctx, cli, "--version").Output()
-		return warnings, fmt.Errorf("the Codex CLI (%s) does not honour ESA's feature settings: %s; use a CLI release that does, update CLIArgs, or accept the risk with -accept-cli-feature",
+		return warnings, fmt.Errorf("the Codex CLI (%s) does not honour ESA's feature settings: %s; use a CLI release that "+
+			"does, update CLIArgs, or accept the risk with -accept-cli-feature",
 			strings.TrimSpace(string(version)), strings.Join(problems, "; "))
 	}
 	return warnings, nil

@@ -27,7 +27,20 @@ func DefaultOptions() Options {
 	return Options{MinDF: 1, MaxFeatures: 10000, Epochs: 300, LearningRate: 1, L2: 0.01, Threshold: 0.5}
 }
 func (o Options) validate() error {
-	if o.MinDF < 1 || o.MaxFeatures < 1 || o.MaxFeatures > 50000 || o.Epochs < 1 || o.Epochs > 10000 || !finite(o.LearningRate) || o.LearningRate <= 0 || o.LearningRate > 1 || !finite(o.L2) || o.L2 < 0 || o.L2 > 1 || !finite(o.Threshold) || o.Threshold <= 0 || o.Threshold >= 1 {
+	if o.MinDF < 1 ||
+		o.MaxFeatures < 1 ||
+		o.MaxFeatures > 50000 ||
+		o.Epochs < 1 ||
+		o.Epochs > 10000 ||
+		!finite(o.LearningRate) ||
+		o.LearningRate <= 0 ||
+		o.LearningRate > 1 ||
+		!finite(o.L2) ||
+		o.L2 < 0 ||
+		o.L2 > 1 ||
+		!finite(o.Threshold) ||
+		o.Threshold <= 0 ||
+		o.Threshold >= 1 {
 		return fmt.Errorf("invalid training options")
 	}
 	return nil
@@ -270,7 +283,19 @@ func (m *Model) Validate() error {
 	if err := m.Options.validate(); err != nil {
 		return err
 	}
-	if m.SchemaVersion != 1 || m.ProjectID == "" || m.TrainingThrough.IsZero() || m.TrainingCount < 2 || m.DatasetHash == "" || len(m.TrainingGroups) == 0 || len(m.TrainingTexts) == 0 || len(m.Vocabulary) == 0 || len(m.Vocabulary) > m.Options.MaxFeatures || len(m.IDF) != len(m.Vocabulary) || len(m.Models) == 0 || len(m.Models) > 64 || len(m.Models)*len(m.Vocabulary) > 2000000 {
+	if m.SchemaVersion != 1 ||
+		m.ProjectID == "" ||
+		m.TrainingThrough.IsZero() ||
+		m.TrainingCount < 2 ||
+		m.DatasetHash == "" ||
+		len(m.TrainingGroups) == 0 ||
+		len(m.TrainingTexts) == 0 ||
+		len(m.Vocabulary) == 0 ||
+		len(m.Vocabulary) > m.Options.MaxFeatures ||
+		len(m.IDF) != len(m.Vocabulary) ||
+		len(m.Models) == 0 ||
+		len(m.Models) > 64 ||
+		len(m.Models)*len(m.Vocabulary) > 2000000 {
 		return fmt.Errorf("invalid model dimensions or provenance")
 	}
 	m.index = map[string]int{}

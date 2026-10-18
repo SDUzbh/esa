@@ -9,7 +9,8 @@ func activeMembership(s State, ticketID string) (IssueTicketLink, bool) {
 	var found IssueTicketLink
 	for _, id := range s.membershipsOfTicket(ticketID) {
 		link := s.Memberships.Get(id)
-		if link.State == "tentative" && (found.ID == "" || link.AvailableAt.After(found.AvailableAt) || link.AvailableAt.Equal(found.AvailableAt) && link.ID < found.ID) {
+		if link.State == MembershipTentative &&
+			(found.ID == "" || link.AvailableAt.After(found.AvailableAt) || link.AvailableAt.Equal(found.AvailableAt) && link.ID < found.ID) {
 			found = link
 		}
 	}
@@ -57,14 +58,25 @@ func (e *Engine) ReviewMembership(ticketID string, review MembershipReview) (Rec
 			s.Memberships.Put(old.ID, old)
 			s.MembershipHistory = append(s.MembershipHistory, old)
 		} else {
-			old.State = "detached"
+			old.State = MembershipDetached
 			old.Version++
 			old.Reviewer = review.Reviewer
 			old.Basis = review.Reason
 			old.AvailableAt = e.Now()
 			s.Memberships.Put(old.ID, old)
 			s.MembershipHistory = append(s.MembershipHistory, old)
-			link := IssueTicketLink{ID: randomID("link_"), IssueID: issue.ID, TicketID: ticketID, SnapshotID: old.SnapshotID, InvestigationID: old.InvestigationID, Version: 1, Reviewer: review.Reviewer, State: "tentative", Basis: review.Reason, AvailableAt: e.Now()}
+			link := IssueTicketLink{
+				ID:              randomID("link_"),
+				IssueID:         issue.ID,
+				TicketID:        ticketID,
+				SnapshotID:      old.SnapshotID,
+				InvestigationID: old.InvestigationID,
+				Version:         1,
+				Reviewer:        review.Reviewer,
+				State:           MembershipTentative,
+				Basis:           review.Reason,
+				AvailableAt:     e.Now(),
+			}
 			s.Memberships.Put(link.ID, link)
 			s.MembershipHistory = append(s.MembershipHistory, link)
 		}

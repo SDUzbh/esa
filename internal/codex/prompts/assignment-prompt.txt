@@ -1,0 +1,1 @@
+Decide Issue grouping for the Engineering Agent's completed diagnosis. Read the registered local request through issue_context.

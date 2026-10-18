@@ -15,19 +15,19 @@ const EngineeringConcurrency = 3
 var errEngineeringCapacity = errors.New("engineering capacity is occupied")
 
 func activeInvestigation(task Investigation) bool {
-	return task.State == "running" || task.State == "investigating"
+	return task.State == InvestigationRunning || task.State == InvestigationInvestigating
 }
 
 // parked reports a task that waits for an engineering slot without holding a
 // worker or a lease. Its routed report and frozen provider input are durable.
 func parked(task Investigation) bool {
-	return task.State == "investigating" && task.Phase == "waiting_engineering" && task.Owner == ""
+	return task.State == InvestigationInvestigating && task.Phase == "waiting_engineering" && task.Owner == ""
 }
 
 // engineeringActive counts reserved engineering slots, including single-call runs.
 func engineeringActive(s State) int {
 	active := 0
-	for _, task := range s.investigationsIn("running", "investigating") {
+	for _, task := range s.investigationsIn(InvestigationRunning, InvestigationInvestigating) {
 		if task.Phase == "investigating" || task.Phase == "" {
 			active++
 		}
@@ -38,7 +38,7 @@ func engineeringActive(s State) int {
 // fairParked orders parked tasks oldest first, rotating across projects.
 func fairParked(s State) []Investigation {
 	var rows []Investigation
-	for _, task := range s.investigationsIn("investigating") {
+	for _, task := range s.investigationsIn(InvestigationInvestigating) {
 		if parked(task) {
 			rows = append(rows, task)
 		}
@@ -56,7 +56,7 @@ func fairParked(s State) []Investigation {
 // Intake routing is serialized per project until its claim is committed. The
 // durable phase/lease is shared by all workers, including other ESA processes.
 func routingBusy(s State, project string) bool {
-	for _, task := range s.investigationsIn("running") {
+	for _, task := range s.investigationsIn(InvestigationRunning) {
 		if task.ProjectID == project && task.Phase == "routing" {
 			return true
 		}
@@ -97,7 +97,13 @@ func (e *Engine) pipeline(ctx context.Context, provider PipelineAnalyzer, input 
 		return routed, err
 	}
 	decision := routed.Routing
-	if decision == nil || decision.Usage.Calls != 1 || routed.Usage.Calls != 1 || strings.TrimSpace(decision.Reason) == "" || len(routed.Findings) != 0 || routed.AssignmentRouting != nil || routed.IssueRequest != nil {
+	if decision == nil ||
+		decision.Usage.Calls != 1 ||
+		routed.Usage.Calls != 1 ||
+		strings.TrimSpace(decision.Reason) == "" ||
+		len(routed.Findings) != 0 ||
+		routed.AssignmentRouting != nil ||
+		routed.IssueRequest != nil {
 		return routed, fmt.Errorf("invalid intake routing stage")
 	}
 	if decision.Action != "analyze" {
@@ -118,7 +124,7 @@ func (e *Engine) pipeline(ctx context.Context, provider PipelineAnalyzer, input 
 		}
 		run := s.Runs.Get(task.RunID)
 		run.Report, run.UpdatedAt = routed, e.Now()
-		current.State, current.Phase, current.UpdatedAt = "investigating", "investigating", e.Now()
+		current.State, current.Phase, current.UpdatedAt = InvestigationInvestigating, "investigating", e.Now()
 		parkedNow = engineeringActive(*s) >= EngineeringConcurrency || len(fairParked(*s)) > 0
 		if parkedNow {
 			frozen := input
@@ -149,7 +155,11 @@ func (e *Engine) engineer(ctx context.Context, provider PipelineAnalyzer, input 
 	if err != nil {
 		return uncertainStage(engineered, routed), err
 	}
-	if engineered.Routing == nil || hash(*engineered.Routing) != hash(*routed.Routing) || engineered.Usage.Calls != 2 || engineered.Issue != nil || engineered.AssignmentRouting != nil {
+	if engineered.Routing == nil ||
+		hash(*engineered.Routing) != hash(*routed.Routing) ||
+		engineered.Usage.Calls != 2 ||
+		engineered.Issue != nil ||
+		engineered.AssignmentRouting != nil {
 		return engineered, fmt.Errorf("engineering cannot assign Issues or replace the routing decision")
 	}
 	if len(engineered.Findings) == 0 && len(engineered.Evidence) == 0 {
@@ -180,7 +190,7 @@ func (e *Engine) engineer(ctx context.Context, provider PipelineAnalyzer, input 
 	if err != nil {
 		return uncertainStage(assigned, engineered), err
 	}
-	if assigned.Usage.Calls != 3 || hash(assigned.Findings) != hash(engineered.Findings) || hash(assigned.Evidence) != hash(engineered.Evidence) || hash(assigned.IssueRequest) != hash(engineered.IssueRequest) || assigned.Summary != engineered.Summary || hash(assigned.Recommendations) != hash(engineered.Recommendations) || hash(assigned.VerificationSteps) != hash(engineered.VerificationSteps) || assigned.Routing == nil || hash(*assigned.Routing) != hash(*routed.Routing) {
+	if assignmentRewroteDiagnosis(assigned, engineered, routed) {
 		return assigned, fmt.Errorf("assignment routing cannot rewrite the engineering diagnosis")
 	}
 	return assigned, nil
@@ -214,17 +224,19 @@ func (e *Engine) joinInvestigation(s *State, task *Investigation, report Report,
 	target, ok := s.Investigations.Lookup(selected.InvestigationID)
 	source := s.Tickets.Get(selected.SourceTicketID)
 	input := s.Runs.Get(task.RunID).Input
-	if !ok || target.ID == task.ID || target.ProjectID != task.ProjectID || source.Private || source.Closed || target.RunID != selected.RunID || s.Groups.Get(target.GroupID).CurrentTaskID != target.ID || !taskHasActiveMembers(*s, target) || investigationSignature(source) != investigationSignature(s.Runs.Get(target.RunID).Input) || investigationScope(input) != selected.ScopeHash || target.Contract.IssueID != task.Contract.IssueID || target.Contract.ObservationCutoff.After(task.Contract.ObservationCutoff) {
+	if joinTargetChanged(s, *task, target, ok, selected, source, input) {
 		return fmt.Errorf("%w: investigation source or scope changed", ErrConflict)
 	}
-	live := activeInvestigation(target) && (target.LeaseUntil.After(e.Now()) || parked(target)) && (target.Phase == "waiting_engineering" || target.Phase == "investigating" || target.Phase == "assignment")
+	live := activeInvestigation(target) &&
+		(target.LeaseUntil.After(e.Now()) || parked(target)) &&
+		(target.Phase == "waiting_engineering" || target.Phase == "investigating" || target.Phase == "assignment")
 	// Completion can race the routing turn. Share the completed investigation
 	// rather than starting another analysis or claiming a future solution.
-	if !live && target.State != "agent_proposed" && target.State != "trusted" {
+	if !live && target.State != InvestigationAgentProposed && target.State != InvestigationTrusted {
 		return fmt.Errorf("%w: investigation is no longer available", ErrConflict)
 	}
 	for id, link := range s.Memberships.All() {
-		if link.InvestigationID != task.ID || link.State != "tentative" {
+		if link.InvestigationID != task.ID || link.State != MembershipTentative {
 			continue
 		}
 		if s.IssueOverrides.Get(link.TicketID) != "" && s.IssueOverrides.Get(link.TicketID) != target.IssueID {
@@ -243,6 +255,41 @@ func (e *Engine) joinInvestigation(s *State, task *Investigation, report Report,
 			s.Groups.Put(id, group)
 		}
 	}
-	task.State, task.JoinedInvestigationID = "joined", target.ID
+	task.State, task.JoinedInvestigationID = InvestigationJoined, target.ID
 	return nil
+}
+
+// joinTargetChanged reports whether the investigation a routing join names
+// no longer matches what the frozen directory showed: gone, the same task,
+// another project, a private or closed source, another run, superseded,
+// without active members, a changed source or scope, another Issue, or a
+// later cutoff.
+func joinTargetChanged(s *State, task, target Investigation, ok bool, selected *IssueRecord, source, input Ticket) bool {
+	return !ok ||
+		target.ID == task.ID ||
+		target.ProjectID != task.ProjectID ||
+		source.Private ||
+		source.Closed ||
+		target.RunID != selected.RunID ||
+		s.Groups.Get(target.GroupID).CurrentTaskID != target.ID ||
+		!taskHasActiveMembers(*s, target) ||
+		investigationSignature(source) != investigationSignature(s.Runs.Get(target.RunID).Input) ||
+		investigationScope(input) != selected.ScopeHash ||
+		target.Contract.IssueID != task.Contract.IssueID ||
+		target.Contract.ObservationCutoff.After(task.Contract.ObservationCutoff)
+}
+
+// assignmentRewroteDiagnosis reports whether the assignment stage changed
+// anything the engineering or routing stage produced; assignment may only
+// group it.
+func assignmentRewroteDiagnosis(assigned, engineered, routed Report) bool {
+	return assigned.Usage.Calls != 3 ||
+		hash(assigned.Findings) != hash(engineered.Findings) ||
+		hash(assigned.Evidence) != hash(engineered.Evidence) ||
+		hash(assigned.IssueRequest) != hash(engineered.IssueRequest) ||
+		assigned.Summary != engineered.Summary ||
+		hash(assigned.Recommendations) != hash(engineered.Recommendations) ||
+		hash(assigned.VerificationSteps) != hash(engineered.VerificationSteps) ||
+		assigned.Routing == nil ||
+		hash(*assigned.Routing) != hash(*routed.Routing)
 }

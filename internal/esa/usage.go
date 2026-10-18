@@ -43,7 +43,23 @@ func TokenAlerts(u Usage, b Budget) []Alert {
 		{"total", input + output, b.WarnTotalTokens},
 	} {
 		if c.threshold > 0 && c.actual > float64(c.threshold) {
-			alerts = append(alerts, Alert{Code: "token_" + c.name + "_high", Message: fmt.Sprintf("Token usage warning: weighted %s usage %.2f exceeds advisory threshold %d (raw input=%d, cached input=%d, output=%d; weights: input=%g, cached input=%g, output=%g). Analysis continues.", c.name, c.actual, c.threshold, u.InputTokens, cached, u.OutputTokens, w.Input, w.CachedInput, w.Output)})
+			alerts = append(alerts, Alert{
+				Code: "token_" + c.name + "_high",
+				Message: fmt.Sprintf(
+					"Token usage warning: weighted %s usage %.2f exceeds advisory threshold %d (raw input=%d, "+
+						"cached input=%d, output=%d; weights: input=%g, cached input=%g, output=%g). Analysis "+
+						"continues.",
+					c.name,
+					c.actual,
+					c.threshold,
+					u.InputTokens,
+					cached,
+					u.OutputTokens,
+					w.Input,
+					w.CachedInput,
+					w.Output,
+				),
+			})
 		}
 	}
 	return alerts

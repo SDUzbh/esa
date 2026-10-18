@@ -136,7 +136,7 @@ func TestAllResolvedCollection(t *testing.T) {
 		ticket.Resolution.Reason = reason
 		r := receive(t, e, reason, ticket)
 		c := e.Store.Snapshot().Cases.Get(r.CaseID)
-		want := map[string]string{"fixed": "draft", "duplicate": "duplicate", "rejected": "archived"}[reason]
+		want := map[string]CaseState{"fixed": CaseDraft, "duplicate": CaseDuplicate, "rejected": CaseArchived}[reason]
 		if c.State != want {
 			t.Fatal(c)
 		}

@@ -172,7 +172,18 @@ func Export(ctx context.Context, p Plan, repo, out, scope string) (err error) {
 	if err != nil {
 		return err
 	}
-	manifest := map[string]any{"source_key": p.Ticket.SourceKey, "project_id": p.Ticket.ProjectID, "cutoff": p.Cutoff, "source_ref": p.Ref, "source_commit": p.Commit, "raw_sha256": p.RawHash, "audit": p.Audit, "files": hashes, "scope": scope, "environment_provenance": "Reported fields or explicit operator supplement; customer OS/JDK are not inferred."}
+	manifest := map[string]any{
+		"source_key":             p.Ticket.SourceKey,
+		"project_id":             p.Ticket.ProjectID,
+		"cutoff":                 p.Cutoff,
+		"source_ref":             p.Ref,
+		"source_commit":          p.Commit,
+		"raw_sha256":             p.RawHash,
+		"audit":                  p.Audit,
+		"files":                  hashes,
+		"scope":                  scope,
+		"environment_provenance": "Reported fields or explicit operator supplement; customer OS/JDK are not inferred.",
+	}
 	for name, value := range map[string]any{"ticket.json": p.Ticket, "manifest.json": manifest} {
 		b, e := json.MarshalIndent(value, "", "  ")
 		if e != nil {

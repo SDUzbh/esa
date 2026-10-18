@@ -43,7 +43,7 @@ func visibleRow(r *http.Request, s State, row TicketRow, at time.Time) TicketRow
 		copy := visibleEngineeringIssue(r, s, *row.EngineeringIssue)
 		row.EngineeringIssue = &copy
 	}
-	applicationRevoked := row.Application != nil && (row.Application.State == "rejected" || row.Application.State == "withdrawn")
+	applicationRevoked := row.Application != nil && (row.Application.State == ApplicationRejected || row.Application.State == ApplicationWithdrawn)
 	if applicationRevoked && row.LatestRun != nil {
 		copy := *row.LatestRun
 		copy.Report = Report{Summary: "Solution applicability was rejected or withdrawn. Earlier evidence remains in the audit history."}
@@ -58,7 +58,7 @@ func visibleRow(r *http.Request, s State, row TicketRow, at time.Time) TicketRow
 		if !ok || source.Private || !ticketAllowed(r, source.ID) || !allowed(r, source.ProjectID) || sol.AvailableAt.After(at) {
 			row.Solution = nil
 			row.Application = nil
-		} else if sol.State == "rejected" || sol.State == "withdrawn" || applicationRevoked {
+		} else if sol.State == SolutionRejected || sol.State == SolutionWithdrawn || applicationRevoked {
 			copy.Resolution = Resolution{}
 			report := Report{Summary: "The shared proposal was rejected or withdrawn. Earlier evidence remains in the audit history."}
 			if row.LatestRun != nil {
@@ -120,7 +120,7 @@ func taskVisible(r *http.Request, s State, task Investigation) bool {
 	for _, id := range s.membershipsOfInvestigation(task.ID) {
 		link := s.Memberships.Get(id)
 		t, ok := s.Tickets.Lookup(link.TicketID)
-		if ok && link.State == "tentative" && !t.Private && ticketAllowed(r, t.ID) {
+		if ok && link.State == MembershipTentative && !t.Private && ticketAllowed(r, t.ID) {
 			return true
 		}
 	}
@@ -174,7 +174,8 @@ func issueTitleSource(s State, issue EngineeringIssue) string {
 	if source == "" {
 		var first Run
 		for _, run := range s.Runs.All() {
-			if run.IssueID == issue.ID && (first.ID == "" || run.CreatedAt.Before(first.CreatedAt) || run.CreatedAt.Equal(first.CreatedAt) && run.ID < first.ID) {
+			if run.IssueID == issue.ID &&
+				(first.ID == "" || run.CreatedAt.Before(first.CreatedAt) || run.CreatedAt.Equal(first.CreatedAt) && run.ID < first.ID) {
 				first = run
 			}
 		}
@@ -224,7 +225,12 @@ func (api *API) engineeringIssues(w http.ResponseWriter, r *http.Request) {
 		sort.Strings(members)
 		copy := visibleEngineeringIssue(r, s, issue)
 		copy.State = issueState(s, issue.ID, ids)
-		rows = append(rows, map[string]any{"issue": copy, "ticket_ids": members, "visible_ticket_count": len(members), "representative_ticket": map[string]string{"id": title, "subject": s.Tickets.Get(title).Subject}})
+		rows = append(rows, map[string]any{
+			"issue":                 copy,
+			"ticket_ids":            members,
+			"visible_ticket_count":  len(members),
+			"representative_ticket": map[string]string{"id": title, "subject": s.Tickets.Get(title).Subject},
+		})
 	}
 	sort.Slice(rows, func(i, j int) bool {
 		return rows[i]["issue"].(EngineeringIssue).ID < rows[j]["issue"].(EngineeringIssue).ID
@@ -299,7 +305,12 @@ func (api *API) snapshot(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	current := s.Tickets.Get(snap.Ticket.ID)
-	if !ok || snap.Ticket.Private || current.Private || !allowed(r, snap.Ticket.ProjectID) || !ticketAllowed(r, snap.Ticket.ID) || snap.AvailableAt.After(api.Engine.Now()) {
+	if !ok ||
+		snap.Ticket.Private ||
+		current.Private ||
+		!allowed(r, snap.Ticket.ProjectID) ||
+		!ticketAllowed(r, snap.Ticket.ID) ||
+		snap.AvailableAt.After(api.Engine.Now()) {
 		writeError(w, ErrNotFound)
 		return
 	}

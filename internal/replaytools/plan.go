@@ -42,7 +42,14 @@ func ReadPlan(path string) (*esa.AnalysisPlan, error) {
 			return nil, err
 		}
 		profile := decision.Profile
-		plan = &esa.AnalysisPlan{Profile: profile.ID, ProfileVersion: profile.Version, SkillHash: profile.SkillHash, ManifestHash: profile.ManifestHash, Capabilities: decision.Granted, HypothesisID: request.HypothesisID}
+		plan = &esa.AnalysisPlan{
+			Profile:        profile.ID,
+			ProfileVersion: profile.Version,
+			SkillHash:      profile.SkillHash,
+			ManifestHash:   profile.ManifestHash,
+			Capabilities:   decision.Granted,
+			HypothesisID:   request.HypothesisID,
+		}
 	}
 	return plan, scan.Err()
 }

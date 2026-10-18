@@ -114,11 +114,45 @@ func routingTools(withContext bool) []map[string]any {
 	str := func() map[string]string { return map[string]string{"type": "string"} }
 	integer := func() map[string]string { return map[string]string{"type": "integer"} }
 	list := []map[string]any{
-		{"name": "issue_search", "description": "Search the registered local Issue directory or browse with an empty query. Results are paginated metadata, not a decision of applicability. Prefer engineer_resolved records when equally applicable; inspect the record before reuse. archive=true searches only records of retired, solved Issues; use it when no current record applies.", "inputSchema": map[string]any{"type": "object", "properties": map[string]any{"query": str(), "kind": str(), "offset": integer(), "limit": integer(), "archive": map[string]any{"type": "boolean"}}, "required": []string{"query"}, "additionalProperties": false}},
-		{"name": "issue_read", "description": "Read one frozen Issue record using the path and SHA256 returned by issue_search. Verify symptoms, versions, components and environment. A successful read is required before reusing a solution.", "inputSchema": map[string]any{"type": "object", "properties": map[string]any{"path": str(), "sha256": str()}, "required": []string{"path", "sha256"}, "additionalProperties": false}},
+		{
+			"name": "issue_search",
+			"description": "Search the registered local Issue directory or browse with an empty query. Results are " +
+				"paginated metadata, not a decision of applicability. Prefer engineer_resolved records " +
+				"when equally applicable; inspect the record before reuse. archive=true searches only " +
+				"records of retired, solved Issues; use it when no current record applies.",
+			"inputSchema": map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"query":   str(),
+					"kind":    str(),
+					"offset":  integer(),
+					"limit":   integer(),
+					"archive": map[string]any{"type": "boolean"},
+				},
+				"required":             []string{"query"},
+				"additionalProperties": false,
+			},
+		},
+		{
+			"name": "issue_read",
+			"description": "Read one frozen Issue record using the path and SHA256 returned by issue_search. Verify " +
+				"symptoms, versions, components and environment. A successful read is required before " +
+				"reusing a solution.",
+			"inputSchema": map[string]any{
+				"type":                 "object",
+				"properties":           map[string]any{"path": str(), "sha256": str()},
+				"required":             []string{"path", "sha256"},
+				"additionalProperties": false,
+			},
+		},
 	}
 	if withContext {
-		list = append(list, map[string]any{"name": "issue_context", "description": "Read the Engineering Agent's grouping request and findings plus the earlier routing search trail. Reuse prior queries before doing any additional search.", "inputSchema": map[string]any{"type": "object", "properties": map[string]any{}, "additionalProperties": false}})
+		list = append(list, map[string]any{
+			"name": "issue_context",
+			"description": "Read the Engineering Agent's grouping request and findings plus the earlier routing " +
+				"search trail. Reuse prior queries before doing any additional search.",
+			"inputSchema": map[string]any{"type": "object", "properties": map[string]any{}, "additionalProperties": false},
+		})
 	}
 	return list
 }

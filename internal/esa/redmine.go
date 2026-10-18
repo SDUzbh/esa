@@ -77,7 +77,15 @@ func (e *Engine) recordRejection(event Event, cause error) error {
 		if _, ok := s.Rejections.Lookup(event.ID); ok {
 			return nil
 		}
-		s.Rejections.Put(event.ID, EventRejection{EventID: event.ID, TicketID: event.Ticket.ID, ProjectID: event.Ticket.ProjectID, ForwardedBy: event.ForwardedBy, ForwardedAt: event.ForwardedAt, Reason: cause.Error(), RejectedAt: e.Now()})
+		s.Rejections.Put(event.ID, EventRejection{
+			EventID:     event.ID,
+			TicketID:    event.Ticket.ID,
+			ProjectID:   event.Ticket.ProjectID,
+			ForwardedBy: event.ForwardedBy,
+			ForwardedAt: event.ForwardedAt,
+			Reason:      cause.Error(),
+			RejectedAt:  e.Now(),
+		})
 		return nil
 	})
 }

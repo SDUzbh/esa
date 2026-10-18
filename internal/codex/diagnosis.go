@@ -54,7 +54,11 @@ func evidenceSchema(sources ...string) map[string]any {
 }
 func EngineeringSchema() []byte {
 	finding := object(map[string]any{"location": str(), "end_location": str(), "problem": str(), "solution": str(), "evidence_ids": array(str())})
-	schema := object(map[string]any{"issue_request": object(map[string]any{"title": str(), "reason": str()}), "findings": array(finding), "limitations": array(str())})
+	schema := object(map[string]any{
+		"issue_request": object(map[string]any{"title": str(), "reason": str()}),
+		"findings":      array(finding),
+		"limitations":   array(str()),
+	})
 	b, _ := json.Marshal(schema)
 	return b
 }
@@ -106,7 +110,15 @@ func (out EngineeringOutput) Report(packet Packet) (esa.Report, error) {
 			}
 			f.Evidence = append(f.Evidence, ev)
 		}
-		if f.Commit != packet.Commit || f.File == "" || strings.Contains(f.File, ":") || f.StartLine < 1 || f.EndLine < f.StartLine || f.EndLine-f.StartLine >= 200 || strings.TrimSpace(f.Problem) == "" || strings.TrimSpace(f.Solution) == "" || len(f.Evidence) == 0 {
+		if f.Commit != packet.Commit ||
+			f.File == "" ||
+			strings.Contains(f.File, ":") ||
+			f.StartLine < 1 ||
+			f.EndLine < f.StartLine ||
+			f.EndLine-f.StartLine >= 200 ||
+			strings.TrimSpace(f.Problem) == "" ||
+			strings.TrimSpace(f.Solution) == "" ||
+			len(f.Evidence) == 0 {
 			return r, errors.New("finding requires historical commit, file, bounded lines, problem, solution and evidence")
 		}
 		r.RootCauseCandidates = append(r.RootCauseCandidates, f.Problem)

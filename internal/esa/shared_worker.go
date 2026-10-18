@@ -12,9 +12,9 @@ import (
 )
 
 func (e *Engine) recoverInvestigations(s *State) error {
-	for _, task := range s.investigationsIn("running", "investigating") {
+	for _, task := range s.investigationsIn(InvestigationRunning, InvestigationInvestigating) {
 		if !parked(task) && !task.LeaseUntil.After(e.Now()) {
-			task.State = "failed"
+			task.State = InvestigationFailed
 			task.Epoch++
 			task.UpdatedAt = e.Now()
 			s.Investigations.Put(task.ID, task)
@@ -26,11 +26,11 @@ func (e *Engine) recoverInvestigations(s *State) error {
 	}
 	for _, r := range s.queuedRuns() {
 		if r.WorkflowVersion != WorkflowVersion || r.Input.ForwardedBy == "" || r.Input.ForwardedAt.IsZero() {
-			r.State = "awaiting_forward"
+			r.State = RunAwaitingForward
 			r.Route = "manual_forward"
 			s.Runs.Put(r.ID, r)
 			if task, ok := s.Investigations.Lookup(r.InvestigationID); ok {
-				task.State = "awaiting_forward"
+				task.State = InvestigationAwaitingForward
 				s.Investigations.Put(task.ID, task)
 			}
 		}
@@ -42,7 +42,7 @@ func (e *Engine) recoverInvestigations(s *State) error {
 // waited longer than max_queue_wait_seconds with exact routing-only usage.
 func (e *Engine) settleParked(s *State) {
 	limit := time.Duration(e.Config.Worker.MaxQueueWaitSeconds) * time.Second
-	for _, task := range s.investigationsIn("investigating") {
+	for _, task := range s.investigationsIn(InvestigationInvestigating) {
 		if !parked(task) {
 			continue
 		}
@@ -57,9 +57,9 @@ func (e *Engine) settleParked(s *State) {
 		}
 		elapsed := time.Since(task.WaitingSince.Add(-time.Duration(task.ElapsedMS) * time.Millisecond)).Milliseconds()
 		e.sealReport(&run.Report, task, input, elapsed)
-		task.State = "superseded"
+		task.State = InvestigationSuperseded
 		if !superseded {
-			task.State, run.Error = "failed", queueTimeout(e.Config.Worker.MaxQueueWaitSeconds).Error()
+			task.State, run.Error = InvestigationFailed, queueTimeout(e.Config.Worker.MaxQueueWaitSeconds).Error()
 		}
 		task.ElapsedMS, task.UpdatedAt = elapsed, e.Now()
 		run.PipelineInput, run.UpdatedAt = nil, e.Now()
@@ -139,7 +139,9 @@ func validateReport(report Report, input AnalyzeRequest, records []IssueRecord) 
 		return fmt.Errorf("provider must return a summary and evidence, or explicit limitations")
 	}
 	awaitingGrouping := report.AssignmentRouting != nil && report.AssignmentRouting.Action == "request_information"
-	if (len(report.Findings) > 0 || len(report.Evidence) > 0) && !awaitingGrouping && (report.Issue == nil || strings.TrimSpace(report.Issue.Title) == "" || strings.TrimSpace(report.Issue.Reason) == "") {
+	if (len(report.Findings) > 0 || len(report.Evidence) > 0) &&
+		!awaitingGrouping &&
+		(report.Issue == nil || strings.TrimSpace(report.Issue.Title) == "" || strings.TrimSpace(report.Issue.Reason) == "") {
 		return fmt.Errorf("supported analysis requires an Agent issue proposal with title and reason")
 	}
 	for _, ev := range report.Evidence {
@@ -159,31 +161,43 @@ func validateReport(report Report, input AnalyzeRequest, records []IssueRecord) 
 	maxCalls := input.Budget.MaxCalls
 	if report.Routing != nil {
 		maxCalls++
-		if report.Routing.Action != "reuse" && report.Routing.Action != "analyze" && report.Routing.Action != "request_information" && report.Routing.Action != "join" && report.Routing.Action != "return_to_support" {
+		if report.Routing.Action != "reuse" &&
+			report.Routing.Action != "analyze" &&
+			report.Routing.Action != "request_information" &&
+			report.Routing.Action != "join" &&
+			report.Routing.Action != "return_to_support" {
 			return fmt.Errorf("invalid routing action")
 		}
 		if report.Routing.Action != "analyze" && (report.Usage.Calls > 1 || len(report.Findings) > 0) {
 			return fmt.Errorf("reuse/clarification cannot invoke engineering or claim new findings")
 		}
-		if (report.Routing.Action == "request_information" || report.Routing.Action == "join" || report.Routing.Action == "return_to_support") && (len(report.Evidence) > 0 || report.Issue != nil) {
+		if (report.Routing.Action == "request_information" || report.Routing.Action == "join" || report.Routing.Action == "return_to_support") &&
+			(len(report.Evidence) > 0 || report.Issue != nil) {
 			return fmt.Errorf("clarification cannot publish a solution")
 		}
 		if report.Routing.Usage.Calls != 1 {
 			return fmt.Errorf("invalid routing usage")
 		}
-		if report.Routing.Action == "analyze" && (len(report.Findings) > 0 || len(report.Evidence) > 0) && (report.IssueRequest == nil || strings.TrimSpace(report.IssueRequest.Title) == "" || strings.TrimSpace(report.IssueRequest.Reason) == "" || report.AssignmentRouting == nil) {
+		if ungroupedFindings(report) {
 			return fmt.Errorf("engineering findings require a request and a Routing Agent grouping decision")
 		}
 	}
 	if report.AssignmentRouting != nil {
 		decision := report.AssignmentRouting
-		if report.Routing == nil || report.Routing.Action != "analyze" || decision.Usage.Calls != 1 || strings.TrimSpace(decision.Reason) == "" || len(report.Findings) == 0 && len(report.Evidence) == 0 {
+		if report.Routing == nil ||
+			report.Routing.Action != "analyze" ||
+			decision.Usage.Calls != 1 ||
+			strings.TrimSpace(decision.Reason) == "" ||
+			len(report.Findings) == 0 && len(report.Evidence) == 0 {
 			return fmt.Errorf("invalid assignment routing stage")
 		}
 		maxCalls++
 		switch decision.Action {
 		case "assign", "create":
-			if report.Issue == nil || report.Issue.Title != decision.Title || report.Issue.Reason != decision.Reason || (decision.Action == "assign") != (report.Issue.ExistingID != "") {
+			if report.Issue == nil ||
+				report.Issue.Title != decision.Title ||
+				report.Issue.Reason != decision.Reason ||
+				(decision.Action == "assign") != (report.Issue.ExistingID != "") {
 				return fmt.Errorf("Issue assignment does not match Routing Agent decision")
 			}
 			if decision.Action == "create" && (decision.RecordPath != "" || decision.RecordHash != "") {
@@ -201,7 +215,7 @@ func validateReport(report Report, input AnalyzeRequest, records []IssueRecord) 
 		return fmt.Errorf("invalid reported usage")
 	}
 	for _, finding := range report.Findings {
-		if finding.Commit == "" || finding.File == "" || finding.StartLine < 1 || finding.EndLine < finding.StartLine || finding.EndLine-finding.StartLine >= 200 || strings.TrimSpace(finding.Problem) == "" || strings.TrimSpace(finding.Solution) == "" || len(finding.Evidence) == 0 || len(finding.Evidence) > 100 {
+		if unpinnedFinding(finding) {
 			return fmt.Errorf("finding lacks a pinned source location and evidence")
 		}
 	}
@@ -232,7 +246,7 @@ func (e *Engine) ProcessOne(ctx context.Context, analyzer Analyzer) (bool, error
 		e.settleParked(s)
 		// Parked tasks hold no worker, so they do not count toward the project limit.
 		active := map[string]int{}
-		for _, item := range s.investigationsIn("running", "investigating") {
+		for _, item := range s.investigationsIn(InvestigationRunning, InvestigationInvestigating) {
 			if !parked(item) {
 				active[item.ProjectID]++
 			}
@@ -255,12 +269,12 @@ func (e *Engine) ProcessOne(ctx context.Context, analyzer Analyzer) (bool, error
 				return nil
 			}
 		}
-		claimable := []string{"queued"}
+		claimable := []InvestigationState{InvestigationQueued}
 		if analyzer != nil && e.Config.Budget.MaxCalls > 0 {
-			claimable = append(claimable, "awaiting_configuration")
+			claimable = append(claimable, InvestigationAwaitingConfiguration)
 		}
 		for _, candidate := range fairInvestigations(*s, claimable...) {
-			if candidate.State == "awaiting_configuration" && candidate.InvocationStarted {
+			if candidate.State == InvestigationAwaitingConfiguration && candidate.InvocationStarted {
 				continue
 			}
 			if active[candidate.ProjectID] >= e.Config.Worker.MaxActivePerProject || staged && routingBusy(*s, candidate.ProjectID) {
@@ -268,7 +282,7 @@ func (e *Engine) ProcessOne(ctx context.Context, analyzer Analyzer) (bool, error
 			}
 			group := s.Groups.Get(candidate.GroupID)
 			if group.CurrentTaskID != candidate.ID || !taskHasActiveMembers(*s, candidate) {
-				candidate.State = "superseded"
+				candidate.State = InvestigationSuperseded
 				candidate.UpdatedAt = e.Now()
 				s.Investigations.Put(candidate.ID, candidate)
 				continue
@@ -277,10 +291,10 @@ func (e *Engine) ProcessOne(ctx context.Context, analyzer Analyzer) (bool, error
 			run = s.Runs.Get(task.RunID)
 			found = true
 			if analyzer == nil || e.Config.Budget.MaxCalls == 0 {
-				task.State = "awaiting_configuration"
+				task.State = InvestigationAwaitingConfiguration
 				run.Error = "Engineering provider is not configured; no model invocation occurred."
 			} else {
-				task.State = "running"
+				task.State = InvestigationRunning
 				if staged {
 					task.Phase = "routing"
 				}
@@ -300,7 +314,7 @@ func (e *Engine) ProcessOne(ctx context.Context, analyzer Analyzer) (bool, error
 		}
 		return nil
 	})
-	if err != nil || !found || task.State != "running" && !resumed {
+	if err != nil || !found || task.State != InvestigationRunning && !resumed {
 		return found, err
 	}
 	started := time.Now()
@@ -436,33 +450,33 @@ func (e *Engine) ProcessOne(ctx context.Context, analyzer Analyzer) (bool, error
 			}
 		}
 		if !taskHasActiveMembers(*s, current) || s.Groups.Get(current.GroupID).CurrentTaskID != current.ID {
-			current.State = "superseded"
+			current.State = InvestigationSuperseded
 		} else if callErr != nil {
-			current.State = "failed"
+			current.State = InvestigationFailed
 			r.Error = callErr.Error()
 		} else if report.Routing != nil && report.Routing.Action == "return_to_support" {
-			current.State, r.Route, r.Error = "returned_to_support", "customer_support", ""
+			current.State, r.Route, r.Error = InvestigationReturnedToSupport, "customer_support", ""
 		} else if report.Routing != nil && report.Routing.Action == "join" {
 			if err := e.joinInvestigation(s, &current, report, records); err != nil {
-				current.State, r.Error = "failed", err.Error()
+				current.State, r.Error = InvestigationFailed, err.Error()
 			}
 		} else {
-			current.State = "agent_proposed"
+			current.State = InvestigationAgentProposed
 			r.Error = ""
 			if len(report.Findings) == 0 && len(report.Evidence) == 0 {
-				current.State = "awaiting_information"
+				current.State = InvestigationAwaitingInformation
 			}
 			if report.AssignmentRouting != nil && report.AssignmentRouting.Action == "request_information" {
-				current.State = "awaiting_information"
+				current.State = InvestigationAwaitingInformation
 			}
-			if current.State == "agent_proposed" {
+			if current.State == InvestigationAgentProposed {
 				if err := e.applyIssueAssignment(s, &current, report, records); err != nil {
-					current.State, r.Error = "failed", err.Error()
+					current.State, r.Error = InvestigationFailed, err.Error()
 				}
 			}
 			r.IssueID = current.IssueID
 			r.Report.Envelope.IssueID = current.IssueID
-			if current.State == "agent_proposed" {
+			if current.State == InvestigationAgentProposed {
 				group := s.Groups.Get(current.GroupID)
 				sourceID := run.TicketID
 				if report.AssignmentRouting != nil && report.AssignmentRouting.Action == "assign" {
@@ -484,16 +498,36 @@ func (e *Engine) ProcessOne(ctx context.Context, analyzer Analyzer) (bool, error
 				if report.Routing != nil && report.Routing.Action == "reuse" {
 					for _, record := range records {
 						if recordPath(record) == report.Routing.RecordPath {
-							current.Application = &SolutionApplication{SolutionID: record.SolutionID, CaseID: record.CaseID, CaseVersion: record.CaseVersion, SourceTicketID: record.SourceTicketID, State: "proposed", Revision: 1}
+							current.Application = &SolutionApplication{
+								SolutionID:     record.SolutionID,
+								CaseID:         record.CaseID,
+								CaseVersion:    record.CaseVersion,
+								SourceTicketID: record.SourceTicketID,
+								State:          ApplicationProposed,
+								Revision:       1,
+							}
 							// Standalone Case association may have advanced its metadata revision.
 							if record.CaseID != "" {
 								current.Application.CaseVersion = s.Cases.Get(record.CaseID).Version
 							}
 						}
 					}
-					current.State = "reuse_proposed"
+					current.State = InvestigationReuseProposed
 				} else {
-					solution := SolutionRevision{ID: randomID("solution_"), IssueID: current.IssueID, InvestigationID: current.ID, ProjectID: current.ProjectID, ScopeHash: group.ScopeHash, SourceTicketID: sourceID, Origin: "agent", State: "proposed", Revision: 1, RunID: run.ID, AvailableAt: e.Now(), RecordedAt: time.Now().UTC()}
+					solution := SolutionRevision{
+						ID:              randomID("solution_"),
+						IssueID:         current.IssueID,
+						InvestigationID: current.ID,
+						ProjectID:       current.ProjectID,
+						ScopeHash:       group.ScopeHash,
+						SourceTicketID:  sourceID,
+						Origin:          "agent",
+						State:           SolutionProposed,
+						Revision:        1,
+						RunID:           run.ID,
+						AvailableAt:     e.Now(),
+						RecordedAt:      time.Now().UTC(),
+					}
 					s.Solutions.Put(solution.ID, solution)
 					current.SolutionID = solution.ID
 				}
@@ -509,4 +543,28 @@ func (e *Engine) ProcessOne(ctx context.Context, analyzer Analyzer) (bool, error
 		return nil
 	})
 	return true, err
+}
+
+// unpinnedFinding reports whether a finding lacks a pinned location (commit,
+// file, a line range under 200 lines), a problem, a solution, or between 1
+// and 100 evidence references.
+func unpinnedFinding(finding Finding) bool {
+	return finding.Commit == "" ||
+		finding.File == "" ||
+		finding.StartLine < 1 ||
+		finding.EndLine < finding.StartLine ||
+		finding.EndLine-finding.StartLine >= 200 ||
+		strings.TrimSpace(finding.Problem) == "" ||
+		strings.TrimSpace(finding.Solution) == "" ||
+		len(finding.Evidence) == 0 ||
+		len(finding.Evidence) > 100
+}
+
+// ungroupedFindings reports whether an analyze report carries findings or
+// evidence without both an Issue request (title and reason) and the Routing
+// Agent's grouping decision.
+func ungroupedFindings(report Report) bool {
+	return report.Routing.Action == "analyze" &&
+		(len(report.Findings) > 0 || len(report.Evidence) > 0) &&
+		(report.IssueRequest == nil || strings.TrimSpace(report.IssueRequest.Title) == "" || strings.TrimSpace(report.IssueRequest.Reason) == "" || report.AssignmentRouting == nil)
 }

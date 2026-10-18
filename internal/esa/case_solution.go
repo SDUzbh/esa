@@ -13,7 +13,9 @@ func canonicalSolution(s State, issueID, scope string) (SolutionRevision, bool) 
 		if !ok || sol.ScopeHash != scope || s.Groups.Get(task.GroupID).CurrentTaskID != task.ID {
 			continue
 		}
-		if selected.ID == "" || sol.AvailableAt.After(selected.AvailableAt) || sol.AvailableAt.Equal(selected.AvailableAt) && (sol.Revision > selected.Revision || sol.Revision == selected.Revision && sol.ID < selected.ID) {
+		if selected.ID == "" ||
+			sol.AvailableAt.After(selected.AvailableAt) ||
+			sol.AvailableAt.Equal(selected.AvailableAt) && (sol.Revision > selected.Revision || sol.Revision == selected.Revision && sol.ID < selected.ID) {
 			selected = sol
 		}
 	}
@@ -27,7 +29,7 @@ func (e *Engine) syncCases(s *State, sol SolutionRevision) {
 	}
 	for _, id := range ids {
 		c := s.Cases.Get(id)
-		if c.IssueID != sol.IssueID || caseScope(c) != sol.ScopeHash || c.State == "invalidated" || c.State == "duplicate" || c.State == "archived" {
+		if c.IssueID != sol.IssueID || caseScope(c) != sol.ScopeHash || c.State == CaseInvalidated || c.State == CaseDuplicate || c.State == CaseArchived {
 			continue
 		}
 		if c.SolutionID == "" && hash(c.Resolution) != hash(sol.Resolution) {
@@ -36,12 +38,14 @@ func (e *Engine) syncCases(s *State, sol SolutionRevision) {
 		next := c
 		next.SolutionID = sol.ID
 		next.Resolution = sol.Resolution
-		next.State = sol.State
-		if sol.State == "proposed" {
-			next.State = "draft"
+		// A linked case mirrors its solution's review state; an unreviewed
+		// proposal leaves the case a draft.
+		next.State = CaseState(sol.State)
+		if sol.State == SolutionProposed {
+			next.State = CaseDraft
 		}
 		next.ReviewedBy, next.ReviewNote = sol.Reviewer, sol.Note
-		if sol.State == "trusted" {
+		if sol.State == SolutionTrusted {
 			next.TrustedAt = sol.AvailableAt
 		} else {
 			next.TrustedAt = time.Time{}
@@ -72,10 +76,15 @@ func (e *Engine) publishSolution(s *State, task Investigation, old, next Solutio
 	}
 	for _, id := range ids {
 		current := s.Investigations.Get(id)
-		if current.SolutionID == "" || current.IssueID != task.IssueID || s.Groups.Get(current.GroupID).ScopeHash != next.ScopeHash || s.Groups.Get(current.GroupID).CurrentTaskID != current.ID {
+		if current.SolutionID == "" ||
+			current.IssueID != task.IssueID ||
+			s.Groups.Get(current.GroupID).ScopeHash != next.ScopeHash ||
+			s.Groups.Get(current.GroupID).CurrentTaskID != current.ID {
 			continue
 		}
-		current.SolutionID, current.State, current.UpdatedAt = next.ID, next.State, e.Now()
+		// Publishing a reviewed revision gives each linked investigation its
+		// state (trusted, rejected or withdrawn).
+		current.SolutionID, current.State, current.UpdatedAt = next.ID, InvestigationState(next.State), e.Now()
 		s.Investigations.Put(id, current)
 	}
 	e.syncCases(s, next)

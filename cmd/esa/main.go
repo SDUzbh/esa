@@ -31,7 +31,11 @@ func run() error {
 	address := flag.String("listen", "127.0.0.1:8090", "HTTP listen address")
 	issueDirectory := flag.String("issues-directory", "runtime/esa/issues", "Local Issue projection root shared read-only with the provider")
 	databaseURL := flag.String("database-url", os.Getenv("ESA_DATABASE_URL"), "ESA-owned Postgres state database (required)")
-	stateURL := flag.String("state-url", os.Getenv("ESA_STATE_URL"), "Removed: the Redmine state API is no longer supported; ESA refuses to start while it is set")
+	stateURL := flag.String(
+		"state-url",
+		os.Getenv("ESA_STATE_URL"),
+		"Removed: the Redmine state API is no longer supported; ESA refuses to start while it is set",
+	)
 	ephemeral := flag.Bool("ephemeral-schema", false, "Test-only: keep the state in a new schema that is dropped on exit")
 	rules := flag.String("rules", "config/rules.json", "Workflow configuration and analysis budget")
 	replayAt := flag.String("replay-at", "", "Test-only observation clock initial time (RFC3339)")
@@ -90,7 +94,15 @@ func run() error {
 	// The server answers as a standby until this process holds the state and
 	// the API is activated; after a lost writer role it answers 503.
 	gate := &esa.WriterGate{}
-	server := &http.Server{Addr: *address, Handler: gate, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 30 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 32 << 10}
+	server := &http.Server{
+		Addr:              *address,
+		Handler:           gate,
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      30 * time.Second,
+		IdleTimeout:       60 * time.Second,
+		MaxHeaderBytes:    32 << 10,
+	}
 	serverErr := make(chan error, 1)
 	go func() {
 		serverErr <- server.ListenAndServe()
@@ -231,7 +243,8 @@ func run() error {
 // (-state-url or ESA_STATE_URL) stops ESA instead of being ignored.
 func checkStoreFlags(databaseURL, stateURL string) error {
 	if stateURL != "" {
-		return fmt.Errorf("the Redmine state API (-state-url or ESA_STATE_URL) is no longer supported; unset it and set -database-url, see docs/ESA_OPERATIONS.md#postgres-state-store")
+		return fmt.Errorf("the Redmine state API (-state-url or ESA_STATE_URL) is no longer supported; unset it and " +
+			"set -database-url, see docs/ESA_OPERATIONS.md#postgres-state-store")
 	}
 	if databaseURL == "" {
 		return fmt.Errorf("ESA keeps its state in Postgres: set ESA_DATABASE_URL or -database-url, see docs/ESA_OPERATIONS.md#postgres-state-store")

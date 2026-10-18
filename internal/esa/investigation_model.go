@@ -50,16 +50,16 @@ type EngineeringIssue struct {
 	RevivedAt time.Time `json:"revived_at,omitzero"`
 }
 type IssueTicketLink struct {
-	Version         int       `json:"version"`
-	Reviewer        string    `json:"reviewer,omitempty"`
-	ID              string    `json:"id"`
-	IssueID         string    `json:"issue_id"`
-	TicketID        string    `json:"ticket_id"`
-	SnapshotID      string    `json:"snapshot_id"`
-	InvestigationID string    `json:"investigation_id,omitempty"`
-	State           string    `json:"state"`
-	Basis           string    `json:"basis"`
-	AvailableAt     time.Time `json:"available_at"`
+	Version         int             `json:"version"`
+	Reviewer        string          `json:"reviewer,omitempty"`
+	ID              string          `json:"id"`
+	IssueID         string          `json:"issue_id"`
+	TicketID        string          `json:"ticket_id"`
+	SnapshotID      string          `json:"snapshot_id"`
+	InvestigationID string          `json:"investigation_id,omitempty"`
+	State           MembershipState `json:"state"`
+	Basis           string          `json:"basis"`
+	AvailableAt     time.Time       `json:"available_at"`
 	// PossibleRegression marks a ticket assigned to a retired, solved Issue:
 	// a problem that was fixed and unseen for a long time has come back.
 	PossibleRegression bool `json:"possible_regression,omitempty"`
@@ -108,7 +108,7 @@ type Investigation struct {
 	IssueID               string               `json:"issue_id"`
 	ProjectID             string               `json:"project_id"`
 	RunID                 string               `json:"run_id"`
-	State                 string               `json:"state"`
+	State                 InvestigationState   `json:"state"`
 	Contract              TaskContract         `json:"contract"`
 	Owner                 string               `json:"owner,omitempty"`
 	Epoch                 int                  `json:"epoch"`
@@ -128,23 +128,23 @@ type Investigation struct {
 // SolutionRevision is an immutable proposal or reviewed solution within one scope.
 // Superseding publishes another revision instead of editing the original report.
 type SolutionRevision struct {
-	StoredFields    JSONFields `json:"-"`
-	ID              string     `json:"id"`
-	IssueID         string     `json:"issue_id"`
-	InvestigationID string     `json:"investigation_id"`
-	ProjectID       string     `json:"project_id"`
-	ScopeHash       string     `json:"scope_hash"`
-	SourceTicketID  string     `json:"source_ticket_id"`
-	Origin          string     `json:"origin"`
-	State           string     `json:"state"`
-	Revision        int        `json:"revision"`
-	Supersedes      string     `json:"supersedes,omitempty"`
-	RunID           string     `json:"run_id,omitempty"`
-	Resolution      Resolution `json:"resolution"`
-	Reviewer        string     `json:"reviewer,omitempty"`
-	Note            string     `json:"note,omitempty"`
-	AvailableAt     time.Time  `json:"available_at"`
-	RecordedAt      time.Time  `json:"recorded_at"`
+	StoredFields    JSONFields    `json:"-"`
+	ID              string        `json:"id"`
+	IssueID         string        `json:"issue_id"`
+	InvestigationID string        `json:"investigation_id"`
+	ProjectID       string        `json:"project_id"`
+	ScopeHash       string        `json:"scope_hash"`
+	SourceTicketID  string        `json:"source_ticket_id"`
+	Origin          string        `json:"origin"`
+	State           SolutionState `json:"state"`
+	Revision        int           `json:"revision"`
+	Supersedes      string        `json:"supersedes,omitempty"`
+	RunID           string        `json:"run_id,omitempty"`
+	Resolution      Resolution    `json:"resolution"`
+	Reviewer        string        `json:"reviewer,omitempty"`
+	Note            string        `json:"note,omitempty"`
+	AvailableAt     time.Time     `json:"available_at"`
+	RecordedAt      time.Time     `json:"recorded_at"`
 }
 type SolutionReview struct {
 	ExpectedApplicationRevision int        `json:"expected_application_revision,omitempty"`
@@ -162,13 +162,13 @@ type SolutionApplication struct {
 	CaseID         string              `json:"case_id,omitempty"`
 	CaseVersion    int                 `json:"case_version,omitempty"`
 	SourceTicketID string              `json:"source_ticket_id"`
-	State          string              `json:"state"`
+	State          ApplicationState    `json:"state"`
 	Revision       int                 `json:"revision"`
 	Reviews        []ApplicationReview `json:"reviews,omitempty"`
 }
 type ApplicationReview struct {
-	State       string    `json:"state"`
-	Reviewer    string    `json:"reviewer"`
-	Note        string    `json:"note"`
-	AvailableAt time.Time `json:"available_at"`
+	State       ApplicationState `json:"state"`
+	Reviewer    string           `json:"reviewer"`
+	Note        string           `json:"note"`
+	AvailableAt time.Time        `json:"available_at"`
 }

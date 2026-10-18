@@ -29,5 +29,17 @@ type AnalysisPlan struct {
 }
 
 func reportEnvelope(task Investigation, available time.Time, elapsed int64) *ReportEnvelope {
-	return &ReportEnvelope{Version: "2", SnapshotID: task.Contract.SnapshotID, InputHash: task.Contract.InputHash, ObservationCutoff: task.Contract.ObservationCutoff, ResponseAvailableAt: available, IssueID: task.IssueID, InvestigationID: task.ID, Provenance: "frozen_input_provider_evidence", SourceMapping: "provider_reported_not_independently_verified", CausalVerification: "unverified", ElapsedMS: elapsed}
+	return &ReportEnvelope{
+		Version:             "2",
+		SnapshotID:          task.Contract.SnapshotID,
+		InputHash:           task.Contract.InputHash,
+		ObservationCutoff:   task.Contract.ObservationCutoff,
+		ResponseAvailableAt: available,
+		IssueID:             task.IssueID,
+		InvestigationID:     task.ID,
+		Provenance:          "frozen_input_provider_evidence",
+		SourceMapping:       "provider_reported_not_independently_verified",
+		CausalVerification:  "unverified",
+		ElapsedMS:           elapsed,
+	}
 }

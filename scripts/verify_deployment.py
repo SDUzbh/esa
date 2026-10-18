@@ -77,7 +77,7 @@ def main():
         probe.bind(('127.0.0.1', 0))
         port = probe.getsockname()[1]
     settings = dict(REDMINE_DB_PASSWORD=secrets.token_hex(24), ESA_DB_PASSWORD=secrets.token_hex(24), SECRET_KEY_BASE=secrets.token_hex(64),
-                    ESA_API_TOKEN=secrets.token_hex(24), ESA_TEST_PASSWORD=password,
+                    ESA_API_TOKEN=secrets.token_hex(24), ESA_ANALYZER_TOKEN=secrets.token_hex(24), ESA_TEST_PASSWORD=password,
                     ESA_UID='1000', ESA_GID='1000', ESA_STATE_URL='', ESA_ANALYZER_URL='',
                     ESA_TEST_PROJECT=project, ESA_TEST_PORT=str(port))
     env.update(settings)
@@ -212,7 +212,7 @@ def main():
         try:
             logs = run(compose + ['logs', '--no-color'], timeout=30)
             # Test passwords and service tokens never belong in uploaded logs.
-            for secret in [password, settings['ESA_API_TOKEN'], settings['REDMINE_DB_PASSWORD'], settings['ESA_DB_PASSWORD'], settings['SECRET_KEY_BASE']]:
+            for secret in [password, settings['ESA_API_TOKEN'], settings['ESA_ANALYZER_TOKEN'], settings['REDMINE_DB_PASSWORD'], settings['ESA_DB_PASSWORD'], settings['SECRET_KEY_BASE']]:
                 logs = logs.replace(secret, '[redacted]')
             (artifacts / 'compose.log').write_text(logs)
         except Exception as error:

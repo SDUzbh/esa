@@ -7,7 +7,7 @@ if [ ! -x "$ESA_GO_BIN" ]; then ESA_GO_BIN=go; fi
 export ESA_GO_BIN
 export GOCACHE="$PWD/.tools/go-cache" GOTOOLCHAIN=local
 export ESA_TEST_RACE="${ESA_TEST_RACE:-1}"
-export ESA_API_TOKEN= ESA_ANALYZER_URL= ESA_ANALYZER_TOKEN= ESA_REDMINE_URL= ESA_STATE_URL=
+export ESA_API_TOKEN= ESA_OPERATOR_TOKEN= ESA_ANALYZER_URL= ESA_ANALYZER_TOKEN= ESA_REDMINE_URL= ESA_STATE_URL=
 unset OPENAI_API_KEY CODEX_API_KEY
 # ESA keeps its state in Postgres. Tests and replay targets each use their own
 # throwaway schema in this database; scripts/test_postgres.sh starts one.
@@ -46,7 +46,7 @@ fi
 "$ESA_GO_BIN" vet ./...
 "$ESA_GO_BIN" -C system_replay vet ./...
 # Keep the store scaling benchmarks compiling and runnable (tiny size, one pass).
-ESA_BENCH_SIZES=50 "$ESA_GO_BIN" test ./internal/esa -run '^$' -bench . -benchtime 1x > /dev/null
+ESA_BENCH_SIZES=50 "$ESA_GO_BIN" test ./internal/esa -run '^$' -bench . -benchtime 1x > "$ESA_WORKFLOW_OUTPUT/benchmarks.log" 2>&1 || { tail -20 "$ESA_WORKFLOW_OUTPUT/benchmarks.log" >&2; exit 1; }
 sh scripts/build_esa.sh
 sh scripts/build_system_replay.sh
 python3 -B -m unittest discover -s scripts -p 'test_*.py'

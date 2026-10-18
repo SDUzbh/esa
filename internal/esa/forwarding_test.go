@@ -53,6 +53,7 @@ func TestClassificationEndpointsRemoved(t *testing.T) {
 		r := httptest.NewRequest("GET", path, nil)
 		r.Header.Set("Authorization", "Bearer token")
 		r.Header.Set("X-ESA-Project-IDs", "1")
+		r.Header.Set("X-ESA-Ticket-IDs", "")
 		w := httptest.NewRecorder()
 		handler.ServeHTTP(w, r)
 		if w.Code != 404 {
@@ -64,6 +65,7 @@ func TestClassificationEndpointsRemoved(t *testing.T) {
 	r := httptest.NewRequest("GET", "/v1/tickets", nil)
 	r.Header.Set("Authorization", "Bearer token")
 	r.Header.Set("X-ESA-Project-IDs", "1")
+	r.Header.Set("X-ESA-Ticket-IDs", ticket.ID)
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, r)
 	if !strings.Contains(w.Body.String(), `"total_count":0`) {

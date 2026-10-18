@@ -216,12 +216,12 @@ func TestSharedInvestigationsReplayClockAndFutureCaseIsolation(t *testing.T) {
 	_ = receipt
 	_ = source
 	b, _ := json.Marshal(map[string]time.Time{"time": base.Add(time.Hour)})
-	w := classifierRequest(e, "POST", "/v1/replay/clock", string(b), "1", "historical")
+	w := operatorRequest(e, "POST", "/v1/replay/clock", string(b), "1")
 	if w.Code != 200 || !e.Now().Equal(base.Add(time.Hour)) {
 		t.Fatal(w.Code, w.Body)
 	}
 	b, _ = json.Marshal(map[string]time.Time{"time": base})
-	w = classifierRequest(e, "POST", "/v1/replay/clock", string(b), "1", "historical")
+	w = operatorRequest(e, "POST", "/v1/replay/clock", string(b), "1")
 	if w.Code != 400 {
 		t.Fatal("clock rewound", w.Code)
 	}

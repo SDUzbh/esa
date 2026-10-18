@@ -54,9 +54,9 @@ func run() error {
 		}
 		return nil
 	}
-	token := os.Getenv("ESA_API_TOKEN")
-	if len(token) < 24 {
-		return fmt.Errorf("ESA_API_TOKEN must contain at least 24 characters")
+	token, operatorToken, analyzerToken := os.Getenv("ESA_API_TOKEN"), os.Getenv("ESA_OPERATOR_TOKEN"), os.Getenv("ESA_ANALYZER_TOKEN")
+	if err := checkTokens(token, operatorToken, analyzerToken, os.Getenv("ESA_ANALYZER_URL") != ""); err != nil {
+		return err
 	}
 	if err := checkStoreFlags(*databaseURL, *stateURL); err != nil {
 		return err
@@ -154,7 +154,7 @@ func run() error {
 	}
 	var analyzer esa.Analyzer
 	if url := os.Getenv("ESA_ANALYZER_URL"); url != "" {
-		analyzer = esa.HTTPPipelineAnalyzer{HTTPAnalyzer: esa.HTTPAnalyzer{URL: url, Token: os.Getenv("ESA_ANALYZER_TOKEN")}}
+		analyzer = esa.HTTPPipelineAnalyzer{HTTPAnalyzer: esa.HTTPAnalyzer{URL: url, Token: analyzerToken}}
 	}
 	var workers sync.WaitGroup
 	workers.Add(1 + esa.EngineeringConcurrency + 1)
@@ -211,7 +211,7 @@ func run() error {
 			}
 		}()
 	}
-	gate.Activate((&esa.API{Engine: engine, Token: token}).Handler())
+	gate.Activate((&esa.API{Engine: engine, Token: token, OperatorToken: operatorToken}).Handler())
 	slog.Info("ESA started", "address", *address, "workflow_version", engine.Version(), "analyzer_configured", analyzer != nil)
 	err = <-serverErr
 	cancelRun()
@@ -235,6 +235,23 @@ func checkStoreFlags(databaseURL, stateURL string) error {
 	}
 	if databaseURL == "" {
 		return fmt.Errorf("ESA keeps its state in Postgres: set ESA_DATABASE_URL or -database-url, see docs/ESA_OPERATIONS.md#postgres-state-store")
+	}
+	return nil
+}
+
+// checkTokens enforces one secret per role: ESA_API_TOKEN between Redmine and
+// ESA, ESA_ANALYZER_TOKEN between ESA and the analyzer, and the optional
+// ESA_OPERATOR_TOKEN for the replay harness and scripts. Reusing one secret
+// for two roles would give the analyzer host or the plugin the other's power.
+func checkTokens(api, operator, analyzer string, analyzerConfigured bool) error {
+	if len(api) < 24 {
+		return fmt.Errorf("ESA_API_TOKEN must contain at least 24 characters")
+	}
+	if operator != "" && (len(operator) < 24 || operator == api) {
+		return fmt.Errorf("ESA_OPERATOR_TOKEN must contain at least 24 characters and differ from ESA_API_TOKEN")
+	}
+	if analyzerConfigured && (len(analyzer) < 24 || analyzer == api || analyzer == operator) {
+		return fmt.Errorf("ESA_ANALYZER_TOKEN must contain at least 24 characters and differ from ESA_API_TOKEN and ESA_OPERATOR_TOKEN")
 	}
 	return nil
 }

@@ -17,7 +17,9 @@
         "1"
       ],
       "env": {
-        "ESA_API_TOKEN": "{{token}}",
+        "ESA_API_TOKEN": "api-{{token}}",
+        "ESA_OPERATOR_TOKEN": "{{token}}",
+        "ESA_ANALYZER_TOKEN": "analyzer-{{token}}",
         "ESA_REDMINE_URL": "",
         "ESA_ANALYZER_URL": ""
       }

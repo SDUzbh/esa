@@ -16,9 +16,24 @@ import (
 
 // API exposes the business boundary to trusted integrations with explicit project scopes.
 // The Redmine plugin adds user/issue authorization before using the service credential.
+// API serves ESA's HTTP interface. Token is the Redmine plugin's secret
+// (ESA_API_TOKEN): its requests must carry a ticket scope and cannot ingest
+// events or move the replay clock. OperatorToken (ESA_OPERATOR_TOKEN, optional)
+// is for the replay harness and local scripts: unscoped reads, event ingestion
+// and the replay clock. An empty OperatorToken closes those to everyone.
 type API struct {
-	Engine *Engine
-	Token  string
+	Engine        *Engine
+	Token         string
+	OperatorToken string
+}
+
+// operatorRoutes are reserved for the operator token.
+var operatorRoutes = map[string]bool{"POST /v1/events": true, "POST /v1/replay/clock": true}
+
+// bearer reports whether the request presents token as a bearer credential.
+func bearer(r *http.Request, token string) bool {
+	header := r.Header.Get("Authorization")
+	return token != "" && strings.HasPrefix(header, "Bearer ") && subtle.ConstantTimeCompare([]byte(strings.TrimPrefix(header, "Bearer ")), []byte(token)) == 1
 }
 
 func writeJSON(w http.ResponseWriter, status int, value any) {
@@ -150,12 +165,20 @@ func (api *API) Handler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		if r.URL.Path != "/healthz" {
-			provided := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
-			if !strings.HasPrefix(r.Header.Get("Authorization"), "Bearer ") || api.Token == "" || subtle.ConstantTimeCompare([]byte(provided), []byte(api.Token)) != 1 {
+			operator := bearer(r, api.OperatorToken)
+			if !operator && !bearer(r, api.Token) {
 				writeJSON(w, 401, map[string]string{"error": "Authentication required."})
 				return
 			}
 			scope := parseAccessScope(r)
+			if !operator && operatorRoutes[r.Method+" "+r.URL.Path] {
+				writeJSON(w, 403, map[string]string{"error": "This route requires the operator token."})
+				return
+			}
+			if !operator && scope.tickets == nil {
+				writeJSON(w, 403, map[string]string{"error": "An explicit ticket scope (X-ESA-Ticket-IDs) is required."})
+				return
+			}
 			if len(scope.projects) == 0 {
 				writeJSON(w, 403, map[string]string{"error": "An explicit authorized project scope is required."})
 				return

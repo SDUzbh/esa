@@ -22,7 +22,9 @@ def main():
     args = parser.parse_args()
     if not args.provider_only and not args.esa_bin:
         parser.error('--esa-bin is required unless --provider-only is selected')
-    token = os.environ['ESA_API_TOKEN']
+    # The fixture provider checks ESA's analyzer token; ESA's own API token,
+    # a different secret, stays in the environment for the ESA it starts.
+    token = os.environ['ESA_ANALYZER_TOKEN']
     directory = Path(args.reports_dir)
     directory.mkdir(parents=True, exist_ok=True)
     calls, routing_calls, lock = [], [], threading.Lock()

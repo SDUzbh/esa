@@ -102,7 +102,8 @@ func BenchmarkTicketGET(b *testing.B) {
 // with no query parameters (default sort updated_at desc, page 1 of 25). The
 // plugin always scopes the request to the viewer's visible issues and refuses
 // more than 2,000 of them, so "scoped" sends 2,000 ticket IDs spread over the
-// archive; "unscoped" omits X-ESA-Ticket-IDs, which lets every ticket through.
+// archive; "unscoped" omits X-ESA-Ticket-IDs, which only the operator token
+// may do, and lets every ticket through.
 func BenchmarkTicketsList(b *testing.B) {
 	for _, n := range benchSizes(b) {
 		visible := pluginTicketScope(n)
@@ -112,7 +113,7 @@ func BenchmarkTicketsList(b *testing.B) {
 		}{{"scoped", visible}, {"unscoped", nil}} {
 			b.Run(fmt.Sprintf("%s/%d", scope.name, n), func(b *testing.B) {
 				e := seedMemoryStore(b, n)
-				handler := (&API{Engine: e, Token: strings.Repeat("t", 24)}).Handler()
+				handler := (&API{Engine: e, Token: strings.Repeat("t", 24), OperatorToken: strings.Repeat("o", 24)}).Handler()
 				want := n
 				if scope.ids != nil {
 					want = len(scope.ids)
@@ -120,9 +121,10 @@ func BenchmarkTicketsList(b *testing.B) {
 				b.ResetTimer()
 				for i := 0; i < b.N; i++ {
 					req := httptest.NewRequest(http.MethodGet, "/v1/tickets", nil)
-					req.Header.Set("Authorization", "Bearer "+strings.Repeat("t", 24))
+					req.Header.Set("Authorization", "Bearer "+strings.Repeat("o", 24))
 					req.Header.Set("X-ESA-Project-IDs", "1")
 					if scope.ids != nil {
+						req.Header.Set("Authorization", "Bearer "+strings.Repeat("t", 24))
 						req.Header.Set("X-ESA-Ticket-IDs", strings.Join(scope.ids, ","))
 					}
 					w := httptest.NewRecorder()

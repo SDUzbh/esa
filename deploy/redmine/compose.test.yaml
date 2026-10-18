@@ -29,7 +29,7 @@ services:
     command: [python3, /fixture.py, --provider-only, --reports-dir, /reports,
               --rules, unused, --listen, '0.0.0.0:8091']
     environment:
-      ESA_API_TOKEN: ${ESA_API_TOKEN}
+      ESA_ANALYZER_TOKEN: ${ESA_ANALYZER_TOKEN}
     volumes:
       - provider_data:/reports
     read_only: true

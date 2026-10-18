@@ -263,10 +263,14 @@ func TestTicketListHonorsTicketScope(t *testing.T) {
 		}
 		receive(t, e, id, ticket)
 	}
-	handler := (&API{Engine: e, Token: "test-token"}).Handler()
+	handler := (&API{Engine: e, Token: "test-token", OperatorToken: "operator-token"}).Handler()
 	list := func(scopes ...string) []string {
 		req := httptest.NewRequest("GET", "/v1/tickets?sort=id&direction=asc", nil)
+		// Only the operator may list without a ticket scope.
 		req.Header.Set("Authorization", "Bearer test-token")
+		if scopes == nil {
+			req.Header.Set("Authorization", "Bearer operator-token")
+		}
 		req.Header.Set("X-ESA-Project-IDs", "1")
 		for _, scope := range scopes {
 			req.Header.Add("X-ESA-Ticket-IDs", scope)
@@ -327,12 +331,12 @@ func TestAPIAuthenticationScopeFilteringAndVisibility(t *testing.T) {
 	for _, tc := range []struct {
 		path, token, scope, issues string
 		code                       int
-	}{{"/v1/tickets", "", "", "", 401}, {"/v1/tickets", "test-token", "1", "", 401}, {"/v1/tickets", "Bearer test-token", "", "", 403}, {"/v1/tickets/redmine:2", "Bearer test-token", "1", "", 404}, {"/v1/tickets/redmine:1", "Bearer test-token", "1", "none", 404}, {"/v1/tickets?limit=-1", "Bearer test-token", "1", "", 400}, {"/v1/tickets?sort=bogus", "Bearer test-token", "1", "", 400}} {
+	}{{"/v1/tickets", "", "", "", 401}, {"/v1/tickets", "test-token", "1", "", 401}, {"/v1/tickets", "Bearer test-token", "", "redmine:1", 403}, {"/v1/tickets", "Bearer test-token", "1", "", 403}, {"/v1/tickets/redmine:2", "Bearer test-token", "1", "redmine:1,redmine:2", 404}, {"/v1/tickets/redmine:1", "Bearer test-token", "1", "none", 404}, {"/v1/tickets?limit=-1", "Bearer test-token", "1", "redmine:1", 400}, {"/v1/tickets?sort=bogus", "Bearer test-token", "1", "redmine:1", 400}} {
 		if w := request(tc.path, tc.token, tc.scope, tc.issues); w.Code != tc.code {
 			t.Fatalf("%s: %d", tc.path, w.Code)
 		}
 	}
-	w := request("/v1/tickets?sort=subject&direction=asc&limit=1", "Bearer test-token", "1", "")
+	w := request("/v1/tickets?sort=subject&direction=asc&limit=1", "Bearer test-token", "1", "redmine:1,redmine:2")
 	if w.Code != http.StatusOK || strings.Contains(w.Body.String(), "redmine:2") {
 		t.Fatal(w.Body.String())
 	}

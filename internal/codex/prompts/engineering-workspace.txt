@@ -1,0 +1,1 @@
+A generic workspace has no prebuilt product: request runtime, compile unchanged frozen source into /workspace/classes, and write bounded helpers in scratch to test your hypothesis. Install only needed pinned catalog artifacts through tool_install; request missing dependencies. Workspace readiness alone does not establish successful product compilation or reproduction.

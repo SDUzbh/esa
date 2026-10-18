@@ -1,0 +1,1 @@
+Judge the incoming ticket using the local Issue directory. Retrieve only what you need.

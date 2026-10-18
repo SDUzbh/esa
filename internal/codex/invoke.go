@@ -120,7 +120,7 @@ func (p *Provider) invoke(ctx context.Context, dir, prompt, sourceKey string, bu
 	if !usage.TokensReported {
 		emitAlerts(usage)
 	}
-	audit, _ := json.MarshalIndent(map[string]any{"provider": "codex_cli", "model": p.Model, "source_key": sourceKey, "provider_invocations": 1, "completed_turns": turns, "unexpected_tool_event": unexpected, "cli_usage": lastUsage, "usage": usage, "registered_replay_tools": p.ToolsConfig != "", "sandbox": "read-only", "alerts": alerts, "token_policy": "Advisory warnings only; never cancel or reject because of token consumption. Invocation limits and explicit timeouts are separate."}, "", "  ")
+	audit, _ := json.MarshalIndent(map[string]any{"provider": "codex_cli", "prompt_version": PromptVersion, "model": p.Model, "source_key": sourceKey, "provider_invocations": 1, "completed_turns": turns, "unexpected_tool_event": unexpected, "cli_usage": lastUsage, "usage": usage, "registered_replay_tools": p.ToolsConfig != "", "sandbox": "read-only", "alerts": alerts, "token_policy": "Advisory warnings only; never cancel or reject because of token consumption. Invocation limits and explicit timeouts are separate."}, "", "  ")
 	_ = os.WriteFile(filepath.Join(dir, "audit.json"), audit, 0600)
 	if scanner.Err() != nil {
 		return nil, usage, alerts, scanner.Err()

@@ -97,7 +97,13 @@ func (e *Engine) pipeline(ctx context.Context, provider PipelineAnalyzer, input 
 		return routed, err
 	}
 	decision := routed.Routing
-	if decision == nil || decision.Usage.Calls != 1 || routed.Usage.Calls != 1 || strings.TrimSpace(decision.Reason) == "" || len(routed.Findings) != 0 || routed.AssignmentRouting != nil || routed.IssueRequest != nil {
+	if decision == nil ||
+		decision.Usage.Calls != 1 ||
+		routed.Usage.Calls != 1 ||
+		strings.TrimSpace(decision.Reason) == "" ||
+		len(routed.Findings) != 0 ||
+		routed.AssignmentRouting != nil ||
+		routed.IssueRequest != nil {
 		return routed, fmt.Errorf("invalid intake routing stage")
 	}
 	if decision.Action != "analyze" {
@@ -149,7 +155,11 @@ func (e *Engine) engineer(ctx context.Context, provider PipelineAnalyzer, input 
 	if err != nil {
 		return uncertainStage(engineered, routed), err
 	}
-	if engineered.Routing == nil || hash(*engineered.Routing) != hash(*routed.Routing) || engineered.Usage.Calls != 2 || engineered.Issue != nil || engineered.AssignmentRouting != nil {
+	if engineered.Routing == nil ||
+		hash(*engineered.Routing) != hash(*routed.Routing) ||
+		engineered.Usage.Calls != 2 ||
+		engineered.Issue != nil ||
+		engineered.AssignmentRouting != nil {
 		return engineered, fmt.Errorf("engineering cannot assign Issues or replace the routing decision")
 	}
 	if len(engineered.Findings) == 0 && len(engineered.Evidence) == 0 {
@@ -217,7 +227,9 @@ func (e *Engine) joinInvestigation(s *State, task *Investigation, report Report,
 	if joinTargetChanged(s, *task, target, ok, selected, source, input) {
 		return fmt.Errorf("%w: investigation source or scope changed", ErrConflict)
 	}
-	live := activeInvestigation(target) && (target.LeaseUntil.After(e.Now()) || parked(target)) && (target.Phase == "waiting_engineering" || target.Phase == "investigating" || target.Phase == "assignment")
+	live := activeInvestigation(target) &&
+		(target.LeaseUntil.After(e.Now()) || parked(target)) &&
+		(target.Phase == "waiting_engineering" || target.Phase == "investigating" || target.Phase == "assignment")
 	// Completion can race the routing turn. Share the completed investigation
 	// rather than starting another analysis or claiming a future solution.
 	if !live && target.State != InvestigationAgentProposed && target.State != InvestigationTrusted {

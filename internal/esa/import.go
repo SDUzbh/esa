@@ -26,7 +26,16 @@ func ParseTime(value string) (time.Time, error) {
 	if value == "" {
 		return time.Time{}, nil
 	}
-	for _, layout := range []string{time.RFC3339Nano, "2006-01-02T15:04:05.000-0700", "2006-01-02T15:04:05-0700", "2006-01-02 15:04:05 -0700", "2/Jan/06 3:04 PM", "02/Jan/06 15:04", "2006-01-02 15:04:05", "2006-01-02"} {
+	for _, layout := range []string{
+		time.RFC3339Nano,
+		"2006-01-02T15:04:05.000-0700",
+		"2006-01-02T15:04:05-0700",
+		"2006-01-02 15:04:05 -0700",
+		"2/Jan/06 3:04 PM",
+		"02/Jan/06 15:04",
+		"2006-01-02 15:04:05",
+		"2006-01-02",
+	} {
 		if t, err := time.Parse(layout, value); err == nil {
 			return t.UTC(), nil
 		}
@@ -69,7 +78,17 @@ func parseJira(record map[string]any) (Ticket, error) {
 		issue = m
 	}
 	f := object(issue["fields"])
-	t := Ticket{SourceKey: stringValue(issue["key"]), Subject: stringValue(f["summary"]), Description: stringValue(f["description"]), Tracker: named(f["issuetype"]), Status: named(f["status"]), Source: "manual_upload", Components: names(f["components"]), Versions: names(f["versions"]), Environment: map[string]string{}}
+	t := Ticket{
+		SourceKey:   stringValue(issue["key"]),
+		Subject:     stringValue(f["summary"]),
+		Description: stringValue(f["description"]),
+		Tracker:     named(f["issuetype"]),
+		Status:      named(f["status"]),
+		Source:      "manual_upload",
+		Components:  names(f["components"]),
+		Versions:    names(f["versions"]),
+		Environment: map[string]string{},
+	}
 	t.ID = t.SourceKey
 	t.Resolution.Reason = named(f["resolution"])
 	t.Closed = contains([]string{"Resolved", "Closed", "Done"}, t.Status)
@@ -228,12 +247,28 @@ func ParseImport(filename, projectID string, data []byte, received time.Time) (P
 				}
 				return unique(out)
 			}
-			t := Ticket{ID: get("id", "issue key", "key"), SourceKey: get("issue key", "key", "id"), Subject: get("subject", "summary"), Description: get("description"), Tracker: get("tracker", "issue type"), Status: get("status"), Assignee: get("assignee", "assigned to"), Components: many("components", "component/s"), Versions: many("versions", "affects version/s", "affected versions"), Environment: map[string]string{}}
+			t := Ticket{
+				ID:          get("id", "issue key", "key"),
+				SourceKey:   get("issue key", "key", "id"),
+				Subject:     get("subject", "summary"),
+				Description: get("description"),
+				Tracker:     get("tracker", "issue type"),
+				Status:      get("status"),
+				Assignee:    get("assignee", "assigned to"),
+				Components:  many("components", "component/s"),
+				Versions:    many("versions", "affects version/s", "affected versions"),
+				Environment: map[string]string{},
+			}
 			if environment := get("environment"); environment != "" {
 				t.Environment["details"] = environment
 			}
 			t.Closed = contains([]string{"Resolved", "Closed", "Done"}, t.Status)
-			t.Resolution = Resolution{Reason: get("resolution"), Cause: get("cause", "root cause"), Solution: get("solution"), Validation: get("validation", "verification")}
+			t.Resolution = Resolution{
+				Reason:     get("resolution"),
+				Cause:      get("cause", "root cause"),
+				Solution:   get("solution"),
+				Validation: get("validation", "verification"),
+			}
 			for j, body := range values["comment"] {
 				if body != "" {
 					t.Comments = append(t.Comments, Comment{ID: fmt.Sprint(j + 1), Body: body})

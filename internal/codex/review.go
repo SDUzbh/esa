@@ -13,8 +13,21 @@ import (
 
 func ReviewSchema() []byte {
 	assessment := enum("correct", "incorrect", "unknown")
-	finding := object(map[string]any{"index": map[string]any{"type": "integer", "minimum": 0}, "localization": assessment, "problem": assessment, "solution": assessment, "explanation": str()})
-	schema := object(map[string]any{"commit": str(), "verdict": enum("resolved", "not_resolved", "regressed", "uncertain"), "explanation": str(), "findings": array(finding), "evidence": array(evidenceSchema()), "limitations": array(str())})
+	finding := object(map[string]any{
+		"index":        map[string]any{"type": "integer", "minimum": 0},
+		"localization": assessment,
+		"problem":      assessment,
+		"solution":     assessment,
+		"explanation":  str(),
+	})
+	schema := object(map[string]any{
+		"commit":      str(),
+		"verdict":     enum("resolved", "not_resolved", "regressed", "uncertain"),
+		"explanation": str(),
+		"findings":    array(finding),
+		"evidence":    array(evidenceSchema()),
+		"limitations": array(str()),
+	})
 	b, _ := json.Marshal(schema)
 	return b
 }
@@ -79,7 +92,12 @@ func (p *Provider) Review(ctx context.Context, request codexreview.ReviewRequest
 	b, _ := json.Marshal(visible)
 	instructions := reviewInstructions
 	prompt := reviewPrompt + "\n" + string(b)
-	for name, data := range map[string][]byte{"input.json": mustJSON(request), "schema.json": ReviewSchema(), "instructions.txt": []byte(instructions), "prompt.txt": []byte(prompt)} {
+	for name, data := range map[string][]byte{
+		"input.json":       mustJSON(request),
+		"schema.json":      ReviewSchema(),
+		"instructions.txt": []byte(instructions),
+		"prompt.txt":       []byte(prompt),
+	} {
 		if err := os.WriteFile(filepath.Join(dir, name), data, 0600); err != nil {
 			return r, err
 		}

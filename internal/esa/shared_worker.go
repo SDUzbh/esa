@@ -139,7 +139,9 @@ func validateReport(report Report, input AnalyzeRequest, records []IssueRecord) 
 		return fmt.Errorf("provider must return a summary and evidence, or explicit limitations")
 	}
 	awaitingGrouping := report.AssignmentRouting != nil && report.AssignmentRouting.Action == "request_information"
-	if (len(report.Findings) > 0 || len(report.Evidence) > 0) && !awaitingGrouping && (report.Issue == nil || strings.TrimSpace(report.Issue.Title) == "" || strings.TrimSpace(report.Issue.Reason) == "") {
+	if (len(report.Findings) > 0 || len(report.Evidence) > 0) &&
+		!awaitingGrouping &&
+		(report.Issue == nil || strings.TrimSpace(report.Issue.Title) == "" || strings.TrimSpace(report.Issue.Reason) == "") {
 		return fmt.Errorf("supported analysis requires an Agent issue proposal with title and reason")
 	}
 	for _, ev := range report.Evidence {
@@ -159,13 +161,18 @@ func validateReport(report Report, input AnalyzeRequest, records []IssueRecord) 
 	maxCalls := input.Budget.MaxCalls
 	if report.Routing != nil {
 		maxCalls++
-		if report.Routing.Action != "reuse" && report.Routing.Action != "analyze" && report.Routing.Action != "request_information" && report.Routing.Action != "join" && report.Routing.Action != "return_to_support" {
+		if report.Routing.Action != "reuse" &&
+			report.Routing.Action != "analyze" &&
+			report.Routing.Action != "request_information" &&
+			report.Routing.Action != "join" &&
+			report.Routing.Action != "return_to_support" {
 			return fmt.Errorf("invalid routing action")
 		}
 		if report.Routing.Action != "analyze" && (report.Usage.Calls > 1 || len(report.Findings) > 0) {
 			return fmt.Errorf("reuse/clarification cannot invoke engineering or claim new findings")
 		}
-		if (report.Routing.Action == "request_information" || report.Routing.Action == "join" || report.Routing.Action == "return_to_support") && (len(report.Evidence) > 0 || report.Issue != nil) {
+		if (report.Routing.Action == "request_information" || report.Routing.Action == "join" || report.Routing.Action == "return_to_support") &&
+			(len(report.Evidence) > 0 || report.Issue != nil) {
 			return fmt.Errorf("clarification cannot publish a solution")
 		}
 		if report.Routing.Usage.Calls != 1 {
@@ -177,13 +184,20 @@ func validateReport(report Report, input AnalyzeRequest, records []IssueRecord) 
 	}
 	if report.AssignmentRouting != nil {
 		decision := report.AssignmentRouting
-		if report.Routing == nil || report.Routing.Action != "analyze" || decision.Usage.Calls != 1 || strings.TrimSpace(decision.Reason) == "" || len(report.Findings) == 0 && len(report.Evidence) == 0 {
+		if report.Routing == nil ||
+			report.Routing.Action != "analyze" ||
+			decision.Usage.Calls != 1 ||
+			strings.TrimSpace(decision.Reason) == "" ||
+			len(report.Findings) == 0 && len(report.Evidence) == 0 {
 			return fmt.Errorf("invalid assignment routing stage")
 		}
 		maxCalls++
 		switch decision.Action {
 		case "assign", "create":
-			if report.Issue == nil || report.Issue.Title != decision.Title || report.Issue.Reason != decision.Reason || (decision.Action == "assign") != (report.Issue.ExistingID != "") {
+			if report.Issue == nil ||
+				report.Issue.Title != decision.Title ||
+				report.Issue.Reason != decision.Reason ||
+				(decision.Action == "assign") != (report.Issue.ExistingID != "") {
 				return fmt.Errorf("Issue assignment does not match Routing Agent decision")
 			}
 			if decision.Action == "create" && (decision.RecordPath != "" || decision.RecordHash != "") {
@@ -484,7 +498,14 @@ func (e *Engine) ProcessOne(ctx context.Context, analyzer Analyzer) (bool, error
 				if report.Routing != nil && report.Routing.Action == "reuse" {
 					for _, record := range records {
 						if recordPath(record) == report.Routing.RecordPath {
-							current.Application = &SolutionApplication{SolutionID: record.SolutionID, CaseID: record.CaseID, CaseVersion: record.CaseVersion, SourceTicketID: record.SourceTicketID, State: ApplicationProposed, Revision: 1}
+							current.Application = &SolutionApplication{
+								SolutionID:     record.SolutionID,
+								CaseID:         record.CaseID,
+								CaseVersion:    record.CaseVersion,
+								SourceTicketID: record.SourceTicketID,
+								State:          ApplicationProposed,
+								Revision:       1,
+							}
 							// Standalone Case association may have advanced its metadata revision.
 							if record.CaseID != "" {
 								current.Application.CaseVersion = s.Cases.Get(record.CaseID).Version
@@ -493,7 +514,20 @@ func (e *Engine) ProcessOne(ctx context.Context, analyzer Analyzer) (bool, error
 					}
 					current.State = InvestigationReuseProposed
 				} else {
-					solution := SolutionRevision{ID: randomID("solution_"), IssueID: current.IssueID, InvestigationID: current.ID, ProjectID: current.ProjectID, ScopeHash: group.ScopeHash, SourceTicketID: sourceID, Origin: "agent", State: SolutionProposed, Revision: 1, RunID: run.ID, AvailableAt: e.Now(), RecordedAt: time.Now().UTC()}
+					solution := SolutionRevision{
+						ID:              randomID("solution_"),
+						IssueID:         current.IssueID,
+						InvestigationID: current.ID,
+						ProjectID:       current.ProjectID,
+						ScopeHash:       group.ScopeHash,
+						SourceTicketID:  sourceID,
+						Origin:          "agent",
+						State:           SolutionProposed,
+						Revision:        1,
+						RunID:           run.ID,
+						AvailableAt:     e.Now(),
+						RecordedAt:      time.Now().UTC(),
+					}
 					s.Solutions.Put(solution.ID, solution)
 					current.SolutionID = solution.ID
 				}
@@ -530,5 +564,7 @@ func unpinnedFinding(finding Finding) bool {
 // evidence without both an Issue request (title and reason) and the Routing
 // Agent's grouping decision.
 func ungroupedFindings(report Report) bool {
-	return report.Routing.Action == "analyze" && (len(report.Findings) > 0 || len(report.Evidence) > 0) && (report.IssueRequest == nil || strings.TrimSpace(report.IssueRequest.Title) == "" || strings.TrimSpace(report.IssueRequest.Reason) == "" || report.AssignmentRouting == nil)
+	return report.Routing.Action == "analyze" &&
+		(len(report.Findings) > 0 || len(report.Evidence) > 0) &&
+		(report.IssueRequest == nil || strings.TrimSpace(report.IssueRequest.Title) == "" || strings.TrimSpace(report.IssueRequest.Reason) == "" || report.AssignmentRouting == nil)
 }

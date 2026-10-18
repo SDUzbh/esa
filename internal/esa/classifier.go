@@ -24,7 +24,11 @@ func (api *API) classifierTicket(r *http.Request) (Ticket, error) {
 func latestPrediction(s State, t Ticket, m *classifier.Model) *ClassifierPrediction {
 	var latest *ClassifierPrediction
 	for _, p := range s.ClassifierPredictions.All() {
-		if p.TicketID == t.ID && p.ProjectID == t.ProjectID && p.Text == classifierText(t) && p.ForwardedAt.Equal(t.ForwardedAt) && p.Prediction.ModelVersion == m.Version {
+		if p.TicketID == t.ID &&
+			p.ProjectID == t.ProjectID &&
+			p.Text == classifierText(t) &&
+			p.ForwardedAt.Equal(t.ForwardedAt) &&
+			p.Prediction.ModelVersion == m.Version {
 			copy := p
 			if latest == nil || p.CreatedAt.After(latest.CreatedAt) {
 				latest = &copy
@@ -51,7 +55,8 @@ func (e *Engine) classifierView(s State, t Ticket) map[string]any {
 	var feedback *ClassifierFeedback
 	if p != nil {
 		for _, f := range s.ClassifierFeedback.All() {
-			if f.PredictionID == p.ID && (feedback == nil || f.Example.ReviewedAt.After(feedback.Example.ReviewedAt) || f.Example.ReviewedAt.Equal(feedback.Example.ReviewedAt) && f.ID > feedback.ID) {
+			if f.PredictionID == p.ID &&
+				(feedback == nil || f.Example.ReviewedAt.After(feedback.Example.ReviewedAt) || f.Example.ReviewedAt.Equal(feedback.Example.ReviewedAt) && f.ID > feedback.ID) {
 				copy := f
 				feedback = &copy
 			}
@@ -61,7 +66,15 @@ func (e *Engine) classifierView(s State, t Ticket) map[string]any {
 	if m.TrainingThrough.After(t.ForwardedAt) {
 		blocked = "Model contains reviews after this forwarded snapshot; use an earlier model or forward a current snapshot."
 	}
-	return map[string]any{"enabled": true, "labels": m.Labels(), "model_version": m.Version, "training_through": m.TrainingThrough, "blocked_reason": blocked, "prediction": p, "feedback": feedback}
+	return map[string]any{
+		"enabled":          true,
+		"labels":           m.Labels(),
+		"model_version":    m.Version,
+		"training_through": m.TrainingThrough,
+		"blocked_reason":   blocked,
+		"prediction":       p,
+		"feedback":         feedback,
+	}
 }
 func (api *API) classifierPredict(w http.ResponseWriter, r *http.Request) {
 	t, err := api.classifierTicket(r)
@@ -83,7 +96,14 @@ func (api *API) classifierPredict(w http.ResponseWriter, r *http.Request) {
 		writeError(w, fmt.Errorf("%w: classifier text exceeds 1 MB", ErrInvalid))
 		return
 	}
-	p := ClassifierPrediction{TicketID: t.ID, ProjectID: t.ProjectID, Text: text, ForwardedAt: t.ForwardedAt, CreatedAt: api.Engine.Now(), Prediction: m.Predict(text)}
+	p := ClassifierPrediction{
+		TicketID:    t.ID,
+		ProjectID:   t.ProjectID,
+		Text:        text,
+		ForwardedAt: t.ForwardedAt,
+		CreatedAt:   api.Engine.Now(),
+		Prediction:  m.Predict(text),
+	}
 	p.ID = hash([]string{t.ID, t.ProjectID, text, t.ForwardedAt.UTC().Format(time.RFC3339Nano), m.Version})
 	err = api.Engine.update(func(s *State) error {
 		current, ok := s.Tickets.Lookup(t.ID)
@@ -128,7 +148,12 @@ func (api *API) classifierFeedback(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
-	if strings.TrimSpace(req.ID) == "" || len(req.ID) > 200 || strings.TrimSpace(req.Reviewer) == "" || len(req.Reviewer) > 200 || len(req.Note) > 4000 || req.Labels == nil {
+	if strings.TrimSpace(req.ID) == "" ||
+		len(req.ID) > 200 ||
+		strings.TrimSpace(req.Reviewer) == "" ||
+		len(req.Reviewer) > 200 ||
+		len(req.Note) > 4000 ||
+		req.Labels == nil {
 		writeError(w, fmt.Errorf("%w: id, reviewer and explicit labels are required", ErrInvalid))
 		return
 	}
@@ -155,12 +180,18 @@ func (api *API) classifierFeedback(w http.ResponseWriter, r *http.Request) {
 		if !ok || p.TicketID != t.ID || p.ProjectID != t.ProjectID {
 			return ErrNotFound
 		}
-		if p.Prediction.ModelVersion != m.Version || p.Text != classifierText(current) || !p.ForwardedAt.Equal(current.ForwardedAt) || m.TrainingThrough.After(p.ForwardedAt) {
+		if p.Prediction.ModelVersion != m.Version ||
+			p.Text != classifierText(current) ||
+			!p.ForwardedAt.Equal(current.ForwardedAt) ||
+			m.TrainingThrough.After(p.ForwardedAt) {
 			return fmt.Errorf("%w: prediction is stale; request suggestions for the current snapshot", ErrConflict)
 		}
 		key := hash([]string{t.ProjectID, t.ID, req.ID})
 		if old, ok := s.ClassifierFeedback.Lookup(key); ok {
-			if old.PredictionID != req.PredictionID || old.Example.Reviewer != req.Reviewer || hash(old.Example.Labels) != hash(req.Labels) || old.Note != req.Note {
+			if old.PredictionID != req.PredictionID ||
+				old.Example.Reviewer != req.Reviewer ||
+				hash(old.Example.Labels) != hash(req.Labels) ||
+				old.Note != req.Note {
 				return ErrConflict
 			}
 			record = old
@@ -172,7 +203,20 @@ func (api *API) classifierFeedback(w http.ResponseWriter, r *http.Request) {
 				return fmt.Errorf("%w: review timestamp must advance; retry after the server clock advances", ErrConflict)
 			}
 		}
-		record = ClassifierFeedback{ID: key, PredictionID: p.ID, ModelVersion: p.Prediction.ModelVersion, Note: req.Note, Example: classifier.Example{ID: t.ID, ProjectID: t.ProjectID, Text: p.Text, Labels: req.Labels, Reviewer: req.Reviewer, ReviewedAt: reviewedAt}}
+		record = ClassifierFeedback{
+			ID:           key,
+			PredictionID: p.ID,
+			ModelVersion: p.Prediction.ModelVersion,
+			Note:         req.Note,
+			Example: classifier.Example{
+				ID:         t.ID,
+				ProjectID:  t.ProjectID,
+				Text:       p.Text,
+				Labels:     req.Labels,
+				Reviewer:   req.Reviewer,
+				ReviewedAt: reviewedAt,
+			},
+		}
 		if err := record.Example.Validate(); err != nil {
 			return fmt.Errorf("%w: %v", ErrInvalid, err)
 		}

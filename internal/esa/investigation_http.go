@@ -174,7 +174,8 @@ func issueTitleSource(s State, issue EngineeringIssue) string {
 	if source == "" {
 		var first Run
 		for _, run := range s.Runs.All() {
-			if run.IssueID == issue.ID && (first.ID == "" || run.CreatedAt.Before(first.CreatedAt) || run.CreatedAt.Equal(first.CreatedAt) && run.ID < first.ID) {
+			if run.IssueID == issue.ID &&
+				(first.ID == "" || run.CreatedAt.Before(first.CreatedAt) || run.CreatedAt.Equal(first.CreatedAt) && run.ID < first.ID) {
 				first = run
 			}
 		}
@@ -224,7 +225,12 @@ func (api *API) engineeringIssues(w http.ResponseWriter, r *http.Request) {
 		sort.Strings(members)
 		copy := visibleEngineeringIssue(r, s, issue)
 		copy.State = issueState(s, issue.ID, ids)
-		rows = append(rows, map[string]any{"issue": copy, "ticket_ids": members, "visible_ticket_count": len(members), "representative_ticket": map[string]string{"id": title, "subject": s.Tickets.Get(title).Subject}})
+		rows = append(rows, map[string]any{
+			"issue":                 copy,
+			"ticket_ids":            members,
+			"visible_ticket_count":  len(members),
+			"representative_ticket": map[string]string{"id": title, "subject": s.Tickets.Get(title).Subject},
+		})
 	}
 	sort.Slice(rows, func(i, j int) bool {
 		return rows[i]["issue"].(EngineeringIssue).ID < rows[j]["issue"].(EngineeringIssue).ID
@@ -299,7 +305,12 @@ func (api *API) snapshot(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	current := s.Tickets.Get(snap.Ticket.ID)
-	if !ok || snap.Ticket.Private || current.Private || !allowed(r, snap.Ticket.ProjectID) || !ticketAllowed(r, snap.Ticket.ID) || snap.AvailableAt.After(api.Engine.Now()) {
+	if !ok ||
+		snap.Ticket.Private ||
+		current.Private ||
+		!allowed(r, snap.Ticket.ProjectID) ||
+		!ticketAllowed(r, snap.Ticket.ID) ||
+		snap.AvailableAt.After(api.Engine.Now()) {
 		writeError(w, ErrNotFound)
 		return
 	}

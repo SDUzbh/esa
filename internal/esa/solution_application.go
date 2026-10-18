@@ -23,7 +23,16 @@ func applicationSource(s State, app SolutionApplication) (SolutionRevision, bool
 			return SolutionRevision{}, false
 		}
 	}
-	return SolutionRevision{ID: c.ID, IssueID: c.IssueID, ProjectID: c.ProjectID, SourceTicketID: c.TicketID, Origin: "engineer", State: SolutionTrusted, Resolution: c.Resolution, AvailableAt: c.UpdatedAt}, true
+	return SolutionRevision{
+		ID:             c.ID,
+		IssueID:        c.IssueID,
+		ProjectID:      c.ProjectID,
+		SourceTicketID: c.TicketID,
+		Origin:         "engineer",
+		State:          SolutionTrusted,
+		Resolution:     c.Resolution,
+		AvailableAt:    c.UpdatedAt,
+	}, true
 }
 func taskSolution(s State, task Investigation) (SolutionRevision, bool) {
 	if task.Application != nil {
@@ -57,7 +66,11 @@ func (e *Engine) reviewApplication(s *State, task Investigation, review Solution
 	app.Reviews = append(app.Reviews, ApplicationReview{State: state, Reviewer: review.Reviewer, Note: review.Note, AvailableAt: e.Now()})
 	task.Application = &app
 	task.UpdatedAt = e.Now()
-	task.State = map[ApplicationState]InvestigationState{ApplicationAccepted: InvestigationApplied, ApplicationRejected: InvestigationRejected, ApplicationWithdrawn: InvestigationWithdrawn}[state]
+	task.State = map[ApplicationState]InvestigationState{
+		ApplicationAccepted:  InvestigationApplied,
+		ApplicationRejected:  InvestigationRejected,
+		ApplicationWithdrawn: InvestigationWithdrawn,
+	}[state]
 	s.Investigations.Put(task.ID, task)
 	return source, nil
 }
@@ -70,7 +83,12 @@ func (e *Engine) invalidateApplications(s *State) {
 		app := *task.Application
 		app.State = ApplicationWithdrawn
 		app.Revision++
-		app.Reviews = append(app.Reviews, ApplicationReview{State: ApplicationWithdrawn, Reviewer: "system", Note: "The referenced source changed or was withdrawn", AvailableAt: e.Now()})
+		app.Reviews = append(app.Reviews, ApplicationReview{
+			State:       ApplicationWithdrawn,
+			Reviewer:    "system",
+			Note:        "The referenced source changed or was withdrawn",
+			AvailableAt: e.Now(),
+		})
 		task.Application = &app
 		task.State = InvestigationWithdrawn
 		task.UpdatedAt = e.Now()

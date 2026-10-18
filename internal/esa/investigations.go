@@ -14,7 +14,16 @@ func (e *Engine) Version() string { return WorkflowVersion }
 func captureSnapshot(s *State, event Event) string {
 	id := snapshotIDFor(event.ID)
 	t := event.Ticket
-	s.Snapshots.Put(id, TicketSnapshot{ID: id, Hash: hash(t), EventID: event.ID, Ticket: t, EffectiveAt: t.UpdatedAt, AvailableAt: event.ForwardedAt, RecordedAt: time.Now().UTC(), Cutoff: event.ForwardedAt})
+	s.Snapshots.Put(id, TicketSnapshot{
+		ID:          id,
+		Hash:        hash(t),
+		EventID:     event.ID,
+		Ticket:      t,
+		EffectiveAt: t.UpdatedAt,
+		AvailableAt: event.ForwardedAt,
+		RecordedAt:  time.Now().UTC(),
+		Cutoff:      event.ForwardedAt,
+	})
 	s.LatestSnapshot.Put(t.ID, id)
 	return id
 }
@@ -73,7 +82,12 @@ func taskHasActiveMembers(s State, task Investigation) bool {
 			continue
 		}
 		t, ok := s.Tickets.Lookup(link.TicketID)
-		if ok && !t.Private && !t.Closed && s.Latest.Get(link.TicketID) == task.RunID && investigationSignature(t) == investigationSignature(s.Snapshots.Get(link.SnapshotID).Ticket) && investigationScope(t) == s.Groups.Get(task.GroupID).ScopeHash {
+		if ok &&
+			!t.Private &&
+			!t.Closed &&
+			s.Latest.Get(link.TicketID) == task.RunID &&
+			investigationSignature(t) == investigationSignature(s.Snapshots.Get(link.SnapshotID).Ticket) &&
+			investigationScope(t) == s.Groups.Get(task.GroupID).ScopeHash {
 			return true
 		}
 	}
@@ -107,7 +121,10 @@ func availableTask(s State, task Investigation, cutoff time.Time) bool {
 // a replacement investigation. Running work retains its usage audit on completion.
 func supersedeInactiveTask(s *State, runID string, now time.Time) {
 	task, ok := s.Investigations.Lookup(s.Runs.Get(runID).InvestigationID)
-	if !ok || task.InvocationStarted || task.State != InvestigationQueued && task.State != InvestigationAwaitingConfiguration || taskHasActiveMembers(*s, task) {
+	if !ok ||
+		task.InvocationStarted ||
+		task.State != InvestigationQueued && task.State != InvestigationAwaitingConfiguration ||
+		taskHasActiveMembers(*s, task) {
 		return
 	}
 	task.State, task.UpdatedAt = InvestigationSuperseded, now
@@ -115,7 +132,19 @@ func supersedeInactiveTask(s *State, runID string, now time.Time) {
 }
 
 func (e *Engine) newRun(s *State, t Ticket, snap TicketSnapshot, cutoff, now time.Time) Run {
-	return Run{ID: randomID("run_"), TicketID: t.ID, ProjectID: t.ProjectID, WorkflowVersion: WorkflowVersion, RuleVersion: e.Config.Version, Input: t, InputHash: diagnosticHash(t), SnapshotID: snap.ID, ObservationCutoff: cutoff, CreatedAt: now, UpdatedAt: now}
+	return Run{
+		ID:                randomID("run_"),
+		TicketID:          t.ID,
+		ProjectID:         t.ProjectID,
+		WorkflowVersion:   WorkflowVersion,
+		RuleVersion:       e.Config.Version,
+		Input:             t,
+		InputHash:         diagnosticHash(t),
+		SnapshotID:        snap.ID,
+		ObservationCutoff: cutoff,
+		CreatedAt:         now,
+		UpdatedAt:         now,
+	}
 }
 
 func recordRun(s *State, run Run) Receipt {
@@ -152,8 +181,12 @@ func (e *Engine) enqueue(s *State, t Ticket, now time.Time, force bool) Receipt 
 		return recordRun(s, run)
 	}
 	if !force {
-		if old, ok := s.Runs.Lookup(s.Latest.Get(t.ID)); ok && old.WorkflowVersion == WorkflowVersion && old.InputHash == diagnosticHash(t) && old.RuleVersion == e.Config.Version {
-			if (s.IssueOverrides.Get(t.ID) == "" || old.IssueID == s.IssueOverrides.Get(t.ID)) && (old.InvestigationID == "" || availableTask(*s, s.Investigations.Get(old.InvestigationID), cutoff)) {
+		if old, ok := s.Runs.Lookup(s.Latest.Get(t.ID)); ok &&
+			old.WorkflowVersion == WorkflowVersion &&
+			old.InputHash == diagnosticHash(t) &&
+			old.RuleVersion == e.Config.Version {
+			if (s.IssueOverrides.Get(t.ID) == "" || old.IssueID == s.IssueOverrides.Get(t.ID)) &&
+				(old.InvestigationID == "" || availableTask(*s, s.Investigations.Get(old.InvestigationID), cutoff)) {
 				return Receipt{TicketID: t.ID, RunID: old.ID, Action: "cached"}
 			}
 		}
@@ -169,7 +202,16 @@ func (e *Engine) enqueue(s *State, t Ticket, now time.Time, force bool) Receipt 
 	}
 	if !force && availableTask(*s, s.Investigations.Get(group.CurrentTaskID), cutoff) {
 		task := s.Investigations.Get(group.CurrentTaskID)
-		link := IssueTicketLink{ID: randomID("link_"), IssueID: group.IssueID, TicketID: t.ID, SnapshotID: snap.ID, InvestigationID: task.ID, State: MembershipTentative, Basis: "exact diagnostic and context signature; common causality unconfirmed", AvailableAt: cutoff}
+		link := IssueTicketLink{
+			ID:              randomID("link_"),
+			IssueID:         group.IssueID,
+			TicketID:        t.ID,
+			SnapshotID:      snap.ID,
+			InvestigationID: task.ID,
+			State:           MembershipTentative,
+			Basis:           "exact diagnostic and context signature; common causality unconfirmed",
+			AvailableAt:     cutoff,
+		}
 		recordInvestigationLink(s, link)
 		s.Latest.Put(t.ID, task.RunID)
 		return Receipt{TicketID: t.ID, RunID: task.RunID, Action: "linked_investigation"}
@@ -180,15 +222,49 @@ func (e *Engine) enqueue(s *State, t Ticket, now time.Time, force bool) Receipt 
 	id := randomID("investigation_")
 	run := e.newRun(s, t, snap, cutoff, now)
 	runID := run.ID
-	contract := TaskContract{Objective: "Routing Agent judges the ticket against the local Issue directory. Reuse a justified solution or obtain read-only engineering findings and an issue_request; Routing Agent then decides Issue grouping. Request essential missing information rather than inventing a result.", SnapshotID: snap.ID, InputHash: snap.Hash, ObservationCutoff: cutoff, IssueID: group.IssueID, ReadOnly: true, CompletionCriteria: []string{"Address the reported behavior using supplied historical evidence", "Engineering submits a grouping request; Routing Agent decides assignment", "Do not modify product source or close customer tickets"}}
-	task := Investigation{ID: id, GroupID: groupID, IssueID: group.IssueID, ProjectID: t.ProjectID, RunID: runID, State: InvestigationQueued, Contract: contract, CreatedAt: cutoff, UpdatedAt: now}
+	contract := TaskContract{
+		Objective: "Routing Agent judges the ticket against the local Issue directory. Reuse a justified " +
+			"solution or obtain read-only engineering findings and an issue_request; Routing Agent " +
+			"then decides Issue grouping. Request essential missing information rather than inventing " +
+			"a result.",
+		SnapshotID:        snap.ID,
+		InputHash:         snap.Hash,
+		ObservationCutoff: cutoff,
+		IssueID:           group.IssueID,
+		ReadOnly:          true,
+		CompletionCriteria: []string{
+			"Address the reported behavior using supplied historical evidence",
+			"Engineering submits a grouping request; Routing Agent decides assignment",
+			"Do not modify product source or close customer tickets",
+		},
+	}
+	task := Investigation{
+		ID:        id,
+		GroupID:   groupID,
+		IssueID:   group.IssueID,
+		ProjectID: t.ProjectID,
+		RunID:     runID,
+		State:     InvestigationQueued,
+		Contract:  contract,
+		CreatedAt: cutoff,
+		UpdatedAt: now,
+	}
 	run.InvestigationID, run.IssueID, run.Route = id, group.IssueID, "engineering_analysis"
 	group.CurrentTaskID = id
 	s.Groups.Put(groupID, group)
 	s.Investigations.Put(id, task)
 	s.Runs.Put(runID, run)
 	s.Latest.Put(t.ID, runID)
-	link := IssueTicketLink{ID: randomID("link_"), IssueID: group.IssueID, TicketID: t.ID, SnapshotID: snap.ID, InvestigationID: id, State: MembershipTentative, Basis: "new exact-signature investigation", AvailableAt: cutoff}
+	link := IssueTicketLink{
+		ID:              randomID("link_"),
+		IssueID:         group.IssueID,
+		TicketID:        t.ID,
+		SnapshotID:      snap.ID,
+		InvestigationID: id,
+		State:           MembershipTentative,
+		Basis:           "new exact-signature investigation",
+		AvailableAt:     cutoff,
+	}
 	recordInvestigationLink(s, link)
 	return Receipt{TicketID: t.ID, RunID: runID, Action: "created"}
 }
@@ -219,7 +295,8 @@ func (e *Engine) ReviewSolution(id string, review SolutionReview) (SolutionRevis
 		if review.ExpectedSolutionID != old.ID {
 			return fmt.Errorf("%w: solution revision changed", ErrConflict)
 		}
-		if review.Action == "approve" && (strings.TrimSpace(review.Resolution.Cause) == "" || strings.TrimSpace(review.Resolution.Solution) == "" || strings.TrimSpace(review.Resolution.Validation) == "") {
+		if review.Action == "approve" &&
+			(strings.TrimSpace(review.Resolution.Cause) == "" || strings.TrimSpace(review.Resolution.Solution) == "" || strings.TrimSpace(review.Resolution.Validation) == "") {
 			return fmt.Errorf("%w: cause, solution and verification required", ErrInvalid)
 		}
 		source := s.Tickets.Get(s.Runs.Get(task.RunID).TicketID)

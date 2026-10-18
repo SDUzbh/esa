@@ -81,7 +81,13 @@ func ValidateConfig(config Config) error {
 // configuredEngine validates the configuration, applies its defaults and
 // loads classifier models; NewEngine then binds the store.
 func configuredEngine(config Config) (*Engine, error) {
-	if config.Version == "" || config.Budget.MaxCalls < 0 || config.Budget.MaxCalls > 1 || config.Budget.TimeoutSeconds < 1 || config.Budget.MaxInputTokens < 1 || config.Budget.MaxOutputTokens < 1 || !config.Budget.validWeights() {
+	if config.Version == "" ||
+		config.Budget.MaxCalls < 0 ||
+		config.Budget.MaxCalls > 1 ||
+		config.Budget.TimeoutSeconds < 1 ||
+		config.Budget.MaxInputTokens < 1 ||
+		config.Budget.MaxOutputTokens < 1 ||
+		!config.Budget.validWeights() {
 		return nil, fmt.Errorf("%w: invalid workflow configuration or budget", ErrInvalid)
 	}
 	e := &Engine{Config: config, Now: func() time.Time { return time.Now().UTC() }, classifiers: map[string]*classifier.Model{}}
@@ -280,7 +286,18 @@ func (e *Engine) Receive(event Event) (Receipt, error) {
 	var receipt Receipt
 	err := e.update(func(s *State) error {
 		previousRunID := s.Latest.Get(t.ID)
-		record := EventRecord{ID: event.ID, Origin: event.Origin, Force: event.Force, ForwardedBy: event.ForwardedBy, ForwardedAt: event.ForwardedAt, OccurredAt: event.OccurredAt, ReceivedAt: event.ReceivedAt, TicketID: t.ID, TicketHash: ticketHash, Raw: event.Raw}
+		record := EventRecord{
+			ID:          event.ID,
+			Origin:      event.Origin,
+			Force:       event.Force,
+			ForwardedBy: event.ForwardedBy,
+			ForwardedAt: event.ForwardedAt,
+			OccurredAt:  event.OccurredAt,
+			ReceivedAt:  event.ReceivedAt,
+			TicketID:    t.ID,
+			TicketHash:  ticketHash,
+			Raw:         event.Raw,
+		}
 		if old, ok := s.Events.Lookup(event.ID); ok {
 			if old.TicketHash != ticketHash || old.Origin != event.Origin || old.Force != event.Force {
 				return reject(fmt.Errorf("%w: event ID was reused with different content", ErrConflict))
@@ -351,7 +368,22 @@ func (e *Engine) Receive(event Event) (Receipt, error) {
 }
 
 func (e *Engine) collectCase(s *State, t Ticket, now time.Time) Case {
-	c := Case{ID: "case_" + hash(t.ID)[:24], TicketID: t.ID, ProjectID: t.ProjectID, SourceKey: t.SourceKey, Subject: t.Subject, Summary: t.Description, Components: unique(t.Components), Versions: unique(t.Versions), Environment: t.Environment, Resolution: t.Resolution, State: CaseDraft, CreatedAt: now, UpdatedAt: now, Version: 1}
+	c := Case{
+		ID:          "case_" + hash(t.ID)[:24],
+		TicketID:    t.ID,
+		ProjectID:   t.ProjectID,
+		SourceKey:   t.SourceKey,
+		Subject:     t.Subject,
+		Summary:     t.Description,
+		Components:  unique(t.Components),
+		Versions:    unique(t.Versions),
+		Environment: t.Environment,
+		Resolution:  t.Resolution,
+		State:       CaseDraft,
+		CreatedAt:   now,
+		UpdatedAt:   now,
+		Version:     1,
+	}
 	c.IssueID = s.Runs.Get(s.Latest.Get(t.ID)).IssueID
 	if override := s.IssueOverrides.Get(t.ID); override != "" {
 		c.IssueID = override
@@ -484,5 +516,13 @@ func (e *Engine) AnalyzeTicket(id string, force bool, actor string) (Receipt, er
 	if ticket.Closed {
 		return Receipt{}, fmt.Errorf("%w: forward the latest closed snapshot to collect a case", ErrInvalid)
 	}
-	return e.Receive(Event{ID: randomID("manual_"), Origin: "manual_forward", ForwardedBy: actor, ForwardedAt: e.Now(), OccurredAt: e.Now(), Force: force, Ticket: ticket})
+	return e.Receive(Event{
+		ID:          randomID("manual_"),
+		Origin:      "manual_forward",
+		ForwardedBy: actor,
+		ForwardedAt: e.Now(),
+		OccurredAt:  e.Now(),
+		Force:       force,
+		Ticket:      ticket,
+	})
 }

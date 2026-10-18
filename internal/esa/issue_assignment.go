@@ -60,7 +60,10 @@ func (e *Engine) applyIssueAssignment(s *State, task *Investigation, report Repo
 			return fmt.Errorf("%w: reuse source changed or was withdrawn", ErrConflict)
 		}
 	}
-	if report.AssignmentRouting != nil && report.AssignmentRouting.Action == "assign" && selection == nil && (id == "" || id != s.IssueOverrides.Get(s.Runs.Get(task.RunID).TicketID) || report.AssignmentRouting.RecordHash != "") {
+	if report.AssignmentRouting != nil &&
+		report.AssignmentRouting.Action == "assign" &&
+		selection == nil &&
+		(id == "" || id != s.IssueOverrides.Get(s.Runs.Get(task.RunID).TicketID) || report.AssignmentRouting.RecordHash != "") {
 		return fmt.Errorf("%w: grouping requires an eligible record or reviewed membership", ErrInvalid)
 	}
 	if override := s.IssueOverrides.Get(s.Runs.Get(task.RunID).TicketID); override != "" {
@@ -100,7 +103,13 @@ func (e *Engine) applyIssueAssignment(s *State, task *Investigation, report Repo
 			titleSource = reused.SourceTicketID
 		}
 		if _, exists := s.Issues.Lookup(id); !exists {
-			s.Issues.Put(id, EngineeringIssue{ID: id, ProjectID: task.ProjectID, Title: boundedIssueText(title), TitleSourceTicketID: titleSource, CreatedAt: e.Now()})
+			s.Issues.Put(id, EngineeringIssue{
+				ID:                  id,
+				ProjectID:           task.ProjectID,
+				Title:               boundedIssueText(title),
+				TitleSourceTicketID: titleSource,
+				CreatedAt:           e.Now(),
+			})
 		}
 	}
 	if reused != nil && reused.CaseID != "" && reused.IssueID == "" && s.Cases.Get(reused.CaseID).IssueID != id {

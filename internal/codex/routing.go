@@ -31,7 +31,13 @@ func (p *Provider) Analyze(ctx context.Context, in esa.AnalyzeRequest) (esa.Repo
 	if in.Contract == nil {
 		return p.analyzeEngineering(ctx, in)
 	}
-	if !in.ReadOnly || !in.Contract.ReadOnly || in.Ticket.Private || in.Ticket.Closed || in.Budget.MaxCalls != 1 || in.Contract.ObservationCutoff.IsZero() || !validRunID(in.RunID) {
+	if !in.ReadOnly ||
+		!in.Contract.ReadOnly ||
+		in.Ticket.Private ||
+		in.Ticket.Closed ||
+		in.Budget.MaxCalls != 1 ||
+		in.Contract.ObservationCutoff.IsZero() ||
+		!validRunID(in.RunID) {
 		return esa.Report{}, errors.New("invalid routing request")
 	}
 	stage := in.Stage
@@ -119,7 +125,12 @@ func (p *Provider) Analyze(ctx context.Context, in esa.AnalyzeRequest) (esa.Repo
 	promptData, _ := json.Marshal(payload)
 	prompt := routingPrompt + "\n" + string(promptData)
 	instructions := routingInstructions
-	schema := object(map[string]any{"action": enum("reuse", "join", "analyze", "request_information", "return_to_support"), "record_path": str(), "record_hash": str(), "reason": str()})
+	schema := object(map[string]any{
+		"action":      enum("reuse", "join", "analyze", "request_information", "return_to_support"),
+		"record_path": str(),
+		"record_hash": str(),
+		"reason":      str(),
+	})
 	routing, alerts, err := p.routingStage(ctx, in, routingDir, "", prompt, instructions, schema)
 	result := esa.Report{Usage: routing.Usage, Alerts: alerts, Routing: &routing}
 	if err != nil {
@@ -260,10 +271,31 @@ func validRunID(id string) bool {
 	return strings.HasPrefix(id, "run_") && !strings.ContainsAny(id, "/\\.")
 }
 func (p *Provider) child() *Provider {
-	return &Provider{CLI: p.CLI, Model: p.Model, Effort: p.Effort, RunsDir: p.RunsDir, ToolsConfig: p.ToolsConfig, ToolCommand: p.ToolCommand, ProfilesRoot: p.ProfilesRoot, CheckRelease: p.CheckRelease, Resolve: p.Resolve, ToolCatalog: p.ToolCatalog, SetupEnvironment: p.SetupEnvironment, Packet: p.Packet, IssuesRoot: p.IssuesRoot, Slots: p.Slots}
+	return &Provider{
+		CLI:              p.CLI,
+		Model:            p.Model,
+		Effort:           p.Effort,
+		RunsDir:          p.RunsDir,
+		ToolsConfig:      p.ToolsConfig,
+		ToolCommand:      p.ToolCommand,
+		ProfilesRoot:     p.ProfilesRoot,
+		CheckRelease:     p.CheckRelease,
+		Resolve:          p.Resolve,
+		ToolCatalog:      p.ToolCatalog,
+		SetupEnvironment: p.SetupEnvironment,
+		Packet:           p.Packet,
+		IssuesRoot:       p.IssuesRoot,
+		Slots:            p.Slots,
+	}
 }
 func combineUsage(a, b esa.Usage) esa.Usage {
-	return esa.Usage{Calls: a.Calls + b.Calls, InputTokens: a.InputTokens + b.InputTokens, CachedInputTokens: a.CachedInputTokens + b.CachedInputTokens, OutputTokens: a.OutputTokens + b.OutputTokens, TokensReported: (a.Calls == 0 || a.TokensReported) && (b.Calls == 0 || b.TokensReported)}
+	return esa.Usage{
+		Calls:             a.Calls + b.Calls,
+		InputTokens:       a.InputTokens + b.InputTokens,
+		CachedInputTokens: a.CachedInputTokens + b.CachedInputTokens,
+		OutputTokens:      a.OutputTokens + b.OutputTokens,
+		TokensReported:    (a.Calls == 0 || a.TokensReported) && (b.Calls == 0 || b.TokensReported),
+	}
 }
 func routingAudit(file, selected, digest string) (searched, read bool) {
 	data, err := os.ReadFile(file)

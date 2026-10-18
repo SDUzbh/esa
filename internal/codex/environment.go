@@ -53,7 +53,16 @@ func managedEnvironment(script, evidence string, workspace bool) func(context.Co
 			return "", nil, fmt.Errorf("registered packet/source mismatch")
 		}
 		runtimeDir := filepath.Join(dir, "runtime")
-		config := replaytools.Config{Session: filepath.Base(dir), SourceDir: filepath.Join(bundle, "source"), Commit: packet.Commit, Files: manifest.Files, AuditPath: filepath.Join(dir, "tools.jsonl"), AvailableCapabilities: []string{"source", "runtime", "debugger", "temporary_tools"}, Runtime: &replaytools.RuntimeSetup{Script: scriptPath, Evidence: evidencePath, Directory: runtimeDir, Workspace: workspace}, Readiness: map[string]any{"status": "source_ready", "runtime_available": false}}
+		config := replaytools.Config{
+			Session:               filepath.Base(dir),
+			SourceDir:             filepath.Join(bundle, "source"),
+			Commit:                packet.Commit,
+			Files:                 manifest.Files,
+			AuditPath:             filepath.Join(dir, "tools.jsonl"),
+			AvailableCapabilities: []string{"source", "runtime", "debugger", "temporary_tools"},
+			Runtime:               &replaytools.RuntimeSetup{Script: scriptPath, Evidence: evidencePath, Directory: runtimeDir, Workspace: workspace},
+			Readiness:             map[string]any{"status": "source_ready", "runtime_available": false},
+		}
 		path := filepath.Join(dir, "tools-config.json")
 		data, err = json.Marshal(config)
 		if err == nil {

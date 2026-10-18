@@ -43,6 +43,11 @@ func checkTransition[S ~string](entity string, table transitions[S], existed boo
 		from = ""
 	}
 	if from != to && !table.allows(from, to) {
-		panic(fmt.Sprintf("esa: %s state changed %q -> %q, which states.go does not allow; add the transition there if this path is deliberate", entity, from, to))
+		panic(fmt.Sprintf(
+			"esa: %s state changed %q -> %q, which states.go does not allow; add the transition there if this path is deliberate",
+			entity,
+			from,
+			to,
+		))
 	}
 }

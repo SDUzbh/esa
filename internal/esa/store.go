@@ -235,7 +235,9 @@ func (s *Store) needsWork(now time.Time, provider bool, maxQueueWait time.Durati
 			}
 			continue
 		}
-		if task.State == InvestigationQueued || activeInvestigation(task) && !task.LeaseUntil.After(now) || provider && task.State == InvestigationAwaitingConfiguration && !task.InvocationStarted {
+		if task.State == InvestigationQueued ||
+			activeInvestigation(task) && !task.LeaseUntil.After(now) ||
+			provider && task.State == InvestigationAwaitingConfiguration && !task.InvocationStarted {
 			return true
 		}
 	}

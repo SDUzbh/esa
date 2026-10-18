@@ -73,12 +73,20 @@ func (s *Server) extendedCall(ctx context.Context, name string, args json.RawMes
 		if err = decodeArgs(args, &request); err != nil {
 			return nil, err
 		}
-		planner := capabilities.Planner{Root: s.Config.ProfilesRoot, AllowedProfiles: s.Config.AllowedProfiles, AvailableCapabilities: s.Config.AvailableCapabilities}
+		planner := capabilities.Planner{
+			Root:                  s.Config.ProfilesRoot,
+			AllowedProfiles:       s.Config.AllowedProfiles,
+			AvailableCapabilities: s.Config.AvailableCapabilities,
+		}
 		decision := planner.Resolve(request)
-		if decision.Status == "granted" && s.Config.ProfileHashes[request.Profile] != "" && decision.Profile.ManifestHash != s.Config.ProfileHashes[request.Profile] {
+		if decision.Status == "granted" &&
+			s.Config.ProfileHashes[request.Profile] != "" &&
+			decision.Profile.ManifestHash != s.Config.ProfileHashes[request.Profile] {
 			decision = capabilities.Decision{Status: "denied", Reason: "Profile manifest changed after the task catalog was frozen", Granted: []string{}}
 		}
-		if decision.Status == "granted" && s.Config.Container == "" && (has(decision.Granted, "runtime") || has(decision.Granted, "debugger") || has(decision.Granted, "temporary_tools")) {
+		if decision.Status == "granted" &&
+			s.Config.Container == "" &&
+			(has(decision.Granted, "runtime") || has(decision.Granted, "debugger") || has(decision.Granted, "temporary_tools")) {
 			if err := s.prepareRuntime(ctx, request.Profile); err != nil {
 				decision = capabilities.Decision{Status: "denied", Reason: "Registered environment failed: " + err.Error(), Granted: []string{}}
 			}
@@ -131,7 +139,15 @@ func (s *Server) extendedCall(ctx context.Context, name string, args json.RawMes
 			break
 		}
 		pkg, ok := s.Config.Tools[request.ID]
-		if !ok || pkg.Version == "" || pkg.Version != request.Version || strings.TrimSpace(request.Reason) == "" || request.Hypothesis == "" || request.Observation == "" || filepath.Base(request.ID) != request.ID || strings.ContainsAny(request.ID, "/\\.") || strings.ContainsAny(pkg.Version, "/\\") {
+		if !ok ||
+			pkg.Version == "" ||
+			pkg.Version != request.Version ||
+			strings.TrimSpace(request.Reason) == "" ||
+			request.Hypothesis == "" ||
+			request.Observation == "" ||
+			filepath.Base(request.ID) != request.ID ||
+			strings.ContainsAny(request.ID, "/\\.") ||
+			strings.ContainsAny(pkg.Version, "/\\") {
 			result = map[string]any{"status": "denied", "reason": "tool/version/purpose is outside the registered catalog"}
 			break
 		}
@@ -205,7 +221,9 @@ func (s *Server) installTool(ctx context.Context, id string, pkg ToolPackage) (m
 	}
 	dest := "/workspace/tools/" + id + "-" + capabilities.Digest([]byte(pkg.Version))[:12] + "/tool"
 	// An installed file is reusable only if its executable bytes still match.
-	if out, err := s.docker(call, "exec", s.Config.Container, "sha256sum", dest); err == nil && len(strings.Fields(string(out))) > 0 && strings.Fields(string(out))[0] == pkg.SHA256 {
+	if out, err := s.docker(call, "exec", s.Config.Container, "sha256sum", dest); err == nil &&
+		len(strings.Fields(string(out))) > 0 &&
+		strings.Fields(string(out))[0] == pkg.SHA256 {
 		return map[string]any{"status": "installed", "cache_hit": true, "path": dest, "version": pkg.Version, "sha256": pkg.SHA256}, nil
 	}
 	var reader io.ReadCloser
@@ -278,8 +296,44 @@ func extendedTools() []map[string]any {
 		return map[string]any{"type": "object", "properties": properties, "required": required, "additionalProperties": false}
 	}
 	return []map[string]any{
-		{"name": "source_search", "description": "Bounded literal search over hash-validated frozen source. Hits are not parser-verified symbols; inspect read_code for evidence.", "inputSchema": schema(map[string]any{"query": str, "limit": integer}, "query", "limit")},
-		{"name": "capability_request", "description": "Automatically select an approved Profile and request task capabilities for a hypothesis. Returns a typed grant or denial and the approved Skill; cannot expand host policy.", "inputSchema": schema(map[string]any{"profile": str, "version": str, "requested_capabilities": map[string]any{"type": "array", "items": str}, "hypothesis_id": str, "reason": str, "expected_observation": str}, "profile", "version", "requested_capabilities", "hypothesis_id", "reason", "expected_observation")},
-		{"name": "tool_install", "description": "Install one operator-catalogued pinned tool into the owned scratch tools directory. Requires a granted temporary_tools capability. Never replaces product inputs.", "inputSchema": schema(map[string]any{"tool_id": str, "version": str, "reason": str, "hypothesis_id": str, "expected_observation": str}, "tool_id", "version", "reason", "hypothesis_id", "expected_observation")},
+		{
+			"name":        "source_search",
+			"description": "Bounded literal search over hash-validated frozen source. Hits are not parser-verified symbols; inspect read_code for evidence.",
+			"inputSchema": schema(map[string]any{"query": str, "limit": integer}, "query", "limit"),
+		},
+		{
+			"name": "capability_request",
+			"description": "Automatically select an approved Profile and request task capabilities for a hypothesis. " +
+				"Returns a typed grant or denial and the approved Skill; cannot expand host policy.",
+			"inputSchema": schema(
+				map[string]any{
+					"profile":                str,
+					"version":                str,
+					"requested_capabilities": map[string]any{"type": "array", "items": str},
+					"hypothesis_id":          str,
+					"reason":                 str,
+					"expected_observation":   str,
+				},
+				"profile",
+				"version",
+				"requested_capabilities",
+				"hypothesis_id",
+				"reason",
+				"expected_observation",
+			),
+		},
+		{
+			"name": "tool_install",
+			"description": "Install one operator-catalogued pinned tool into the owned scratch tools directory. " +
+				"Requires a granted temporary_tools capability. Never replaces product inputs.",
+			"inputSchema": schema(
+				map[string]any{"tool_id": str, "version": str, "reason": str, "hypothesis_id": str, "expected_observation": str},
+				"tool_id",
+				"version",
+				"reason",
+				"hypothesis_id",
+				"expected_observation",
+			),
+		},
 	}
 }

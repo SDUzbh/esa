@@ -13,7 +13,9 @@ func canonicalSolution(s State, issueID, scope string) (SolutionRevision, bool) 
 		if !ok || sol.ScopeHash != scope || s.Groups.Get(task.GroupID).CurrentTaskID != task.ID {
 			continue
 		}
-		if selected.ID == "" || sol.AvailableAt.After(selected.AvailableAt) || sol.AvailableAt.Equal(selected.AvailableAt) && (sol.Revision > selected.Revision || sol.Revision == selected.Revision && sol.ID < selected.ID) {
+		if selected.ID == "" ||
+			sol.AvailableAt.After(selected.AvailableAt) ||
+			sol.AvailableAt.Equal(selected.AvailableAt) && (sol.Revision > selected.Revision || sol.Revision == selected.Revision && sol.ID < selected.ID) {
 			selected = sol
 		}
 	}
@@ -74,7 +76,10 @@ func (e *Engine) publishSolution(s *State, task Investigation, old, next Solutio
 	}
 	for _, id := range ids {
 		current := s.Investigations.Get(id)
-		if current.SolutionID == "" || current.IssueID != task.IssueID || s.Groups.Get(current.GroupID).ScopeHash != next.ScopeHash || s.Groups.Get(current.GroupID).CurrentTaskID != current.ID {
+		if current.SolutionID == "" ||
+			current.IssueID != task.IssueID ||
+			s.Groups.Get(current.GroupID).ScopeHash != next.ScopeHash ||
+			s.Groups.Get(current.GroupID).CurrentTaskID != current.ID {
 			continue
 		}
 		// Publishing a reviewed revision gives each linked investigation its

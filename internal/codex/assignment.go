@@ -20,8 +20,14 @@ func engineeringInput(in esa.AnalyzeRequest) esa.AnalyzeRequest {
 	if in.Contract != nil {
 		contract := *in.Contract
 		contract.StoredFields, contract.IssueID = nil, ""
-		contract.Objective = "Diagnose only the original ticket using frozen source and approved runtime tools. Return concrete code findings, repair recommendations, limitations, and an issue_request for Routing Agent."
-		contract.CompletionCriteria = []string{"Support code locations and recommendations with inspected evidence", "Submit a grouping request without selecting an Issue or searching its catalogue", "Preserve product source and report missing context honestly"}
+		contract.Objective = "Diagnose only the original ticket using frozen source and approved runtime tools. Return " +
+			"concrete code findings, repair recommendations, limitations, and an issue_request for " +
+			"Routing Agent."
+		contract.CompletionCriteria = []string{
+			"Support code locations and recommendations with inspected evidence",
+			"Submit a grouping request without selecting an Issue or searching its catalogue",
+			"Preserve product source and report missing context honestly",
+		}
 		in.Contract = &contract
 	}
 	return in
@@ -47,11 +53,24 @@ func (p *Provider) routingStage(ctx context.Context, in esa.AnalyzeRequest, dir,
 	if err := os.Mkdir(dir, 0700); err != nil {
 		return decision, nil, err
 	}
-	config := replaytools.Config{Session: in.RunID, AuditPath: filepath.Join(dir, "tools.jsonl"), IssuesOnly: true, IssuesRoot: p.IssuesRoot, IssueDirectory: in.IssueDirectory, IssueDirectoryHash: in.IssueDirectoryHash, IssueContext: contextPath}
+	config := replaytools.Config{
+		Session:            in.RunID,
+		AuditPath:          filepath.Join(dir, "tools.jsonl"),
+		IssuesOnly:         true,
+		IssuesRoot:         p.IssuesRoot,
+		IssueDirectory:     in.IssueDirectory,
+		IssueDirectoryHash: in.IssueDirectoryHash,
+		IssueContext:       contextPath,
+	}
 	encodedConfig, _ := json.Marshal(config)
 	encodedSchema, _ := json.Marshal(schema)
 	configPath := filepath.Join(dir, "tools-config.json")
-	for name, data := range map[string][]byte{"tools-config.json": encodedConfig, "schema.json": encodedSchema, "instructions.txt": []byte(instructions), "prompt.txt": []byte(prompt)} {
+	for name, data := range map[string][]byte{
+		"tools-config.json": encodedConfig,
+		"schema.json":       encodedSchema,
+		"instructions.txt":  []byte(instructions),
+		"prompt.txt":        []byte(prompt),
+	} {
 		if err := os.WriteFile(filepath.Join(dir, name), data, 0600); err != nil {
 			return decision, nil, err
 		}
@@ -81,15 +100,34 @@ func (p *Provider) assignIssue(ctx context.Context, in esa.AnalyzeRequest, runDi
 		return esa.RoutingResult{}, nil, nil, err
 	}
 	contextPath := filepath.Join(routingDir, "assignment-request.json")
-	handoff := replaytools.IssueContext{Ticket: &in.Ticket, DirectoryHash: in.IssueDirectoryHash, Reason: report.Routing.Reason, Queries: trail, Request: report.IssueRequest, Findings: report.Findings, Limitations: report.Limitations}
+	handoff := replaytools.IssueContext{
+		Ticket:        &in.Ticket,
+		DirectoryHash: in.IssueDirectoryHash,
+		Reason:        report.Routing.Reason,
+		Queries:       trail,
+		Request:       report.IssueRequest,
+		Findings:      report.Findings,
+		Limitations:   report.Limitations,
+	}
 	data, _ := json.Marshal(handoff)
 	if err = os.WriteFile(contextPath, data, 0400); err != nil {
 		return esa.RoutingResult{}, nil, nil, err
 	}
-	payload, _ := json.Marshal(map[string]any{"issue_request_path": contextPath, "issue_directory": filepath.Join(p.IssuesRoot, filepath.FromSlash(in.IssueDirectory)), "observation_cutoff": in.Contract.ObservationCutoff, "reviewed_issue_id": in.Contract.IssueID})
+	payload, _ := json.Marshal(map[string]any{
+		"issue_request_path": contextPath,
+		"issue_directory":    filepath.Join(p.IssuesRoot, filepath.FromSlash(in.IssueDirectory)),
+		"observation_cutoff": in.Contract.ObservationCutoff,
+		"reviewed_issue_id":  in.Contract.IssueID,
+	})
 	prompt := assignmentPrompt + "\n" + string(payload)
 	instructions := assignmentInstructions
-	schema := object(map[string]any{"action": enum("assign", "create", "request_information"), "record_path": str(), "record_hash": str(), "reason": str(), "title": str()})
+	schema := object(map[string]any{
+		"action":      enum("assign", "create", "request_information"),
+		"record_path": str(),
+		"record_hash": str(),
+		"reason":      str(),
+		"title":       str(),
+	})
 	dir := filepath.Join(runDir, "assignment")
 	decision, alerts, err := p.routingStage(ctx, in, dir, contextPath, prompt, instructions, schema)
 	if err != nil {

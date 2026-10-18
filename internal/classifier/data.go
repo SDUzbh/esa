@@ -68,7 +68,13 @@ func ReadExamples(r io.Reader) ([]Example, error) {
 }
 
 func (e Example) Validate() error {
-	if strings.TrimSpace(e.ID) == "" || strings.TrimSpace(e.ProjectID) == "" || len(e.Text) > 1<<20 || len(terms(e.Text)) == 0 || strings.TrimSpace(e.Reviewer) == "" || e.ReviewedAt.IsZero() || e.Labels == nil {
+	if strings.TrimSpace(e.ID) == "" ||
+		strings.TrimSpace(e.ProjectID) == "" ||
+		len(e.Text) > 1<<20 ||
+		len(terms(e.Text)) == 0 ||
+		strings.TrimSpace(e.Reviewer) == "" ||
+		e.ReviewedAt.IsZero() ||
+		e.Labels == nil {
 		return fmt.Errorf("id, project_id, tokenizable text, explicit labels, reviewer and reviewed_at are required")
 	}
 	seen := map[string]bool{}

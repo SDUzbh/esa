@@ -97,7 +97,15 @@ func run(ctx context.Context, args []string, out io.Writer) error {
 		if err = m.Save(*output); err != nil {
 			return err
 		}
-		return enc.Encode(map[string]any{"model": *output, "version": m.Version, "training_count": m.TrainingCount, "training_through": m.TrainingThrough, "labels": m.Labels(), "features": len(m.Vocabulary), "activation": "Manual test and promotion required"})
+		return enc.Encode(map[string]any{
+			"model":            *output,
+			"version":          m.Version,
+			"training_count":   m.TrainingCount,
+			"training_through": m.TrainingThrough,
+			"labels":           m.Labels(),
+			"features":         len(m.Vocabulary),
+			"activation":       "Manual test and promotion required",
+		})
 	case "test":
 		if *model == "" || *data == "" {
 			return fmt.Errorf("model and data are required")

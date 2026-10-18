@@ -504,7 +504,10 @@ func (api *API) run(w http.ResponseWriter, r *http.Request) {
 func (api *API) cases(w http.ResponseWriter, r *http.Request) {
 	rows := []Case{}
 	for _, c := range api.Engine.Store.Snapshot().Cases.All() {
-		if ticketAllowed(r, c.TicketID) && allowed(r, c.ProjectID) && queryMatches(c.ProjectID, r.URL.Query().Get("project_id")) && queryMatches(string(c.State), r.URL.Query().Get("state")) {
+		if ticketAllowed(r, c.TicketID) &&
+			allowed(r, c.ProjectID) &&
+			queryMatches(c.ProjectID, r.URL.Query().Get("project_id")) &&
+			queryMatches(string(c.State), r.URL.Query().Get("state")) {
 			rows = append(rows, c)
 		}
 	}

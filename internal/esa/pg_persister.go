@@ -86,7 +86,8 @@ func OpenPostgres(ctx context.Context, url string, opts PostgresOptions) (*Postg
 	}
 	// Keep the lock session alive while idle, and let the server notice a dead
 	// peer within about 25 s so a standby can take over.
-	if _, err = p.lock.Exec(ctx, "SET idle_session_timeout = 0; SET tcp_keepalives_idle = 10; SET tcp_keepalives_interval = 5; SET tcp_keepalives_count = 3"); err != nil {
+	if _, err = p.lock.Exec(ctx, "SET idle_session_timeout = 0; SET tcp_keepalives_idle = 10; SET tcp_keepalives_interval = "+
+		"5; SET tcp_keepalives_count = 3"); err != nil {
 		p.Close()
 		return nil, err
 	}
@@ -594,7 +595,13 @@ func (p *PostgresPersister) Apply(c Commit) (uint64, error) {
 	ctx, cancel := p.withTimeout()
 	defer cancel()
 	next := int64(c.Revision) + 1
-	frame, err := json.Marshal(pgFrame{IssueAccessSequence: c.State.IssueAccessSequence, ReplayClock: c.State.ReplayClock, LastClaimedProject: c.State.LastClaimedProject, SchemaVersion: c.State.SchemaVersion, Unknown: c.State.StoredFields})
+	frame, err := json.Marshal(pgFrame{
+		IssueAccessSequence: c.State.IssueAccessSequence,
+		ReplayClock:         c.State.ReplayClock,
+		LastClaimedProject:  c.State.LastClaimedProject,
+		SchemaVersion:       c.State.SchemaVersion,
+		Unknown:             c.State.StoredFields,
+	})
 	if err != nil {
 		return 0, err
 	}
@@ -609,19 +616,47 @@ func (p *PostgresPersister) Apply(c Commit) (uint64, error) {
 			name := p.table(table.name)
 			// Unchanged text is skipped, so an equal-content replacement never
 			// trips the immutability triggers.
-			batch.Queue("INSERT INTO "+name+" (id, payload, revision) VALUES ($1, $2::json, $3) ON CONFLICT (id) DO UPDATE SET payload = EXCLUDED.payload, revision = EXCLUDED.revision WHERE "+name+".payload::text IS DISTINCT FROM EXCLUDED.payload::text", id, string(payload), next)
+			batch.Queue(
+				"INSERT INTO "+name+" (id, payload, revision) VALUES ($1, $2::json, $3) ON CONFLICT (id) DO UPDATE SET payload "+
+					"= EXCLUDED.payload, revision = EXCLUDED.revision WHERE "+name+".payload::text IS DISTINCT FROM EXCLUDED.payload::text",
+				id,
+				string(payload),
+				next,
+			)
 			if table.name == "events" && len(c.State.Events.Get(id).Raw) > 0 {
-				batch.Queue("INSERT INTO "+p.table("event_raw")+" (event_id, raw) VALUES ($1, $2::json) ON CONFLICT (event_id) DO NOTHING", id, string(c.State.Events.Get(id).Raw))
+				batch.Queue(
+					"INSERT INTO "+p.table("event_raw")+" (event_id, raw) VALUES ($1, $2::json) ON CONFLICT (event_id) DO NOTHING",
+					id,
+					string(c.State.Events.Get(id).Raw),
+				)
 			}
 		}
 		if len(changes.Deleted) > 0 {
 			batch.Queue("DELETE FROM "+p.table(table.name)+" WHERE id = ANY($1)", changes.Deleted)
 		}
 	}
-	if err = queueHistory(p, batch, "case_history", "case_id", 0, c.State.CaseHistory, c.Changes.CaseHistory.Appended, func(c Case) string { return c.ID }); err != nil {
+	if err = queueHistory(
+		p,
+		batch,
+		"case_history",
+		"case_id",
+		0,
+		c.State.CaseHistory,
+		c.Changes.CaseHistory.Appended,
+		func(c Case) string { return c.ID },
+	); err != nil {
 		return 0, err
 	}
-	if err = queueHistory(p, batch, "membership_history", "link_id", p.membershipBase, c.State.MembershipHistory, c.Changes.MembershipHistory.Appended, func(l IssueTicketLink) string { return l.ID }); err != nil {
+	if err = queueHistory(
+		p,
+		batch,
+		"membership_history",
+		"link_id",
+		p.membershipBase,
+		c.State.MembershipHistory,
+		c.Changes.MembershipHistory.Appended,
+		func(l IssueTicketLink) string { return l.ID },
+	); err != nil {
 		return 0, err
 	}
 
@@ -630,7 +665,14 @@ func (p *PostgresPersister) Apply(c Commit) (uint64, error) {
 		return 0, err
 	}
 	defer tx.Rollback(ctx)
-	tag, err := tx.Exec(ctx, "UPDATE "+p.table("meta")+" SET revision = $1, frame = $2::json WHERE revision = $3 AND writer_term = $4", next, string(frame), int64(c.Revision), int64(p.term))
+	tag, err := tx.Exec(
+		ctx,
+		"UPDATE "+p.table("meta")+" SET revision = $1, frame = $2::json WHERE revision = $3 AND writer_term = $4",
+		next,
+		string(frame),
+		int64(c.Revision),
+		int64(p.term),
+	)
 	if err != nil {
 		return 0, err
 	}

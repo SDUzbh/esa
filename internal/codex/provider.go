@@ -105,12 +105,54 @@ func ValidateEvidence(r esa.Report, p Packet) error {
 // of the diagnostic session. Login remains in the user's existing CLI auth store.
 // CLIArgs constructs an isolated invocation without inherited tools, hooks or session reuse.
 func CLIArgs(model, effort, dir string) []string {
-	args := []string{"--no-daemon", "-a", "never", "exec", "--ignore-user-config", "--ignore-rules", "--ephemeral", "--skip-git-repo-check", "--sandbox", "read-only", "--color", "never", "--json", "-C", dir, "--output-schema", filepath.Join(dir, "schema.json"), "-o", filepath.Join(dir, "answer.json"), "-c", "web_search=\"disabled\"", "-c", "project_doc_max_bytes=0", "-c", "model_instructions_file=" + strconv.Quote(filepath.Join(dir, "instructions.txt"))}
+	args := []string{
+		"--no-daemon",
+		"-a",
+		"never",
+		"exec",
+		"--ignore-user-config",
+		"--ignore-rules",
+		"--ephemeral",
+		"--skip-git-repo-check",
+		"--sandbox",
+		"read-only",
+		"--color",
+		"never",
+		"--json",
+		"-C",
+		dir,
+		"--output-schema",
+		filepath.Join(dir, "schema.json"),
+		"-o",
+		filepath.Join(dir, "answer.json"),
+		"-c",
+		"web_search=\"disabled\"",
+		"-c",
+		"project_doc_max_bytes=0",
+		"-c",
+		"model_instructions_file=" + strconv.Quote(filepath.Join(dir, "instructions.txt")),
+	}
 	// unified_exec (resumable command execution) is not listed: the CLI keeps it
 	// on, since only managed requirements can disable it. Command execution is
 	// kept out by shell_tool=false, the read-only sandbox, and the event check
 	// in invoke that cancels a run on any command item.
-	for _, feature := range []string{"shell_tool", "apps", "plugins", "hooks", "browser_use", "browser_use_external", "computer_use", "multi_agent", "code_mode", "code_mode_host", "view_image", "workspace_dependencies", "skill_search", "goals", "sleep_tool"} {
+	for _, feature := range []string{
+		"shell_tool",
+		"apps",
+		"plugins",
+		"hooks",
+		"browser_use",
+		"browser_use_external",
+		"computer_use",
+		"multi_agent",
+		"code_mode",
+		"code_mode_host",
+		"view_image",
+		"workspace_dependencies",
+		"skill_search",
+		"goals",
+		"sleep_tool",
+	} {
 		args = append(args, "-c", "features."+feature+"=false")
 	}
 	args = append(args, "-c", "features.skip_host_skill_discovery=true")
@@ -289,7 +331,11 @@ func (p *Provider) analyzeEngineering(ctx context.Context, in esa.AnalyzeRequest
 			if len(tools.AvailableCapabilities) == 0 {
 				tools.AvailableCapabilities = []string{"source"}
 			}
-			planner := capabilities.Planner{Root: tools.ProfilesRoot, AllowedProfiles: tools.AllowedProfiles, AvailableCapabilities: tools.AvailableCapabilities}
+			planner := capabilities.Planner{
+				Root:                  tools.ProfilesRoot,
+				AllowedProfiles:       tools.AllowedProfiles,
+				AvailableCapabilities: tools.AvailableCapabilities,
+			}
 			catalog, err = planner.Catalog()
 			if err != nil {
 				return esa.Report{}, err
@@ -382,7 +428,8 @@ func (p *Provider) analyzeEngineering(ctx context.Context, in esa.AnalyzeRequest
 	report.Usage = usage
 	esa.AddAlerts(&report, alerts...)
 	report.Limitations = append(report.Limitations, p.Packet.Limitations...)
-	report.Limitations = append(report.Limitations, "Token thresholds generate advisory warnings and do not terminate analysis. CLI usage may arrive only when the turn completes.")
+	report.Limitations = append(report.Limitations, "Token thresholds generate advisory warnings and do not terminate analysis. CLI usage may "+
+		"arrive only when the turn completes.")
 	b, _ = json.MarshalIndent(report, "", "  ")
 	if err = os.WriteFile(filepath.Join(dir, "report.json"), b, 0600); err != nil {
 		return report, err

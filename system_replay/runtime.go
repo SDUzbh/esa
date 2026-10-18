@@ -20,6 +20,7 @@ type Runtime struct {
 	mu      sync.Mutex
 	cmd     *exec.Cmd
 	stdin   io.WriteCloser
+	stdout  *os.File
 	scanner *bufio.Scanner
 	done    chan error
 	log     *os.File
@@ -34,20 +35,26 @@ func runtimeStart(c Command, vars map[string]any, base, root string) (*Runtime, 
 	if e != nil {
 		return nil, e
 	}
-	out, e := cmd.StdoutPipe()
+	// Our own pipe, not StdoutPipe: Wait closes a pipe it created as soon as
+	// the driver exits, which can discard a final reply not yet read.
+	out, w, e := os.Pipe()
 	if e != nil {
 		return nil, e
 	}
+	cmd.Stdout = w
 	f, e := os.OpenFile(filepath.Join(root, "runtime-driver.log"), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
 	if e != nil {
+		_, _ = out.Close(), w.Close()
 		return nil, e
 	}
 	cmd.Stderr = f
-	if e = cmd.Start(); e != nil {
-		_ = f.Close()
+	e = cmd.Start()
+	_ = w.Close()
+	if e != nil {
+		_, _ = out.Close(), f.Close()
 		return nil, e
 	}
-	r := &Runtime{cmd: cmd, stdin: in, scanner: bufio.NewScanner(out), done: make(chan error, 1), log: f}
+	r := &Runtime{cmd: cmd, stdin: in, stdout: out, scanner: bufio.NewScanner(out), done: make(chan error, 1), log: f}
 	r.scanner.Buffer(make([]byte, 4096), 16<<20)
 	go func() { r.done <- cmd.Wait() }()
 	return r, nil
@@ -106,6 +113,7 @@ func (r *Runtime) close() error {
 		return nil
 	}
 	defer r.log.Close()
+	defer r.stdout.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 	defer cancel()
 	_, e := r.call(ctx, map[string]string{"action": "close"})

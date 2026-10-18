@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestEventRefreshesPublicInputWithoutExpandingTicketText(t *testing.T) {
@@ -95,5 +96,28 @@ done`
 	record, err := observeRuntime(context.Background(), runtime, Manifest{Repo: g.Repo}, Plan{Job: Job{Scenario: scenario}}, base, root)
 	if err == nil || !strings.Contains(err.Error(), "reset") || !passed(record.Controls) || !passed(record.Bug) {
 		t.Fatal("failed reset was ignored", record, err)
+	}
+}
+
+func TestRuntimeReplyOutlivesTheDriver(t *testing.T) {
+	root := t.TempDir()
+	// The driver answers a request and exits before the reply is read, as on
+	// close; Wait must not discard the reply.
+	driver := `read -r request; printf '%s\n' '{"ok":true,"result":{"cleanup":"completed"}}'`
+	runtime, err := runtimeStart(Command{Args: []string{"sh", "-c", driver}}, nil, root, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer runtime.log.Close()
+	if _, err := runtime.stdin.Write([]byte(`{"action":"close"}` + "\n")); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-time.After(5 * time.Second):
+		t.Fatal("driver did not exit")
+	case <-runtime.done:
+	}
+	if !runtime.scanner.Scan() || !strings.Contains(runtime.scanner.Text(), "completed") {
+		t.Fatalf("reply lost: %v", runtime.scanner.Err())
 	}
 }

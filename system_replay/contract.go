@@ -134,7 +134,9 @@ type Observation struct {
 	Raw      any            `json:"raw"`
 }
 type EventResult struct {
-	At          string      `json:"at"`
+	At string `json:"at"`
+	// ElapsedMS is the wall time from submission to the terminal observation.
+	ElapsedMS   int64       `json:"elapsed_ms,omitempty"`
 	Receipt     HTTPRecord  `json:"receipt"`
 	Observation Observation `json:"observation"`
 	Checks      []Check     `json:"checks"`

@@ -24,7 +24,7 @@ python3 scripts/replay_pipeline.py --pipeline --manifest system_replay/examples/
 python3 scripts/replay_pipeline.py --pipeline --manifest system_replay/examples/esa-api-kafka.json --output reports/new-kafka-run
 ```
 
-The compatibility script only builds this independent module and execs its binary. The former `--agent`, `--predictions`, `--issue-history`, positional ticket shortcuts and direct-provider evaluation flow have been removed. A public target manifest is required. `--plan` validates input and source selection without executing the target, runtime or model. `--track-only` follows local Git references without target calls; it is explicitly not a system test.
+The compatibility script only builds this independent module and execs its binary. The former `--agent`, `--predictions`, `--issue-history`, positional ticket shortcuts and direct-provider evaluation flow have been removed. A public target manifest is required. `--plan` validates input and source selection without executing the target, runtime or model. `--track-only` follows local Git references without target calls; it is explicitly not a system test. `--score` scores a finished run against evaluation labels: routing, fix-file and fix-line hits by exact ticket reference, and cost ([Agent evaluation](../docs/TICKET_BACKTEST.md#agent-evaluation)).
 
 ## Replay stages
 

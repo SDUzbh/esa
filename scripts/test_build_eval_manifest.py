@@ -69,6 +69,7 @@ class BuildTests(unittest.TestCase):
         out = Path(self.dir.name, 'out-%d' % len(list(Path(self.dir.name).glob('out-*'))))
         subprocess.run(['python3', '-B', str(Path(build.__file__)), '--raw', str(self.raw), '--repo', str(self.repo), '--versions', '1',
                         '--bugs', '5', '--support', '2', '--output', str(out), *extra], check=True, capture_output=True)
+        self.releases = json.loads((out / 'releases.json').read_text())['releases']
         return json.loads((out / 'manifest.json').read_text()), json.loads((out / 'labels.json').read_text())
 
     def test_selection_labels_and_modes(self):
@@ -83,6 +84,7 @@ class BuildTests(unittest.TestCase):
         self.assertEqual((support['ref'], support['ticket']['versions']), ('refs/tags/1.0', ['1.0']))
         self.assertIn('esa_fixture_target.py', ' '.join(manifest['target']['start']['args']))
         self.assertEqual(manifest['target']['extract']['route'][0], '/ticket/latest_run/report/routing/action')
+        self.assertEqual([(r['version'], r['ref'], r['available_at']) for r in self.releases], [('1.0', 'refs/tags/1.0', '2020-01-01T00:00:00Z')])
         self.assertEqual(self.run_build(), (manifest, labels))
         provider, _ = self.run_build('--mode', 'provider', '--issues-directory', self.dir.name)
         env = provider['target']['start']['env']

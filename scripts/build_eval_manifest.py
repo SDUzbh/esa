@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Build a seeded Agent evaluation set from the preserved Kafka Jira export.
 
-Writes a system_replay manifest and its labels (see docs/TICKET_BACKTEST.md):
+Writes a system_replay manifest, its labels and the provider release registry
+for the releases it uses (see docs/TICKET_BACKTEST.md):
 
 * fixed bugs, stratified by primary component, whose single affected version
   is a release tag older than the ticket, with only regular files and whose fix is a first-parent
@@ -315,12 +316,18 @@ def main():
                                 'invalidated', 'draft', 'trusted', 'rejected', 'duplicate', 'archived'],
             'timeout_seconds': args.timeout or (30 if args.mode == 'fixture' else 1800), 'poll_milliseconds': 100 if args.mode == 'fixture' else 2000},
         'jobs': jobs, 'repo': str(repo), 'mainline': args.mainline, 'versions': args.versions}
+    # Engineering is admitted only for a registered release, so the provider
+    # must read this registry (esa-codex -registry) in provider mode.
+    used = sorted({j.get('version') or version_of[j['id']] for j in jobs}, key=lambda v: [int(x) for x in v.split('.')])
+    releases = [{'project_id': '1', 'version': v, 'ref': 'refs/tags/' + v, 'repository': str(repo), 'scope': 'full',
+                 'available_at': history.tags[v][1].astimezone(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')} for v in used]
+    (out / 'releases.json').write_text(json.dumps({'releases': releases}, indent=2) + '\n')
     by_stratum = {k: len(v) for k, v in sorted(strata.items())}
     (out / 'manifest.json').write_text(json.dumps(manifest, indent=2) + '\n')
     (out / 'labels.json').write_text(json.dumps({'seed': args.seed, 'jobs': labels, 'pool': by_stratum, 'meta': {
         'mode': args.mode, 'bugs': len(sample), 'duplicates': len(duplicates), 'support': min(args.support, len(SUPPORT)),
         'eligible_bugs': pool, 'versions': args.versions, 'mainline': args.mainline}}, indent=2) + '\n')
-    print(json.dumps({'manifest': str(out / 'manifest.json'), 'labels': str(out / 'labels.json'), 'eligible_bugs': pool,
+    print(json.dumps({'manifest': str(out / 'manifest.json'), 'labels': str(out / 'labels.json'), 'releases': str(out / 'releases.json'), 'eligible_bugs': pool,
                       'bugs': len(sample), 'duplicates': len(duplicates), 'support': min(args.support, len(SUPPORT))}))
 
 

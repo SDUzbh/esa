@@ -42,6 +42,7 @@ Local HTTP tests need permission to bind temporary ports. The module uses the Go
 | `--plan` | Validate inputs/source selection without starting target, runtime or model |
 | `--track-only` | Track local Git without target or model calls; explicitly not a system replay test |
 | `--attach` | Use an existing healthy target; never clear its state or stop it |
+| `--score PATH --labels PATH --repo PATH --output PATH` | Score a finished run's `pipeline.json` against evaluation labels, using the product checkout; writes `report.json` and `report.md` into the new output directory. No target, runtime or model calls ([Agent evaluation](TICKET_BACKTEST.md#agent-evaluation)) |
 | `--build-tools` | Python wrapper only: rebuild the standalone tester before execution |
 
 The former positional-ticket, `--agent`, `--predictions` and `--issue-history` shortcuts are removed. `scripts/replay_trial.py prepare` and registered replay MCP tools remain application-provider setup utilities. Their retained reports are historical evidence, not input to the external tester's prediction evaluation.

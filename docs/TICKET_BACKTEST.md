@@ -38,7 +38,31 @@ Numeric version ordering is the default in `--pipeline`, but historical ordering
 
 A candidate is `behavior_verified` only when scenario hashes match, all three controls pass, baseline and parent bug assertions pass, and repaired healthy assertions pass while repaired bug assertions fail. An environment failure is not a product defect. A parent that no longer reproduces the bug does not itself prove that the initial Agent diagnosis was wrong.
 
-Semantic evaluation is optional and cannot override the behavior gate. It requires full finding coverage, explanations and exact citations from supplied documents. Different repair wording or code from the upstream PR can still be semantically valid. No configured evaluator means semantics remain `unassessed`; there is no built-in model or archive-wide accuracy score.
+Semantic evaluation is optional and cannot override the behavior gate. It requires full finding coverage, explanations and exact citations from supplied documents. Different repair wording or code from the upstream PR can still be semantically valid. No configured evaluator means semantics remain `unassessed`; the tester has no built-in model. [Agent evaluation](#agent-evaluation) scores location, routing and cost, not semantic correctness.
+
+## Agent evaluation
+
+`scripts/build_eval_manifest.py` draws a seeded evaluation set from the preserved Kafka export, and `system-replay -score` scores a finished run of it. Building, the fixture run and scoring make no model calls.
+
+| Set | Selection | Expected route |
+| --- | --- | --- |
+| Fixed bugs (`--bugs`, default 60) | `Bug`/`Fixed`, complete history, one affected version never edited in Jira, whose release tag predates the ticket and holds only regular files; a first-parent trunk commit names the ticket within the next `--versions` (default 3) releases and changes an existing non-test file. Stratified by primary component (components under 2% of the pool share `other`), proportional allocation | `analyze` |
+| Duplicates (`--duplicates`, default 10) | Resolved `Duplicate`, created after an eligible original and linked to it, with a usable version of their own. Chosen first; their originals join the bug sample within their stratum's quota and are labelled `selected: duplicate_original` | `reuse` |
+| Support requests (`--support`, default 10) | Synthetic questions and administrative requests, each an hour after a sampled bug and on its release | `return_to_support` |
+
+The builder writes `manifest.json`, `labels.json` (seed, labels, pool size per stratum) and `releases.json` (the provider registry for every release in the set) into a new directory. The same seed and inputs produce identical files. Of 5,044 fixed Kafka bugs, 675 are eligible; most of the rest have no single affected version.
+
+Ground truth is only the trace candidates found by an exact ticket reference, never those found because they touch a file the Agent named, so the truth does not depend on the prediction. Test files and newly added files are not part of a fix. Each finding is mapped from the commit the Agent read to the fix's parent, as the runner does. Per ticket the scorer reports whether any finding names a fix file (file hit) and overlaps its changed lines (line hit), the share of findings naming a fix file (precision), and the share of fix files named (recall). A ticket without findings is a miss. The report gives routing accuracy overall and per expected route, the routing confusion matrix, file/line hit rates with 95% Wilson intervals, mean precision/recall with seeded 95% bootstrap intervals, and token, call and wall-time totals, means, medians and 90th percentiles. Observed routes come from the Routing Agent's `routing.action`; a ticket without one is `none`.
+
+```sh
+python3 scripts/build_eval_manifest.py --output reports/eval-set           # fixture mode
+ESA_DATABASE_URL=... bin/system-replay -pipeline -order time -manifest reports/eval-set/manifest.json -output reports/eval-run
+bin/system-replay -score reports/eval-run/pipeline.json -labels reports/eval-set/labels.json -repo kafka -output reports/eval-score
+```
+
+Duplicates must replay after their originals, so `-order time` is required. The run keeps a read-only source export per release in `snapshots/`, about 1.3 GB for the default set. The fixture provider always answers `analyze` with an invented file, so a fixture run checks the plumbing, not the Agent: it scores 0% localization and misroutes every duplicate and support request.
+
+To evaluate the real Agent, build the set with `--mode provider --issues-directory DIR`. Start `esa-codex` with `-registry` set to the set's `releases.json` and `-issues-directory DIR`, and export `ESA_ANALYZER_URL` and `ESA_ANALYZER_TOKEN` (the provider's) with `ESA_DATABASE_URL`; the managed ESA inherits them. **This makes real model calls for every ticket.** Run a small pilot (`--bugs 10 --duplicates 2 --support 2`) to measure cost per ticket before a full set. Per-ticket wait defaults to 1,800 s in this mode.
 
 ## Current examples and coverage
 
@@ -57,4 +81,4 @@ The backend HTTP adapter does not cover Redmine browser actions or its outbox. U
 
 Current ESA intake requires explicit `forwarded_by` and `forwarded_at`. External fixtures declare the manual action; the tester does not infer it. ESA has no category-based intake gate. Its optional supervised label classifier is disabled by default and does not control routing. See [manual forwarding](MANUAL_FORWARDING.md).
 
-The shared-investigation fixture verifies orchestration with synthetic provider responses; it does not test model judgment. No default example proves Agent case matching or localization accuracy.
+The shared-investigation fixture verifies orchestration with synthetic provider responses; it does not test model judgment. No default example proves Agent case matching or localization accuracy; that needs a provider-mode [Agent evaluation](#agent-evaluation) run.

@@ -333,8 +333,11 @@ def main():
                         'run_id': ['/ticket/latest_run/id'], 'issue_id': ['/ticket/engineering_issue/id', '/ticket/latest_run/report/issue/existing_id'],
                         'findings': ['/ticket/latest_run/report/findings'], 'usage': ['/ticket/latest_run/report/usage']},
             'capture': {'run_id': '/ticket/latest_run/id'},
-            'terminal_states': ['completed', 'awaiting_configuration', 'awaiting_information', 'awaiting_review', 'failed', 'restricted',
-                                'invalidated', 'draft', 'trusted', 'rejected', 'duplicate', 'archived'],
+            # Every run state Routing or Engineering can end in, or a support
+            # return would wait out the whole timeout.
+            'terminal_states': ['completed', 'awaiting_configuration', 'awaiting_forward', 'awaiting_information', 'awaiting_review',
+                                'returned_to_support', 'joined', 'superseded', 'issue_removed', 'membership_reviewed', 'failed',
+                                'restricted', 'invalidated', 'draft', 'trusted', 'rejected', 'duplicate', 'archived'],
             'timeout_seconds': args.timeout or (30 if args.mode == 'fixture' else 1800), 'poll_milliseconds': 100 if args.mode == 'fixture' else 2000},
         'jobs': jobs, 'repo': str(repo), 'mainline': args.mainline, 'versions': args.versions}
     # Engineering is admitted only for a registered release, so the provider

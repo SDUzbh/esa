@@ -85,6 +85,7 @@ class BuildTests(unittest.TestCase):
         self.assertEqual((support['ref'], support['ticket']['versions']), ('refs/tags/1.0', ['1.0']))
         self.assertIn('esa_fixture_target.py', ' '.join(manifest['target']['start']['args']))
         self.assertEqual(manifest['target']['extract']['route'][0], '/ticket/latest_run/report/routing/action')
+        self.assertTrue({'returned_to_support', 'joined', 'awaiting_information'} <= set(manifest['target']['terminal_states']))
         self.assertEqual([(r['version'], r['ref'], r['available_at']) for r in self.releases], [('1.0', 'refs/tags/1.0', '2020-01-01T00:00:00Z')])
         self.assertEqual(self.run_build(), (manifest, labels))
         provider, _ = self.run_build('--mode', 'provider', '--issues-directory', self.dir.name)

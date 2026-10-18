@@ -51,6 +51,9 @@ class BuildTests(unittest.TestCase):
         commit('KAFKA-6: too late', '2020-04-01T00:00:00Z', {'src/A.java': 'c\n'})
         git(self.repo, 'tag', '1.2')
         git(self.repo, 'update-ref', 'refs/remotes/origin/trunk', 'HEAD')
+        os.symlink('A.java', self.repo / 'src/link')
+        commit('symlink', '2020-04-02T00:00:00Z', {})
+        git(self.repo, 'tag', '1.3')
         ticket(self.raw, 'KAFKA-1', '2020-01-15T00:00:00.000+0000')
         ticket(self.raw, 'KAFKA-2', '2020-01-15T00:00:00.000+0000')
         ticket(self.raw, 'KAFKA-3', '2020-01-15T00:00:00.000+0000', edited=True)
@@ -88,6 +91,8 @@ class BuildTests(unittest.TestCase):
         self.assertEqual(provider['target']['timeout_seconds'], 1800)
 
     def test_helpers(self):
+        history = build.History(self.repo, 'origin/trunk', 'KAFKA')
+        self.assertEqual((history.exportable('1.0'), history.exportable('1.3')), (True, False))
         self.assertEqual(build.allocate({'a': [1] * 6, 'b': [1] * 3, 'c': [1]}, 5), {'a': 3, 'b': 2, 'c': 0})
         self.assertEqual(sum(build.allocate({'a': [1] * 2, 'b': [1]}, 10).values()), 3)
         for name, expected in [('clients/src/test/java/FooTest.java', True), ('tests/kafkatest/x.py', True), ('core/src/main/A.scala', False)]:

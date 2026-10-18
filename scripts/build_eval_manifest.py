@@ -4,7 +4,7 @@
 Writes a system_replay manifest and its labels (see docs/TICKET_BACKTEST.md):
 
 * fixed bugs, stratified by primary component, whose single affected version
-  is a release tag older than the ticket and whose fix is a first-parent
+  is a release tag older than the ticket, with only regular files and whose fix is a first-parent
   trunk commit that names the ticket and changes an existing non-test file
   inside the trace window (label analyze);
 * later duplicates of eligible bugs (label reuse), chosen first; their
@@ -82,7 +82,7 @@ class History:
         for i in range(len(chain) - 1, -1, -1):
             low = chain[i][1] if low is None or chain[i][1] < low else low
             self.suffix[i] = low
-        self.tags = {}
+        self.tags, self.clean = {}, {}
         refs = git(repo, 'for-each-ref', '--format=%(refname:strip=2)%09%(objectname)%09%(*objectname)', 'refs/tags')
         ids = {}
         for line in refs.splitlines():
@@ -99,6 +99,13 @@ class History:
                 authored, committed = dates[commit]
                 landing = self.index.get(commit, self.last_at(committed))
                 self.tags[name] = (commit, max(authored, committed), committed, landing)
+
+    def exportable(self, tag):
+        """The replay snapshot accepts only regular files: no symlinks or submodules."""
+        if tag not in self.clean:
+            tree = git(self.repo, 'ls-tree', '-r', '--format=%(objectmode)', self.tags[tag][0])
+            self.clean[tag] = all(mode in ('100644', '100755') for mode in tree.split())
+        return self.clean[tag]
 
     def last_at(self, moment):
         lo, hi = 0, len(self.suffix)
@@ -168,7 +175,7 @@ def usable_version(ticket, history):
     if not versions or len(versions) != 1 or not RELEASE.match(versions[0]) or versions[0] not in history.tags:
         return None
     _, latest, _, _ = history.tags[versions[0]]
-    return versions[0] if latest <= ticket['created'] else None
+    return versions[0] if latest <= ticket['created'] and history.exportable(versions[0]) else None
 
 
 def allocate(strata, total):

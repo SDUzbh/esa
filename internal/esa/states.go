@@ -93,3 +93,79 @@ const (
 	ApplicationRejected  ApplicationState = "rejected"
 	ApplicationWithdrawn ApplicationState = "withdrawn"
 )
+
+// Allowed state transitions, per entity: from each state (the empty key is a
+// new entity) to the states an Update may move it to. The test guard fails
+// any committed change not listed here, so a new path through a state
+// machine is a deliberate edit to this table. Production does not check it.
+
+var investigationTransitions = transitions[InvestigationState]{
+	"":                                 {InvestigationInvestigating, InvestigationQueued},
+	InvestigationAgentProposed:         {InvestigationTrusted, InvestigationWithdrawn},
+	InvestigationApplied:               {InvestigationWithdrawn},
+	InvestigationAwaitingConfiguration: {InvestigationRunning, InvestigationSuperseded},
+	InvestigationInvestigating: {
+		InvestigationAgentProposed, InvestigationFailed, InvestigationSuperseded,
+	},
+	InvestigationQueued: {
+		InvestigationAwaitingConfiguration, InvestigationAwaitingForward, InvestigationInvestigating,
+		InvestigationRunning, InvestigationSuperseded,
+	},
+	InvestigationReuseProposed: {InvestigationApplied, InvestigationWithdrawn},
+	InvestigationRunning: {
+		InvestigationAgentProposed, InvestigationAwaitingInformation, InvestigationFailed,
+		InvestigationInvestigating, InvestigationJoined, InvestigationReturnedToSupport,
+		InvestigationReuseProposed, InvestigationSuperseded,
+	},
+	InvestigationTrusted: {InvestigationRejected, InvestigationWithdrawn},
+}
+
+var runTransitions = transitions[RunState]{
+	"":                       {RunQueued},
+	RunAwaitingConfiguration: {RunRunning, RunSuperseded},
+	RunAwaitingReview:        {RunCompleted, RunInvalidated, RunRestricted},
+	RunCompleted:             {RunInvalidated, RunRejected},
+	RunInvestigating:         {RunAwaitingReview, RunFailed, RunRestricted},
+	RunQueued: {
+		RunAwaitingConfiguration, RunAwaitingForward, RunInvestigating, RunRestricted, RunRunning,
+		RunSuperseded,
+	},
+	RunRestricted: {RunAwaitingReview},
+	RunRunning: {
+		RunAwaitingInformation, RunAwaitingReview, RunFailed, RunInvestigating, RunJoined,
+		RunReturnedToSupport, RunSuperseded,
+	},
+}
+
+var caseTransitions = transitions[CaseState]{
+	"":          {CaseArchived, CaseDraft, CaseDuplicate, CaseTrusted},
+	CaseDraft:   {CaseInvalidated, CaseTrusted},
+	CaseTrusted: {CaseInvalidated, CaseRejected, CaseWithdrawn},
+}
+
+var solutionTransitions = transitions[SolutionState]{
+	"": {SolutionProposed, SolutionRejected, SolutionTrusted, SolutionWithdrawn},
+}
+
+var membershipTransitions = transitions[MembershipState]{
+	"":                  {MembershipTentative},
+	MembershipTentative: {MembershipDetached},
+}
+
+var applicationTransitions = transitions[ApplicationState]{
+	"":                  {ApplicationProposed},
+	ApplicationAccepted: {ApplicationWithdrawn},
+	ApplicationProposed: {ApplicationAccepted, ApplicationWithdrawn},
+}
+
+// transitions maps a state to the states it may change to.
+type transitions[S ~string] map[S][]S
+
+func (t transitions[S]) allows(from, to S) bool {
+	for _, allowed := range t[from] {
+		if allowed == to {
+			return true
+		}
+	}
+	return false
+}

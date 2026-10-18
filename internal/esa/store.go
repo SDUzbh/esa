@@ -134,6 +134,7 @@ func (s *Store) updateLocked(fn func(*State) error) error {
 	// every change from JSON encodings and panics if the diff missed one.
 	changes := diffState(&s.state, &next)
 	verifyChanges(&s.state, &next, changes)
+	verifyTransitions(&s.state, &next, changes)
 	if changes.Empty() {
 		return nil
 	}

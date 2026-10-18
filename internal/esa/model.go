@@ -169,7 +169,7 @@ type Case struct {
 	Versions     []string          `json:"versions"`
 	Environment  map[string]string `json:"environment"`
 	Resolution   Resolution        `json:"resolution"`
-	State        string            `json:"state"`
+	State        CaseState         `json:"state"`
 	ReviewedBy   string            `json:"reviewed_by,omitempty"`
 	ReviewNote   string            `json:"review_note,omitempty"`
 	Version      int               `json:"version"`
@@ -269,7 +269,7 @@ type Run struct {
 	RuleVersion        string     `json:"rule_version"`
 	Input              Ticket     `json:"input"`
 	Route              string     `json:"route"`
-	State              string     `json:"state"`
+	State              RunState   `json:"state"`
 	MissingInformation []string   `json:"missing_information"`
 	Report             Report     `json:"report"`
 	Error              string     `json:"error,omitempty"`

@@ -223,9 +223,9 @@ func (s *Store) needsWork(now time.Time, provider bool, maxQueueWait time.Durati
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	free := engineeringActive(s.state) < EngineeringConcurrency
-	states := []string{"queued", "running", "investigating"}
+	states := []InvestigationState{InvestigationQueued, InvestigationRunning, InvestigationInvestigating}
 	if provider {
-		states = append(states, "awaiting_configuration")
+		states = append(states, InvestigationAwaitingConfiguration)
 	}
 	for _, task := range s.state.investigationsIn(states...) {
 		if parked(task) {
@@ -234,7 +234,7 @@ func (s *Store) needsWork(now time.Time, provider bool, maxQueueWait time.Durati
 			}
 			continue
 		}
-		if task.State == "queued" || activeInvestigation(task) && !task.LeaseUntil.After(now) || provider && task.State == "awaiting_configuration" && !task.InvocationStarted {
+		if task.State == InvestigationQueued || activeInvestigation(task) && !task.LeaseUntil.After(now) || provider && task.State == InvestigationAwaitingConfiguration && !task.InvocationStarted {
 			return true
 		}
 	}

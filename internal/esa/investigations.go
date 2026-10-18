@@ -37,12 +37,12 @@ func investigationSignature(t Ticket) string {
 func (e *Engine) detachChangedMemberships(s *State, t Ticket) {
 	for _, id := range s.membershipsOfTicket(t.ID) {
 		link := s.Memberships.Get(id)
-		if link.State != "tentative" {
+		if link.State != MembershipTentative {
 			continue
 		}
 		old := s.Snapshots.Get(link.SnapshotID).Ticket
 		if t.Private || t.Closed || investigationSignature(old) != investigationSignature(t) {
-			link.State = "detached"
+			link.State = MembershipDetached
 			link.Version++
 			s.Memberships.Put(id, link)
 			s.MembershipHistory = append(s.MembershipHistory, link)
@@ -51,13 +51,13 @@ func (e *Engine) detachChangedMemberships(s *State, t Ticket) {
 	if t.Private {
 		for id, task := range s.Investigations.All() {
 			run := s.Runs.Get(task.RunID)
-			if (run.TicketID == t.ID || taskSourceTicket(*s, task) == t.ID) && task.State != "withdrawn" {
-				task.State = "withdrawn"
+			if (run.TicketID == t.ID || taskSourceTicket(*s, task) == t.ID) && task.State != InvestigationWithdrawn {
+				task.State = InvestigationWithdrawn
 				task.UpdatedAt = e.Now()
 				s.Investigations.Put(id, task)
-				if solution, ok := s.Solutions.Lookup(task.SolutionID); ok && solution.State != "withdrawn" {
+				if solution, ok := s.Solutions.Lookup(task.SolutionID); ok && solution.State != SolutionWithdrawn {
 					next := solution
-					next.State = "withdrawn"
+					next.State = SolutionWithdrawn
 					next.Note = "The source ticket became private"
 					e.publishSolution(s, task, solution, next)
 				}
@@ -69,7 +69,7 @@ func (e *Engine) detachChangedMemberships(s *State, t Ticket) {
 func taskHasActiveMembers(s State, task Investigation) bool {
 	for _, id := range s.membershipsOfInvestigation(task.ID) {
 		link := s.Memberships.Get(id)
-		if link.State != "tentative" || link.IssueID != task.IssueID {
+		if link.State != MembershipTentative || link.IssueID != task.IssueID {
 			continue
 		}
 		t, ok := s.Tickets.Lookup(link.TicketID)
@@ -94,11 +94,11 @@ func availableTask(s State, task Investigation, cutoff time.Time) bool {
 		return false
 	}
 	switch task.State {
-	case "queued", "running", "investigating", "awaiting_configuration", "failed", "awaiting_information", "returned_to_support", "rejected":
+	case InvestigationQueued, InvestigationRunning, InvestigationInvestigating, InvestigationAwaitingConfiguration, InvestigationFailed, InvestigationAwaitingInformation, InvestigationReturnedToSupport, InvestigationRejected:
 		return true
-	case "agent_proposed", "trusted", "reuse_proposed", "applied":
+	case InvestigationAgentProposed, InvestigationTrusted, InvestigationReuseProposed, InvestigationApplied:
 		solution, ok := taskSolution(s, task)
-		return ok && !s.Tickets.Get(solution.SourceTicketID).Private && (solution.State == "proposed" || solution.State == "trusted")
+		return ok && !s.Tickets.Get(solution.SourceTicketID).Private && (solution.State == SolutionProposed || solution.State == SolutionTrusted)
 	}
 	return false
 }
@@ -107,10 +107,10 @@ func availableTask(s State, task Investigation, cutoff time.Time) bool {
 // a replacement investigation. Running work retains its usage audit on completion.
 func supersedeInactiveTask(s *State, runID string, now time.Time) {
 	task, ok := s.Investigations.Lookup(s.Runs.Get(runID).InvestigationID)
-	if !ok || task.InvocationStarted || task.State != "queued" && task.State != "awaiting_configuration" || taskHasActiveMembers(*s, task) {
+	if !ok || task.InvocationStarted || task.State != InvestigationQueued && task.State != InvestigationAwaitingConfiguration || taskHasActiveMembers(*s, task) {
 		return
 	}
-	task.State, task.UpdatedAt = "superseded", now
+	task.State, task.UpdatedAt = InvestigationSuperseded, now
 	s.Investigations.Put(task.ID, task)
 }
 
@@ -127,8 +127,8 @@ func recordRun(s *State, run Run) Receipt {
 func recordInvestigationLink(s *State, link IssueTicketLink) {
 	for _, id := range s.membershipsOfTicket(link.TicketID) {
 		old := s.Memberships.Get(id)
-		if old.State == "tentative" && old.InvestigationID != link.InvestigationID {
-			old.State, old.AvailableAt = "detached", link.AvailableAt
+		if old.State == MembershipTentative && old.InvestigationID != link.InvestigationID {
+			old.State, old.AvailableAt = MembershipDetached, link.AvailableAt
 			old.Version++
 			s.Memberships.Put(id, old)
 			s.MembershipHistory = append(s.MembershipHistory, old)
@@ -147,7 +147,7 @@ func (e *Engine) enqueue(s *State, t Ticket, now time.Time, force bool) Receipt 
 	}
 	if !exists {
 		run := e.newRun(s, t, snap, cutoff, now)
-		run.Route, run.State = "manual_forward", "awaiting_forward"
+		run.Route, run.State = "manual_forward", RunAwaitingForward
 		run.MissingInformation = []string{"Forward a new immutable snapshot before diagnosis."}
 		return recordRun(s, run)
 	}
@@ -169,7 +169,7 @@ func (e *Engine) enqueue(s *State, t Ticket, now time.Time, force bool) Receipt 
 	}
 	if !force && availableTask(*s, s.Investigations.Get(group.CurrentTaskID), cutoff) {
 		task := s.Investigations.Get(group.CurrentTaskID)
-		link := IssueTicketLink{ID: randomID("link_"), IssueID: group.IssueID, TicketID: t.ID, SnapshotID: snap.ID, InvestigationID: task.ID, State: "tentative", Basis: "exact diagnostic and context signature; common causality unconfirmed", AvailableAt: cutoff}
+		link := IssueTicketLink{ID: randomID("link_"), IssueID: group.IssueID, TicketID: t.ID, SnapshotID: snap.ID, InvestigationID: task.ID, State: MembershipTentative, Basis: "exact diagnostic and context signature; common causality unconfirmed", AvailableAt: cutoff}
 		recordInvestigationLink(s, link)
 		s.Latest.Put(t.ID, task.RunID)
 		return Receipt{TicketID: t.ID, RunID: task.RunID, Action: "linked_investigation"}
@@ -181,14 +181,14 @@ func (e *Engine) enqueue(s *State, t Ticket, now time.Time, force bool) Receipt 
 	run := e.newRun(s, t, snap, cutoff, now)
 	runID := run.ID
 	contract := TaskContract{Objective: "Routing Agent judges the ticket against the local Issue directory. Reuse a justified solution or obtain read-only engineering findings and an issue_request; Routing Agent then decides Issue grouping. Request essential missing information rather than inventing a result.", SnapshotID: snap.ID, InputHash: snap.Hash, ObservationCutoff: cutoff, IssueID: group.IssueID, ReadOnly: true, CompletionCriteria: []string{"Address the reported behavior using supplied historical evidence", "Engineering submits a grouping request; Routing Agent decides assignment", "Do not modify product source or close customer tickets"}}
-	task := Investigation{ID: id, GroupID: groupID, IssueID: group.IssueID, ProjectID: t.ProjectID, RunID: runID, State: "queued", Contract: contract, CreatedAt: cutoff, UpdatedAt: now}
+	task := Investigation{ID: id, GroupID: groupID, IssueID: group.IssueID, ProjectID: t.ProjectID, RunID: runID, State: InvestigationQueued, Contract: contract, CreatedAt: cutoff, UpdatedAt: now}
 	run.InvestigationID, run.IssueID, run.Route = id, group.IssueID, "engineering_analysis"
 	group.CurrentTaskID = id
 	s.Groups.Put(groupID, group)
 	s.Investigations.Put(id, task)
 	s.Runs.Put(runID, run)
 	s.Latest.Put(t.ID, runID)
-	link := IssueTicketLink{ID: randomID("link_"), IssueID: group.IssueID, TicketID: t.ID, SnapshotID: snap.ID, InvestigationID: id, State: "tentative", Basis: "new exact-signature investigation", AvailableAt: cutoff}
+	link := IssueTicketLink{ID: randomID("link_"), IssueID: group.IssueID, TicketID: t.ID, SnapshotID: snap.ID, InvestigationID: id, State: MembershipTentative, Basis: "new exact-signature investigation", AvailableAt: cutoff}
 	recordInvestigationLink(s, link)
 	return Receipt{TicketID: t.ID, RunID: runID, Action: "created"}
 }
@@ -233,12 +233,12 @@ func (e *Engine) ReviewSolution(id string, review SolutionReview) (SolutionRevis
 		result.Note = review.Note
 		switch review.Action {
 		case "approve":
-			result.State = "trusted"
+			result.State = SolutionTrusted
 			result.Resolution = review.Resolution
 		case "reject":
-			result.State = "rejected"
+			result.State = SolutionRejected
 		case "withdraw":
-			result.State = "withdrawn"
+			result.State = SolutionWithdrawn
 		}
 		if result.State == old.State && sameResolution(result.Resolution, old.Resolution) {
 			result = old
@@ -270,7 +270,7 @@ func sortByCreation(rows []Investigation) {
 
 // fairInvestigations orders the investigations in the given work states
 // oldest first, rotating across projects.
-func fairInvestigations(s State, states ...string) []Investigation {
+func fairInvestigations(s State, states ...InvestigationState) []Investigation {
 	rows := s.investigationsIn(states...)
 	sortByCreation(rows)
 	rotateProjects(rows, s.LastClaimedProject)

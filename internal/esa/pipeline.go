@@ -15,19 +15,19 @@ const EngineeringConcurrency = 3
 var errEngineeringCapacity = errors.New("engineering capacity is occupied")
 
 func activeInvestigation(task Investigation) bool {
-	return task.State == "running" || task.State == "investigating"
+	return task.State == InvestigationRunning || task.State == InvestigationInvestigating
 }
 
 // parked reports a task that waits for an engineering slot without holding a
 // worker or a lease. Its routed report and frozen provider input are durable.
 func parked(task Investigation) bool {
-	return task.State == "investigating" && task.Phase == "waiting_engineering" && task.Owner == ""
+	return task.State == InvestigationInvestigating && task.Phase == "waiting_engineering" && task.Owner == ""
 }
 
 // engineeringActive counts reserved engineering slots, including single-call runs.
 func engineeringActive(s State) int {
 	active := 0
-	for _, task := range s.investigationsIn("running", "investigating") {
+	for _, task := range s.investigationsIn(InvestigationRunning, InvestigationInvestigating) {
 		if task.Phase == "investigating" || task.Phase == "" {
 			active++
 		}
@@ -38,7 +38,7 @@ func engineeringActive(s State) int {
 // fairParked orders parked tasks oldest first, rotating across projects.
 func fairParked(s State) []Investigation {
 	var rows []Investigation
-	for _, task := range s.investigationsIn("investigating") {
+	for _, task := range s.investigationsIn(InvestigationInvestigating) {
 		if parked(task) {
 			rows = append(rows, task)
 		}
@@ -56,7 +56,7 @@ func fairParked(s State) []Investigation {
 // Intake routing is serialized per project until its claim is committed. The
 // durable phase/lease is shared by all workers, including other ESA processes.
 func routingBusy(s State, project string) bool {
-	for _, task := range s.investigationsIn("running") {
+	for _, task := range s.investigationsIn(InvestigationRunning) {
 		if task.ProjectID == project && task.Phase == "routing" {
 			return true
 		}
@@ -118,7 +118,7 @@ func (e *Engine) pipeline(ctx context.Context, provider PipelineAnalyzer, input 
 		}
 		run := s.Runs.Get(task.RunID)
 		run.Report, run.UpdatedAt = routed, e.Now()
-		current.State, current.Phase, current.UpdatedAt = "investigating", "investigating", e.Now()
+		current.State, current.Phase, current.UpdatedAt = InvestigationInvestigating, "investigating", e.Now()
 		parkedNow = engineeringActive(*s) >= EngineeringConcurrency || len(fairParked(*s)) > 0
 		if parkedNow {
 			frozen := input
@@ -220,11 +220,11 @@ func (e *Engine) joinInvestigation(s *State, task *Investigation, report Report,
 	live := activeInvestigation(target) && (target.LeaseUntil.After(e.Now()) || parked(target)) && (target.Phase == "waiting_engineering" || target.Phase == "investigating" || target.Phase == "assignment")
 	// Completion can race the routing turn. Share the completed investigation
 	// rather than starting another analysis or claiming a future solution.
-	if !live && target.State != "agent_proposed" && target.State != "trusted" {
+	if !live && target.State != InvestigationAgentProposed && target.State != InvestigationTrusted {
 		return fmt.Errorf("%w: investigation is no longer available", ErrConflict)
 	}
 	for id, link := range s.Memberships.All() {
-		if link.InvestigationID != task.ID || link.State != "tentative" {
+		if link.InvestigationID != task.ID || link.State != MembershipTentative {
 			continue
 		}
 		if s.IssueOverrides.Get(link.TicketID) != "" && s.IssueOverrides.Get(link.TicketID) != target.IssueID {
@@ -243,6 +243,6 @@ func (e *Engine) joinInvestigation(s *State, task *Investigation, report Report,
 			s.Groups.Put(id, group)
 		}
 	}
-	task.State, task.JoinedInvestigationID = "joined", target.ID
+	task.State, task.JoinedInvestigationID = InvestigationJoined, target.ID
 	return nil
 }

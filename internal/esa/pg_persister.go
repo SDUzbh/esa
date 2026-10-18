@@ -570,7 +570,7 @@ func hotSnapshotIDs(s *State) []string {
 		hot[task.Contract.SnapshotID] = true
 	}
 	for _, link := range s.Memberships.All() {
-		if link.State != "detached" {
+		if link.State != MembershipDetached {
 			hot[link.SnapshotID] = true
 		}
 	}

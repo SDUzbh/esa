@@ -128,7 +128,7 @@ func (e *Engine) applyIssueAssignment(s *State, task *Investigation, report Repo
 		}
 	}
 	for key, link := range s.Memberships.All() {
-		if link.InvestigationID == task.ID && link.State == "tentative" {
+		if link.InvestigationID == task.ID && link.State == MembershipTentative {
 			if override := s.IssueOverrides.Get(link.TicketID); override != "" && override != id {
 				continue
 			}

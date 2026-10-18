@@ -142,11 +142,11 @@ func maintainIndexedIssues(s *State, at time.Time, retireAfter time.Duration) bo
 func issueReviewed(s State, id string) bool {
 	x := s.indexes
 	if x.usableSolutionsByIssue.exists(s.Solutions, usableSolutionIssue, id, func(sol SolutionRevision) bool {
-		return sol.State == "trusted" && s.Investigations.Get(sol.InvestigationID).SolutionID == sol.ID
+		return sol.State == SolutionTrusted && s.Investigations.Get(sol.InvestigationID).SolutionID == sol.ID
 	}) {
 		return true
 	}
-	return x.retainedCasesByIssue.exists(s.Cases, retainedCaseIssue, id, func(c Case) bool { return c.State == "trusted" })
+	return x.retainedCasesByIssue.exists(s.Cases, retainedCaseIssue, id, func(c Case) bool { return c.State == CaseTrusted })
 }
 
 // issueHasOpenMember reports whether a ticket still open is a current member.
@@ -245,7 +245,7 @@ func removeIssue(s *State, id, reason string, at time.Time) {
 
 func detachForRemovedIssue(s *State, key, reason string, at time.Time) {
 	link := s.Memberships.Get(key)
-	link.State, link.Basis, link.AvailableAt = "detached", "Issue removed: "+reason, at
+	link.State, link.Basis, link.AvailableAt = MembershipDetached, "Issue removed: "+reason, at
 	link.Version++
 	s.Memberships.Put(key, link)
 	s.MembershipHistory = append(s.MembershipHistory, link)

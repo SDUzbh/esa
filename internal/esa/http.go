@@ -251,7 +251,7 @@ func rowFor(s State, t Ticket) TicketRow {
 			if row.LatestRun != nil {
 				copy := *row.LatestRun
 				copy.IssueID = link.IssueID
-				copy.State = "membership_reviewed"
+				copy.State = RunMembershipReviewed
 				copy.Report = Report{Summary: "Membership updated without analysis. The previous diagnosis remains in history; request analysis explicitly if needed."}
 				row.LatestRun = &copy
 			}
@@ -266,7 +266,7 @@ func rowFor(s State, t Ticket) TicketRow {
 			row.Investigation, row.Solution, row.Application = nil, nil, nil
 			if row.LatestRun != nil {
 				copy := *row.LatestRun
-				copy.State = "issue_removed"
+				copy.State = RunIssueRemoved
 				copy.Report = Report{Summary: "The associated engineering issue was removed by retention. Earlier evidence remains in history; explicitly forward the ticket to analyze again."}
 				row.LatestRun = &copy
 			}
@@ -359,11 +359,11 @@ func (api *API) tickets(w http.ResponseWriter, r *http.Request) {
 		state, route := "", "case_collection"
 		updated := t.UpdatedAt
 		if row.LatestRun != nil && !t.Closed {
-			state = row.LatestRun.State
+			state = string(row.LatestRun.State)
 			route = row.LatestRun.Route
 			updated = row.LatestRun.UpdatedAt
 		} else if row.Case != nil {
-			state = row.Case.State
+			state = string(row.Case.State)
 			updated = row.Case.UpdatedAt
 		}
 		if !queryMatches(state, q.Get("esa_state")) || !queryMatches(route, q.Get("route")) {
@@ -503,7 +503,7 @@ func (api *API) run(w http.ResponseWriter, r *http.Request) {
 func (api *API) cases(w http.ResponseWriter, r *http.Request) {
 	rows := []Case{}
 	for _, c := range api.Engine.Store.Snapshot().Cases.All() {
-		if ticketAllowed(r, c.TicketID) && allowed(r, c.ProjectID) && queryMatches(c.ProjectID, r.URL.Query().Get("project_id")) && queryMatches(c.State, r.URL.Query().Get("state")) {
+		if ticketAllowed(r, c.TicketID) && allowed(r, c.ProjectID) && queryMatches(c.ProjectID, r.URL.Query().Get("project_id")) && queryMatches(string(c.State), r.URL.Query().Get("state")) {
 			rows = append(rows, c)
 		}
 	}

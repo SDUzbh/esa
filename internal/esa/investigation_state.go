@@ -43,17 +43,19 @@ func projectRun(s *State, task Investigation) {
 	if !ok {
 		return
 	}
-	state := task.State
+	// A run shows its investigation's state, except where a run has its own
+	// name for it.
+	state := RunState(task.State)
 	switch task.State {
-	case "agent_proposed", "reuse_proposed":
-		state = "awaiting_review"
-	case "trusted", "applied":
-		state = "completed"
-	case "withdrawn":
-		state = "invalidated"
+	case InvestigationAgentProposed, InvestigationReuseProposed:
+		state = RunAwaitingReview
+	case InvestigationTrusted, InvestigationApplied:
+		state = RunCompleted
+	case InvestigationWithdrawn:
+		state = RunInvalidated
 	}
 	if s.Tickets.Get(run.TicketID).Private {
-		state = "restricted"
+		state = RunRestricted
 	}
 	if run.State != state || run.UpdatedAt != task.UpdatedAt {
 		run.State, run.UpdatedAt = state, task.UpdatedAt
@@ -80,10 +82,10 @@ func issueState(s State, id string, visible map[string]bool) string {
 		if !ok {
 			continue
 		}
-		if state != "" && state != task.State {
+		if state != "" && state != string(task.State) {
 			return "mixed"
 		}
-		state = task.State
+		state = string(task.State)
 	}
 	if state == "" {
 		return "tentative"

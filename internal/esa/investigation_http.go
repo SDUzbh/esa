@@ -43,7 +43,7 @@ func visibleRow(r *http.Request, s State, row TicketRow, at time.Time) TicketRow
 		copy := visibleEngineeringIssue(r, s, *row.EngineeringIssue)
 		row.EngineeringIssue = &copy
 	}
-	applicationRevoked := row.Application != nil && (row.Application.State == "rejected" || row.Application.State == "withdrawn")
+	applicationRevoked := row.Application != nil && (row.Application.State == ApplicationRejected || row.Application.State == ApplicationWithdrawn)
 	if applicationRevoked && row.LatestRun != nil {
 		copy := *row.LatestRun
 		copy.Report = Report{Summary: "Solution applicability was rejected or withdrawn. Earlier evidence remains in the audit history."}
@@ -58,7 +58,7 @@ func visibleRow(r *http.Request, s State, row TicketRow, at time.Time) TicketRow
 		if !ok || source.Private || !ticketAllowed(r, source.ID) || !allowed(r, source.ProjectID) || sol.AvailableAt.After(at) {
 			row.Solution = nil
 			row.Application = nil
-		} else if sol.State == "rejected" || sol.State == "withdrawn" || applicationRevoked {
+		} else if sol.State == SolutionRejected || sol.State == SolutionWithdrawn || applicationRevoked {
 			copy.Resolution = Resolution{}
 			report := Report{Summary: "The shared proposal was rejected or withdrawn. Earlier evidence remains in the audit history."}
 			if row.LatestRun != nil {
@@ -120,7 +120,7 @@ func taskVisible(r *http.Request, s State, task Investigation) bool {
 	for _, id := range s.membershipsOfInvestigation(task.ID) {
 		link := s.Memberships.Get(id)
 		t, ok := s.Tickets.Lookup(link.TicketID)
-		if ok && link.State == "tentative" && !t.Private && ticketAllowed(r, t.ID) {
+		if ok && link.State == MembershipTentative && !t.Private && ticketAllowed(r, t.ID) {
 			return true
 		}
 	}

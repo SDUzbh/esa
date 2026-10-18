@@ -60,7 +60,7 @@ func TestClosingOnlyMemberSupersedesUnstartedInvestigation(t *testing.T) {
 	receive(t, e, "closed", ticket)
 	s := e.Store.Snapshot()
 	run := s.Runs.Get(r.RunID)
-	if run.State != "superseded" || s.Investigations.Get(run.InvestigationID).State != run.State {
+	if run.State != "superseded" || string(s.Investigations.Get(run.InvestigationID).State) != string(run.State) {
 		t.Fatal("closed ticket retained a runnable investigation", run)
 	}
 }

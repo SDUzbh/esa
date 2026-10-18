@@ -249,7 +249,7 @@ func TestIssueListStateAndReviewTargetVisibility(t *testing.T) {
 	want := ""
 	for _, group := range s.Groups.All() {
 		if group.IssueID == link.IssueID {
-			want = s.Investigations.Get(group.CurrentTaskID).State
+			want = string(s.Investigations.Get(group.CurrentTaskID).State)
 		}
 	}
 	if link.IssueID == "" || want == "" || want == "tentative" {

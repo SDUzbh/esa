@@ -315,6 +315,13 @@ func (g *historyReader) Trace(issue Issue, baseline, mainline, cutoff, until str
 		}
 		delta, ok := remaps[original]
 		if !ok {
+			if _, e := g.resolve(original); e != nil {
+				// An Agent may cite a commit this checkout lacks. Keep its lines
+				// unmapped rather than lose the ticket's whole trace.
+				out.Limitations = append(out.Limitations, fmt.Sprintf("Finding commit %q is not in the repository; its lines were not mapped.", original))
+				remaps[original] = nil
+				continue
+			}
 			p, e := g.run("diff", "--no-ext-diff", "--no-textconv", "--find-renames", "--unified=0", original, chain[anchor].id)
 			if e != nil {
 				return out, e

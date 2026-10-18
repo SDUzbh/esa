@@ -131,3 +131,55 @@ func TestTicketReferenceInMergedBranchLandsAtMainlineMerge(t *testing.T) {
 		t.Fatal(trace.Candidates[0])
 	}
 }
+
+func TestUnknownFindingCommitKeepsTheTrace(t *testing.T) {
+	g, base, fix := history(t)
+	issue := Issue{TicketKeys: []string{"BUG-1"}, Findings: []Finding{{Commit: "fixture", File: "Example.java", StartLine: 1, EndLine: 1}}}
+	trace, e := g.Trace(issue, base, "main", "2020-01-02T00:00:01Z", "", 3)
+	if e != nil {
+		t.Fatal(e)
+	}
+	if !strings.Contains(strings.Join(trace.Limitations, " "), `"fixture" is not in the repository`) {
+		t.Fatal(trace.Limitations)
+	}
+	for _, c := range trace.Candidates {
+		if c.Commit == fix && strings.Contains(strings.Join(c.Reasons, " "), "Ticket reference: BUG-1") {
+			return
+		}
+	}
+	t.Fatalf("referenced fix lost: %+v", trace.Candidates)
+}
+
+func TestFailedExportLeavesNoPartialSnapshot(t *testing.T) {
+	g, _, _ := history(t)
+	run := func(args ...string) string {
+		b, e := exec.Command("git", append([]string{"-C", g.Repo}, args...)...).CombinedOutput()
+		if e != nil {
+			t.Fatalf("%v: %s", args, b)
+		}
+		return strings.TrimSpace(string(b))
+	}
+	if e := os.Symlink("new.java", filepath.Join(g.Repo, "link")); e != nil {
+		t.Fatal(e)
+	}
+	run("add", "link")
+	run("commit", "-q", "-m", "link")
+	commit := run("rev-parse", "HEAD")
+	root := t.TempDir()
+	for range 2 {
+		if _, _, e := export(t.Context(), g.Repo, commit, root); e == nil || !strings.Contains(e.Error(), "unsafe source archive entry: link") {
+			t.Fatalf("export: %v", e)
+		}
+		if _, e := os.Stat(filepath.Join(root, "snapshots", commit)); !os.IsNotExist(e) {
+			t.Fatalf("partial snapshot kept: %v", e)
+		}
+	}
+	run("rm", "-q", "link")
+	run("commit", "-q", "-m", "unlink")
+	clean := run("rev-parse", "HEAD")
+	for range 2 {
+		if _, hashes, e := export(t.Context(), g.Repo, clean, root); e != nil || len(hashes) == 0 {
+			t.Fatalf("clean export: %v %v", hashes, e)
+		}
+	}
+}

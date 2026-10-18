@@ -260,7 +260,7 @@ func preparePlan(ctx context.Context, m Manifest, j Job) (Plan, error) {
 var safeName = regexp.MustCompile(`[^A-Za-z0-9_-]`)
 
 func safe(s string) string { return safeName.ReplaceAllString(s, "_") }
-func export(ctx context.Context, repo, commit, root string) (string, map[string]string, error) {
+func export(ctx context.Context, repo, commit, root string) (_ string, hashes map[string]string, err error) {
 	if !regexp.MustCompile(`^[0-9a-f]{40,64}$`).MatchString(commit) {
 		return "", nil, fmt.Errorf("export requires immutable Git SHA")
 	}
@@ -279,6 +279,16 @@ func export(ctx context.Context, repo, commit, root string) (string, map[string]
 		}
 		return filepath.Join(directory, "source"), hashes, nil
 	}
+	// Without its manifest a snapshot is incomplete, and its read-only files
+	// would block the next export of this commit; start over and clean up.
+	if e := os.RemoveAll(directory); e != nil {
+		return "", nil, e
+	}
+	defer func() {
+		if err != nil {
+			_ = os.RemoveAll(directory)
+		}
+	}()
 	if e := os.MkdirAll(directory, 0700); e != nil {
 		return "", nil, e
 	}
@@ -290,7 +300,7 @@ func export(ctx context.Context, repo, commit, root string) (string, map[string]
 	if e = cmd.Start(); e != nil {
 		return "", nil, e
 	}
-	hashes := map[string]string{}
+	hashes = map[string]string{}
 	tr := tar.NewReader(pipe)
 	for {
 		header, err := tr.Next()

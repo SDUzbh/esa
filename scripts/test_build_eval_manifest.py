@@ -101,6 +101,8 @@ class BuildTests(unittest.TestCase):
         self.assertEqual(sum(build.allocate({'a': [1] * 2, 'b': [1]}, 10).values()), 3)
         for name, expected in [('clients/src/test/java/FooTest.java', True), ('tests/kafkatest/x.py', True), ('core/src/main/A.scala', False)]:
             self.assertEqual(build.test_file(name), expected)
+        for name, expected in [('core/src/main/A.scala', True), ('README.md', False), ('build.gradle', True), ('contrib/LICENSE', False), ('docs/upgrade.html', False), ('clients/src/test/java/FooTest.java', False)]:
+            self.assertEqual(build.fix_file(name), expected)
 
 
 if __name__ == '__main__':

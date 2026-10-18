@@ -6,7 +6,7 @@ for the releases it uses (see docs/TICKET_BACKTEST.md):
 
 * fixed bugs, stratified by primary component, whose single affected version
   is a release tag older than the ticket, with only regular files and whose fix is a first-parent
-  trunk commit that names the ticket and changes an existing non-test file
+  trunk commit that names the ticket and changes an existing file that is not a test or documentation
   inside the trace window (label analyze);
 * later duplicates of eligible bugs (label reuse), chosen first; their
   originals join the bug sample within their stratum's quota and are marked
@@ -72,6 +72,18 @@ def stamp(text):
 
 def iso(moment):
     return moment.astimezone(timezone.utc).strftime('%Y-%m-%dT%H:%M:%S.%f')[:-3] + 'Z'
+
+
+DOC_EXTENSIONS = {'.md', '.txt', '.rst', '.adoc', '.html', '.htm', '.png', '.jpg', '.jpeg', '.gif', '.svg'}
+DOC_NAMES = ('LICENSE', 'NOTICE', 'README', 'CHANGELOG', 'COPYING')
+
+
+def fix_file(name):
+    """Not a test, documentation or legal text; the scorer (system_replay/score.go) uses the same rule."""
+    path = Path(name)
+    if path.suffix.lower() in DOC_EXTENSIONS or path.name.upper().startswith(DOC_NAMES) or 'docs' in path.parts[:-1]:
+        return False
+    return not test_file(name)
 
 
 def test_file(name):
@@ -154,7 +166,7 @@ class History:
         out = git(self.repo, 'diff-tree', '-r', '-M', '--no-commit-id', '--name-status', commit + '^', commit)
         for line in out.splitlines():
             status, *names = line.split('\t')
-            if status[0] in 'MDR' and names and not test_file(names[0]):
+            if status[0] in 'MDR' and names and fix_file(names[0]):
                 return True
         return False
 

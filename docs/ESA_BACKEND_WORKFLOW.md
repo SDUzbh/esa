@@ -16,7 +16,7 @@ ESA removes empty Engineering Issues automatically and enforces a global limit o
 
 ## Public interface
 
-All `/v1` routes require a service token and explicit project scope. The plugin additionally derives ticket visibility from the logged-in user. Credentials stay on the backend.
+All `/v1` routes require a token and explicit project scope. The plugin's token must also send the ticket visibility it derives from the logged-in user, and cannot inject events; the optional operator token can ([service tokens](ESA_OPERATIONS.md#service-tokens)). Credentials stay on the backend.
 
 | Method | Endpoint | Purpose |
 | --- | --- | --- |

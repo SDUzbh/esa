@@ -25,14 +25,14 @@ def save_json(path, value):
     path.write_text(json.dumps(value, indent=2, ensure_ascii=False) + "\n")
 
 
-def read_token(path):
-    token = os.environ.get("ESA_API_TOKEN", "")
+def read_token(path, name):
+    token = os.environ.get(name, "")
     if not token and path.is_file():
         for line in path.read_text().splitlines():
-            if line.startswith("ESA_API_TOKEN="):
+            if line.startswith(name + "="):
                 token = line.partition("=")[2].strip().strip("\"'")
     if len(token) < 24:
-        raise ValueError("Set ESA_API_TOKEN or --token-env-file (at least 24 characters)")
+        raise ValueError("Set " + name + " or --token-env-file (at least 24 characters)")
     return token
 
 
@@ -101,7 +101,7 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("ticket", type=Path, help="ESA Ticket JSON, or an Event JSON containing ticket")
     parser.add_argument("--routing-provider", default="http://127.0.0.1:8091", help="Provider base URL; Routing Agent decides whether engineering is needed")
-    parser.add_argument("--esa-url", help="Use an existing ESA service configured for the same provider; otherwise start an isolated local service")
+    parser.add_argument("--esa-url", help="Use an existing ESA service configured for the same provider (needs its ESA_OPERATOR_TOKEN); otherwise start an isolated local service")
     parser.add_argument("--esa-bin", type=Path, default=ROOT / "bin/esa-host")
     parser.add_argument("--database-url", default=os.environ.get("ESA_DATABASE_URL", ""),
                         help="Postgres for the isolated local service (default: $ESA_DATABASE_URL); it runs in a throwaway schema")
@@ -117,7 +117,7 @@ def main(argv=None):
         parser.error("--wait-seconds must be positive")
     provider = base_url(args.routing_provider)
     esa_url = base_url(args.esa_url) if args.esa_url else None
-    token = read_token(args.token_env_file)
+    token = read_token(args.token_env_file, "ESA_ANALYZER_TOKEN")
     raw = json.loads(args.ticket.read_text())
     if not isinstance(raw, dict):
         raise ValueError("Ticket file must contain a JSON object")
@@ -147,10 +147,11 @@ def main(argv=None):
                 sock.bind(("127.0.0.1", 0))
                 port = sock.getsockname()[1]
             esa_url = f"http://127.0.0.1:{port}"
+            # This script injects the ticket, which only the operator role may do.
             service_token = secrets.token_urlsafe(32)
             env = {k: v for k, v in os.environ.items() if not k.startswith("ESA_")}
-            env.update(ESA_API_TOKEN=service_token, ESA_ANALYZER_TOKEN=token, ESA_ANALYZER_URL=provider + "/analyze",
-                       ESA_DATABASE_URL=args.database_url)
+            env.update(ESA_API_TOKEN=secrets.token_urlsafe(32), ESA_OPERATOR_TOKEN=service_token, ESA_ANALYZER_TOKEN=token,
+                       ESA_ANALYZER_URL=provider + "/analyze", ESA_DATABASE_URL=args.database_url)
             server_log = (output / "service.log").open("wb")
             process = subprocess.Popen([str(args.esa_bin.resolve()), "-listen", f"127.0.0.1:{port}",
                                         "-ephemeral-schema", "-rules", str(args.rules.resolve()),
@@ -167,7 +168,7 @@ def main(argv=None):
             else:
                 raise RuntimeError("ESA startup timed out")
         else:
-            service_token = token
+            service_token = read_token(args.token_env_file, "ESA_OPERATOR_TOKEN")
         now = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
         # Preserve supplied snapshot dates. Missing dates use this explicit intake time.
         ticket.setdefault("updated_at", now)

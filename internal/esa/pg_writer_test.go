@@ -76,6 +76,7 @@ func TestPostgresFailoverAcrossTwoWriters(t *testing.T) {
 		r := httptest.NewRequest(http.MethodGet, path, nil)
 		r.Header.Set("Authorization", "Bearer "+strings.Repeat("t", 24))
 		r.Header.Set("X-ESA-Project-IDs", "1")
+		r.Header.Set("X-ESA-Ticket-IDs", "")
 		g.ServeHTTP(w, r)
 		return w.Code
 	}

@@ -38,7 +38,7 @@ func run() error {
 	concurrency := flag.Int("concurrency", 3, "Maximum engineering environments running simultaneously (1..3)")
 	issuesRoot := flag.String("issues-directory", "runtime/esa/issues", "Local read-only root of ESA Issue projections shared with the service")
 	runs := flag.String("runs", ".esa/codex-runs", "Private invocation audit directory")
-	tokenFile := flag.String("token-env-file", "deploy/redmine/.env", "Private environment file containing ESA_API_TOKEN")
+	tokenFile := flag.String("token-env-file", "deploy/redmine/.env", "Private environment file with ESA_ANALYZER_TOKEN, used when that variable is not set; only that key is read")
 	cli := flag.String("codex", "codex", "Installed Codex CLI")
 	var acceptedFeatures []string
 	flag.Func("accept-cli-feature", "Start even though the Codex CLI does not honour ESA's setting for this feature (repeatable; logged as a warning)", func(name string) error {
@@ -83,20 +83,22 @@ func run() error {
 	if *reviewFile == "" && *registryPath == "" && ((len(packet.Documents) == 0 && *toolsConfig == "") || packet.Ticket.SourceKey == "" || packet.Cutoff.IsZero()) {
 		return fmt.Errorf("invalid evidence packet")
 	}
-	token := ""
-	if !*once && *reviewFile == "" {
+	// ESA authenticates to this provider with ESA_ANALYZER_TOKEN, a secret of
+	// its own: the provider never needs ESA's API or outbox token.
+	token := os.Getenv("ESA_ANALYZER_TOKEN")
+	if token == "" && !*once && *reviewFile == "" {
 		b, err = os.ReadFile(*tokenFile)
 		if err != nil {
 			return err
 		}
 		for _, line := range strings.Split(string(b), "\n") {
-			if strings.HasPrefix(line, "ESA_API_TOKEN=") {
-				token = strings.Trim(strings.TrimPrefix(line, "ESA_API_TOKEN="), "\"'")
+			if strings.HasPrefix(line, "ESA_ANALYZER_TOKEN=") {
+				token = strings.Trim(strings.TrimPrefix(line, "ESA_ANALYZER_TOKEN="), "\"'")
 			}
 		}
-		if len(token) < 24 {
-			return fmt.Errorf("missing provider service token")
-		}
+	}
+	if len(token) < 24 && !*once && *reviewFile == "" {
+		return fmt.Errorf("missing analyzer token: set ESA_ANALYZER_TOKEN (at least 24 characters) or put it in -token-env-file")
 	}
 	path, err := exec.LookPath(*cli)
 	if err != nil && *cli == "codex" {

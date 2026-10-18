@@ -31,7 +31,7 @@ The `kafka/` directory is ignored by Git. Jira exports in `data/`, runtime evide
 
 1. Install Go 1.27+, Python 3.9+, Docker and Docker Compose independently.
 2. Build with `./scripts/build_esa.sh`; it uses the project-local toolchain when present and otherwise uses `go` from PATH.
-3. Copy `deploy/redmine/.env.example` to `deploy/redmine/.env`. Fill its database passwords (`REDMINE_DB_PASSWORD`, and `ESA_DB_PASSWORD` in hex), session secret and ESA token with unique random values; keep the generated file private.
+3. Copy `deploy/redmine/.env.example` to `deploy/redmine/.env`. Fill its database passwords (`REDMINE_DB_PASSWORD`, and `ESA_DB_PASSWORD` in hex), session secret and the ESA tokens (`ESA_API_TOKEN`, `ESA_ANALYZER_TOKEN` with a provider, optional `ESA_OPERATOR_TOKEN`; all different) with unique random values; keep the generated file private.
 4. Pre-create the shared Issue directory, and configure its ownership; follow [local deployment](../deploy/redmine/README.md). Outside this Mac, replace `colima-redmine` with the appropriate Docker context and set `ESA_GO_ARCH` as needed.
 5. Configure Redmine users, project modules and ESA roles. Local administrator bootstrap scripts read the password from an environment variable; no credentials are shipped.
 

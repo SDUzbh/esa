@@ -149,10 +149,26 @@ class ShutdownTests(unittest.TestCase):
         with patch('sys.argv', ['shutdown.py']), patch('shutdown.stop_processes'), \
                 patch('shutdown.Docker', return_value=docker), \
                 patch('shutdown.command', return_value=SimpleNamespace(returncode=0)) as run, \
-                patch('shutdown.clean_docker'), patch('shutdown.clean_session_directories'), \
+                patch('shutdown.clean_docker', return_value=False), patch('shutdown.clean_session_directories'), \
+                patch('shutdown.TEST_DATABASE_FILES', Path(tempfile.mkdtemp()) / 'test-postgres'), \
                 redirect_stdout(io.StringIO()):
             self.assertEqual(shutdown.main(), 0)
         self.assertFalse(any(call.args[0][0] == 'colima' for call in run.call_args_list))
+
+    def test_test_database_files_go_only_with_their_container(self):
+        # Never the checkout's real .tools/test-postgres: a test once deleted it.
+        for removed, dry_run, kept in [(True, False, False), (False, False, True), (True, True, True)]:
+            with self.subTest(removed=removed, dry_run=dry_run), tempfile.TemporaryDirectory() as temporary:
+                files = Path(temporary) / 'test-postgres'
+                files.mkdir()
+                (files / 'password').write_text('fixture')
+                argv = ['shutdown.py', '--keep-vm'] + (['--dry-run'] if dry_run else [])
+                with patch('sys.argv', argv), patch('shutdown.stop_processes'), \
+                        patch('shutdown.command', return_value=SimpleNamespace(returncode=0)), \
+                        patch('shutdown.clean_docker', return_value=removed), patch('shutdown.clean_session_directories'), \
+                        patch('shutdown.TEST_DATABASE_FILES', files), redirect_stdout(io.StringIO()):
+                    self.assertEqual(shutdown.main(), 0)
+                self.assertEqual(files.exists(), kept)
 
 
 if __name__ == '__main__':

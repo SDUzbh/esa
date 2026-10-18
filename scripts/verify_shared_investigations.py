@@ -23,7 +23,7 @@ def main():
     with tempfile.TemporaryDirectory(prefix='esa-shared-http-') as temporary:
         directory = Path(temporary)
         log = (directory / 'target.log').open('w')
-        process = subprocess.Popen(['python3', str(ROOT / 'scripts/esa_fixture_target.py'), '--esa-bin', str(ROOT / 'bin/esa-host'), '--reports-dir', str(directory), '--rules', str(ROOT / 'config/rules.json'), '--listen', '127.0.0.1:%d' % port, '--replay-at', '2020-01-01T00:00:00Z', '--replay-projects', '1'], env=dict(os.environ, ESA_API_TOKEN=token), stdout=log, stderr=log, start_new_session=True)
+        process = subprocess.Popen(['python3', str(ROOT / 'scripts/esa_fixture_target.py'), '--esa-bin', str(ROOT / 'bin/esa-host'), '--reports-dir', str(directory), '--rules', str(ROOT / 'config/rules.json'), '--listen', '127.0.0.1:%d' % port, '--replay-at', '2020-01-01T00:00:00Z', '--replay-projects', '1'], env=dict(os.environ, ESA_API_TOKEN=secrets.token_hex(24), ESA_OPERATOR_TOKEN=token, ESA_ANALYZER_TOKEN=secrets.token_hex(24)), stdout=log, stderr=log, start_new_session=True)
 
         def request(path, value=None, tickets=None):
             headers = {'Authorization': 'Bearer ' + token, 'X-ESA-Project-IDs': '1', 'Content-Type': 'application/json'}

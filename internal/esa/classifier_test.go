@@ -51,6 +51,17 @@ func classifierRequest(e *Engine, method, path, body, scope, issues string) *htt
 	(&API{Engine: e, Token: "token"}).Handler().ServeHTTP(w, r)
 	return w
 }
+
+// operatorRequest calls the API with the operator token and no ticket scope.
+func operatorRequest(e *Engine, method, path, body, scope string) *httptest.ResponseRecorder {
+	r := httptest.NewRequest(method, path, strings.NewReader(body))
+	r.Header.Set("Authorization", "Bearer operator-token")
+	r.Header.Set("X-ESA-Project-IDs", scope)
+	w := httptest.NewRecorder()
+	(&API{Engine: e, Token: "token", OperatorToken: "operator-token"}).Handler().ServeHTTP(w, r)
+	return w
+}
+
 func TestClassifierDisabledByDefaultAndNotARoutingGate(t *testing.T) {
 	e := testEngine(t)
 	c := e.Config
@@ -205,5 +216,48 @@ func TestClassifierFutureModelAndPrivateVisibility(t *testing.T) {
 	w = classifierRequest(e, "GET", "/v1/tickets/historical/classifier", "", "1", "historical")
 	if w.Code != 404 {
 		t.Fatal("private prediction visible", w.Code)
+	}
+}
+
+// Review Issue 5: the plugin's token must send a ticket scope and cannot
+// ingest events or move the replay clock; only the operator token can, and an
+// unset operator token closes those routes.
+func TestRoleTokensSeparatePluginFromOperator(t *testing.T) {
+	e := testEngine(t)
+	event, _ := json.Marshal(Event{ID: "injected", Origin: "test", ForwardedBy: "human", ForwardedAt: e.Now(), Ticket: fixture(e, "injected")})
+	call := func(api *API, token, method, path, body string, ticketScope *string) int {
+		r := httptest.NewRequest(method, path, strings.NewReader(body))
+		r.Header.Set("Authorization", "Bearer "+token)
+		r.Header.Set("X-ESA-Project-IDs", "1")
+		if ticketScope != nil {
+			r.Header.Set("X-ESA-Ticket-IDs", *ticketScope)
+		}
+		w := httptest.NewRecorder()
+		api.Handler().ServeHTTP(w, r)
+		return w.Code
+	}
+	scope := "redmine:1"
+	both := &API{Engine: e, Token: "plugin-token", OperatorToken: "operator-token"}
+	pluginOnly := &API{Engine: e, Token: "plugin-token"}
+	for name, tc := range map[string]struct {
+		api                 *API
+		token, method, path string
+		body                string
+		scope               *string
+		want                int
+	}{
+		"plugin ingests an event":          {both, "plugin-token", "POST", "/v1/events", string(event), &scope, 403},
+		"plugin moves the replay clock":    {both, "plugin-token", "POST", "/v1/replay/clock", `{}`, &scope, 403},
+		"plugin lists without scope":       {both, "plugin-token", "GET", "/v1/tickets", "", nil, 403},
+		"plugin lists within scope":        {both, "plugin-token", "GET", "/v1/tickets", "", &scope, 200},
+		"operator lists without scope":     {both, "operator-token", "GET", "/v1/tickets", "", nil, 200},
+		"operator ingests an event":        {both, "operator-token", "POST", "/v1/events", string(event), nil, 202},
+		"operator token when none is set":  {pluginOnly, "operator-token", "GET", "/v1/tickets", "", nil, 401},
+		"empty bearer when none is set":    {pluginOnly, "", "GET", "/v1/tickets", "", nil, 401},
+		"plugin token as operator on gate": {pluginOnly, "plugin-token", "POST", "/v1/events", string(event), nil, 403},
+	} {
+		if got := call(tc.api, tc.token, tc.method, tc.path, tc.body, tc.scope); got != tc.want {
+			t.Errorf("%s: HTTP %d, want %d", name, got, tc.want)
+		}
 	}
 }

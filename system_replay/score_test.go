@@ -24,7 +24,8 @@ func TestScoreMapsFindingsOntoTheReferencedFixOnly(t *testing.T) {
 		{Commit: fix, Parent: parent, Reasons: []string{"Ticket reference: BUG-1"}, Changes: append(changes(patch),
 			Change{OldFile: "src/test/java/FixTest.java", NewFile: "src/test/java/FixTest.java", OldStart: 1, OldCount: 1})},
 		// Found only because a finding named the file: never ground truth.
-		{Commit: fix, Parent: parent, Reasons: []string{"Issue file changed: readme"}, Changes: []Change{{OldFile: "readme", NewFile: "readme", OldStart: 1, OldCount: 1}}},
+		{Commit: fix, Parent: parent, Reasons: []string{"Issue file changed: readme"},
+			Changes: []Change{{OldFile: "readme", NewFile: "readme", OldStart: 1, OldCount: 1}}},
 	}}
 	usage := map[string]any{"input_tokens": 1000.0, "output_tokens": 50.0, "calls": 2.0}
 	event := func(route string, findings ...Finding) []EventResult {
@@ -32,7 +33,8 @@ func TestScoreMapsFindingsOntoTheReferencedFixOnly(t *testing.T) {
 	}
 	summary := Summary{Results: []Result{
 		// Read at the base commit, before an insertion and a rename: old.java:2 is the fix's new.java:3.
-		{ID: "BUG-1", Trace: trace, Events: event("analyze", Finding{Commit: base, File: "old.java", StartLine: 2, EndLine: 2}, Finding{Commit: base, File: "readme", StartLine: 1, EndLine: 1})},
+		{ID: "BUG-1", Trace: trace, Events: event("analyze",
+			Finding{Commit: base, File: "old.java", StartLine: 2, EndLine: 2}, Finding{Commit: base, File: "readme", StartLine: 1, EndLine: 1})},
 		{ID: "BUG-2", Trace: trace, Events: event("analyze", Finding{Commit: base, File: "old.java", StartLine: 3, EndLine: 3})},
 		{ID: "BUG-3", Trace: &Trace{}, Events: event("analyze")},
 		{ID: "DUP-1", Events: event("analyze")},
@@ -107,7 +109,10 @@ func TestIntervals(t *testing.T) {
 	if s := spread([]float64{5, 1, 3, 2, 4, 6, 7, 8, 9, 10}); s.Median != 6 || s.P90 != 9 || s.Total != 55 {
 		t.Fatalf("spread: %+v", s)
 	}
-	for name, want := range map[string]bool{"clients/src/test/java/a/FooTest.java": true, "core/src/main/scala/A.scala": false, "tests/kafkatest/x.py": true, "src/main/java/Tests.java": true} {
+	for name, want := range map[string]bool{
+		"clients/src/test/java/a/FooTest.java": true, "core/src/main/scala/A.scala": false,
+		"tests/kafkatest/x.py": true, "src/main/java/Tests.java": true,
+	} {
 		if testFile(name) != want {
 			t.Fatalf("testFile(%q) != %v", name, want)
 		}

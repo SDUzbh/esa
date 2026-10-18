@@ -62,6 +62,9 @@ func scoreRun(summaryPath, labelsPath, repo, out string) int {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
 	}
-	_ = json.NewEncoder(os.Stdout).Encode(map[string]any{"report": out + "/report.md", "tickets": len(report.Tickets), "routing_accuracy": report.Routing.Value, "file_hit": report.FileHit.Value})
+	_ = json.NewEncoder(os.Stdout).Encode(map[string]any{
+		"report": out + "/report.md", "tickets": len(report.Tickets),
+		"routing_accuracy": report.Routing.Value, "file_hit": report.FileHit.Value,
+	})
 	return 0
 }

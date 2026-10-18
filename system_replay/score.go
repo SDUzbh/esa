@@ -107,7 +107,8 @@ type Score struct {
 // part of a fix's location.
 func testFile(name string) bool {
 	base := path.Base(name)
-	return slices.ContainsFunc(strings.Split(path.Dir(name), "/"), func(dir string) bool { return dir == "test" || dir == "tests" }) || strings.HasSuffix(base, "Test.java") ||
+	inTests := slices.ContainsFunc(strings.Split(path.Dir(name), "/"), func(dir string) bool { return dir == "test" || dir == "tests" })
+	return inTests || strings.HasSuffix(base, "Test.java") ||
 		strings.HasSuffix(base, "Tests.java") || strings.HasPrefix(base, "test_")
 }
 
@@ -378,11 +379,14 @@ func WriteScore(dir string, s Score) error {
 	fmt.Fprintf(&b, "| Fix lines overlapped | %s |\n", pct(s.LineHit))
 	fmt.Fprintf(&b, "| Finding precision (files) | %s |\n", mean(s.Precision))
 	fmt.Fprintf(&b, "| Fix-file recall | %s |\n", mean(s.Recall))
-	fmt.Fprintf(&b, "| Input tokens per ticket | mean %.0f, median %.0f, p90 %.0f (total %.0f) |\n", s.InputTokens.Mean, s.InputTokens.Median, s.InputTokens.P90, s.InputTokens.Total)
+	fmt.Fprintf(&b, "| Input tokens per ticket | mean %.0f, median %.0f, p90 %.0f (total %.0f) |\n",
+		s.InputTokens.Mean, s.InputTokens.Median, s.InputTokens.P90, s.InputTokens.Total)
 	fmt.Fprintf(&b, "| Cached input tokens per ticket | mean %.0f, median %.0f, p90 %.0f |\n", s.CachedTokens.Mean, s.CachedTokens.Median, s.CachedTokens.P90)
-	fmt.Fprintf(&b, "| Output tokens per ticket | mean %.0f, median %.0f, p90 %.0f (total %.0f) |\n", s.OutputTokens.Mean, s.OutputTokens.Median, s.OutputTokens.P90, s.OutputTokens.Total)
+	fmt.Fprintf(&b, "| Output tokens per ticket | mean %.0f, median %.0f, p90 %.0f (total %.0f) |\n",
+		s.OutputTokens.Mean, s.OutputTokens.Median, s.OutputTokens.P90, s.OutputTokens.Total)
 	fmt.Fprintf(&b, "| Wall time per ticket | mean %.1f s, median %.1f s, p90 %.1f s |\n\n", s.ElapsedMS.Mean/1000, s.ElapsedMS.Median/1000, s.ElapsedMS.P90/1000)
-	fmt.Fprintf(&b, "Localization counts only expected-analyze tickets whose fix was found by an exact ticket reference (%d); %d had none. A ticket without findings counts as a miss. Test files are not part of a fix.\n\n", s.Localized, s.NoTruth)
+	fmt.Fprintf(&b, "Localization counts only expected-analyze tickets whose fix was found by an exact ticket reference (%d); %d had none. "+
+		"A ticket without findings counts as a miss. Test files are not part of a fix.\n\n", s.Localized, s.NoTruth)
 	fmt.Fprintf(&b, "## Routing confusion (expected → observed)\n\n| Expected | Observed | Tickets |\n| --- | --- | --- |\n")
 	for _, e := range routes {
 		observed := make([]string, 0)
@@ -394,7 +398,8 @@ func WriteScore(dir string, s Score) error {
 			fmt.Fprintf(&b, "| %s | %s | %d |\n", e, o, s.Confusion[e][o])
 		}
 	}
-	fmt.Fprintf(&b, "\n## Tickets\n\n| Ticket | Expected | Observed | Findings | File hit | Line hit | Precision | Recall | Tokens in/out | Seconds |\n| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |\n")
+	fmt.Fprintf(&b, "\n## Tickets\n\n| Ticket | Expected | Observed | Findings | File hit | Line hit | Precision | Recall | Tokens in/out | Seconds |\n"+
+		"| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |\n")
 	for _, t := range s.Tickets {
 		truth := func(v bool) string {
 			if !t.GroundTruth {

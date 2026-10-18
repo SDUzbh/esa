@@ -21,7 +21,8 @@ def ticket(root, key, created, kind='Bug', resolution='Fixed', versions=('1.0',)
     path.parent.mkdir(parents=True, exist_ok=True)
     changelog = [{'created': created, 'items': [{'field': 'Version', 'fromString': None, 'toString': '1.0'}]}] if edited else []
     links = [{'type': {'name': 'Duplicate'}, 'outwardIssue': {'key': d}} for d in duplicates]
-    path.write_text(json.dumps({'metadata': {'history_complete': True, 'history_reported_total': len(changelog)}, 'changelog': changelog, 'issue': {'key': key, 'fields': {
+    meta = {'history_complete': True, 'history_reported_total': len(changelog)}
+    path.write_text(json.dumps({'metadata': meta, 'changelog': changelog, 'issue': {'key': key, 'fields': {
         'issuetype': {'name': kind}, 'resolution': {'name': resolution}, 'created': created, 'versions': [{'name': v} for v in versions],
         'components': [{'name': c} for c in components], 'issuelinks': links, 'summary': key, 'description': ''}}}))
 

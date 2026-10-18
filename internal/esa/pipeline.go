@@ -180,7 +180,7 @@ func (e *Engine) engineer(ctx context.Context, provider PipelineAnalyzer, input 
 	if err != nil {
 		return uncertainStage(assigned, engineered), err
 	}
-	if assigned.Usage.Calls != 3 || hash(assigned.Findings) != hash(engineered.Findings) || hash(assigned.Evidence) != hash(engineered.Evidence) || hash(assigned.IssueRequest) != hash(engineered.IssueRequest) || assigned.Summary != engineered.Summary || hash(assigned.Recommendations) != hash(engineered.Recommendations) || hash(assigned.VerificationSteps) != hash(engineered.VerificationSteps) || assigned.Routing == nil || hash(*assigned.Routing) != hash(*routed.Routing) {
+	if assignmentRewroteDiagnosis(assigned, engineered, routed) {
 		return assigned, fmt.Errorf("assignment routing cannot rewrite the engineering diagnosis")
 	}
 	return assigned, nil
@@ -214,7 +214,7 @@ func (e *Engine) joinInvestigation(s *State, task *Investigation, report Report,
 	target, ok := s.Investigations.Lookup(selected.InvestigationID)
 	source := s.Tickets.Get(selected.SourceTicketID)
 	input := s.Runs.Get(task.RunID).Input
-	if !ok || target.ID == task.ID || target.ProjectID != task.ProjectID || source.Private || source.Closed || target.RunID != selected.RunID || s.Groups.Get(target.GroupID).CurrentTaskID != target.ID || !taskHasActiveMembers(*s, target) || investigationSignature(source) != investigationSignature(s.Runs.Get(target.RunID).Input) || investigationScope(input) != selected.ScopeHash || target.Contract.IssueID != task.Contract.IssueID || target.Contract.ObservationCutoff.After(task.Contract.ObservationCutoff) {
+	if joinTargetChanged(s, *task, target, ok, selected, source, input) {
 		return fmt.Errorf("%w: investigation source or scope changed", ErrConflict)
 	}
 	live := activeInvestigation(target) && (target.LeaseUntil.After(e.Now()) || parked(target)) && (target.Phase == "waiting_engineering" || target.Phase == "investigating" || target.Phase == "assignment")
@@ -245,4 +245,39 @@ func (e *Engine) joinInvestigation(s *State, task *Investigation, report Report,
 	}
 	task.State, task.JoinedInvestigationID = InvestigationJoined, target.ID
 	return nil
+}
+
+// joinTargetChanged reports whether the investigation a routing join names
+// no longer matches what the frozen directory showed: gone, the same task,
+// another project, a private or closed source, another run, superseded,
+// without active members, a changed source or scope, another Issue, or a
+// later cutoff.
+func joinTargetChanged(s *State, task, target Investigation, ok bool, selected *IssueRecord, source, input Ticket) bool {
+	return !ok ||
+		target.ID == task.ID ||
+		target.ProjectID != task.ProjectID ||
+		source.Private ||
+		source.Closed ||
+		target.RunID != selected.RunID ||
+		s.Groups.Get(target.GroupID).CurrentTaskID != target.ID ||
+		!taskHasActiveMembers(*s, target) ||
+		investigationSignature(source) != investigationSignature(s.Runs.Get(target.RunID).Input) ||
+		investigationScope(input) != selected.ScopeHash ||
+		target.Contract.IssueID != task.Contract.IssueID ||
+		target.Contract.ObservationCutoff.After(task.Contract.ObservationCutoff)
+}
+
+// assignmentRewroteDiagnosis reports whether the assignment stage changed
+// anything the engineering or routing stage produced; assignment may only
+// group it.
+func assignmentRewroteDiagnosis(assigned, engineered, routed Report) bool {
+	return assigned.Usage.Calls != 3 ||
+		hash(assigned.Findings) != hash(engineered.Findings) ||
+		hash(assigned.Evidence) != hash(engineered.Evidence) ||
+		hash(assigned.IssueRequest) != hash(engineered.IssueRequest) ||
+		assigned.Summary != engineered.Summary ||
+		hash(assigned.Recommendations) != hash(engineered.Recommendations) ||
+		hash(assigned.VerificationSteps) != hash(engineered.VerificationSteps) ||
+		assigned.Routing == nil ||
+		hash(*assigned.Routing) != hash(*routed.Routing)
 }

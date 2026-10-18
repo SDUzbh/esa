@@ -133,7 +133,7 @@ func issueRecords(s State, task Investigation, ticket Ticket) []IssueRecord {
 		}
 		source, ok := s.Tickets.Lookup(run.TicketID)
 		dependency, visible := s.Tickets.Lookup(sol.SourceTicketID)
-		if !ok || !visible || source.Private || dependency.Private || source.ProjectID != ticket.ProjectID || dependency.ProjectID != ticket.ProjectID || run.Input.ForwardedAt.After(task.Contract.ObservationCutoff) || run.Report.Envelope == nil || run.Report.Envelope.ResponseAvailableAt.After(task.Contract.ObservationCutoff) {
+		if analysisHidden(task, run, ticket, source, dependency, ok, visible) {
 			continue
 		}
 		r := IssueRecord{ID: issue.ID, IssueID: issue.ID, ProjectID: issue.ProjectID, Kind: "agent_analyzed", ScopeHash: investigationScope(run.Input), Title: issue.Title, Description: run.Input.Description, SourceTicketID: sol.SourceTicketID, SourceKey: run.Input.SourceKey, RunID: run.ID, SolutionID: sol.ID, Components: run.Input.Components, Versions: run.Input.Versions, Environment: run.Input.Environment, Summary: run.Report.Summary, Recommendations: run.Report.Recommendations, VerificationSteps: run.Report.VerificationSteps, Findings: run.Report.Findings, AvailableAt: sol.AvailableAt}
@@ -180,7 +180,7 @@ func issueRecords(s State, task Investigation, ticket Ticket) []IssueRecord {
 			continue
 		}
 		source := s.Tickets.Get(run.TicketID)
-		if source.ID == "" || source.Private || source.Closed || run.ProjectID != ticket.ProjectID || investigationScope(run.Input) != investigationScope(ticket) || investigationSignature(source) != investigationSignature(run.Input) || other.Contract.IssueID != task.Contract.IssueID {
+		if claimHidden(task, other, run, source, ticket) {
 			continue
 		}
 		r := IssueRecord{ID: other.ID, InvestigationID: other.ID, Kind: "investigating", ProjectID: run.ProjectID, ScopeHash: investigationScope(run.Input), Title: run.Input.Subject, Description: run.Input.Description, SourceTicketID: run.TicketID, SourceKey: run.Input.SourceKey, RunID: run.ID, Components: run.Input.Components, Versions: run.Input.Versions, Environment: run.Input.Environment, AvailableAt: other.Contract.ObservationCutoff}
@@ -526,4 +526,33 @@ func hashBytes(data []byte) string { return fmt.Sprintf("%x", sha256.Sum256(data
 // ReusedIssueReport copies an existing solution; it makes no new source claim.
 func ReusedIssueReport(record IssueRecord, routing RoutingResult) Report {
 	return Report{Routing: &routing, Issue: &IssueAssignment{ExistingID: record.IssueID, Title: record.Title, Reason: routing.Reason}, Summary: record.Summary, RootCauseCandidates: []string{record.Summary}, Recommendations: append([]string{}, record.Recommendations...), VerificationSteps: append([]string{}, record.VerificationSteps...), Evidence: []Evidence{{Source: "issue_directory", Reference: routing.RecordPath + "#" + routing.RecordHash, Quote: record.Summary}}, Limitations: []string{"Reused " + record.Kind + " solution. No engineering Agent, new code localization or runtime reproduction was invoked. Applicability is a Routing Agent judgment; original review status remains attached to the source record."}, Usage: routing.Usage}
+}
+
+// claimHidden reports whether another investigation's claim must stay out
+// of this task's directory: its source is gone, private or closed, it belongs
+// to another project, scope or Issue, or its source changed since the run.
+func claimHidden(task, other Investigation, run Run, source, ticket Ticket) bool {
+	return source.ID == "" ||
+		source.Private ||
+		source.Closed ||
+		run.ProjectID != ticket.ProjectID ||
+		investigationScope(run.Input) != investigationScope(ticket) ||
+		investigationSignature(source) != investigationSignature(run.Input) ||
+		other.Contract.IssueID != task.Contract.IssueID
+}
+
+// analysisHidden reports whether an Agent analysis must stay out of this
+// task's directory: a source or the solution's source ticket is gone,
+// private or in another project, or the run's input or response came after
+// the task's cutoff.
+func analysisHidden(task Investigation, run Run, ticket, source, dependency Ticket, ok, visible bool) bool {
+	return !ok ||
+		!visible ||
+		source.Private ||
+		dependency.Private ||
+		source.ProjectID != ticket.ProjectID ||
+		dependency.ProjectID != ticket.ProjectID ||
+		run.Input.ForwardedAt.After(task.Contract.ObservationCutoff) ||
+		run.Report.Envelope == nil ||
+		run.Report.Envelope.ResponseAvailableAt.After(task.Contract.ObservationCutoff)
 }

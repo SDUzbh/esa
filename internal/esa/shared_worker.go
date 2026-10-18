@@ -171,7 +171,7 @@ func validateReport(report Report, input AnalyzeRequest, records []IssueRecord) 
 		if report.Routing.Usage.Calls != 1 {
 			return fmt.Errorf("invalid routing usage")
 		}
-		if report.Routing.Action == "analyze" && (len(report.Findings) > 0 || len(report.Evidence) > 0) && (report.IssueRequest == nil || strings.TrimSpace(report.IssueRequest.Title) == "" || strings.TrimSpace(report.IssueRequest.Reason) == "" || report.AssignmentRouting == nil) {
+		if ungroupedFindings(report) {
 			return fmt.Errorf("engineering findings require a request and a Routing Agent grouping decision")
 		}
 	}
@@ -201,7 +201,7 @@ func validateReport(report Report, input AnalyzeRequest, records []IssueRecord) 
 		return fmt.Errorf("invalid reported usage")
 	}
 	for _, finding := range report.Findings {
-		if finding.Commit == "" || finding.File == "" || finding.StartLine < 1 || finding.EndLine < finding.StartLine || finding.EndLine-finding.StartLine >= 200 || strings.TrimSpace(finding.Problem) == "" || strings.TrimSpace(finding.Solution) == "" || len(finding.Evidence) == 0 || len(finding.Evidence) > 100 {
+		if unpinnedFinding(finding) {
 			return fmt.Errorf("finding lacks a pinned source location and evidence")
 		}
 	}
@@ -509,4 +509,26 @@ func (e *Engine) ProcessOne(ctx context.Context, analyzer Analyzer) (bool, error
 		return nil
 	})
 	return true, err
+}
+
+// unpinnedFinding reports whether a finding lacks a pinned location (commit,
+// file, a line range under 200 lines), a problem, a solution, or between 1
+// and 100 evidence references.
+func unpinnedFinding(finding Finding) bool {
+	return finding.Commit == "" ||
+		finding.File == "" ||
+		finding.StartLine < 1 ||
+		finding.EndLine < finding.StartLine ||
+		finding.EndLine-finding.StartLine >= 200 ||
+		strings.TrimSpace(finding.Problem) == "" ||
+		strings.TrimSpace(finding.Solution) == "" ||
+		len(finding.Evidence) == 0 ||
+		len(finding.Evidence) > 100
+}
+
+// ungroupedFindings reports whether an analyze report carries findings or
+// evidence without both an Issue request (title and reason) and the Routing
+// Agent's grouping decision.
+func ungroupedFindings(report Report) bool {
+	return report.Routing.Action == "analyze" && (len(report.Findings) > 0 || len(report.Evidence) > 0) && (report.IssueRequest == nil || strings.TrimSpace(report.IssueRequest.Title) == "" || strings.TrimSpace(report.IssueRequest.Reason) == "" || report.AssignmentRouting == nil)
 }

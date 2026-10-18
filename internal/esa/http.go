@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"sort"
 	"strconv"
 	"strings"
@@ -347,7 +348,7 @@ func (api *API) tickets(w http.ResponseWriter, r *http.Request) {
 	}
 	rows := []sortedRow{}
 	for _, t := range candidates {
-		if t.ForwardedBy == "" || t.ForwardedAt.IsZero() || t.Private || !ticketAllowed(r, t.ID) || !allowed(r, t.ProjectID) || !queryMatches(t.ProjectID, q.Get("project_id")) || !queryMatches(t.Tracker, q.Get("tracker")) || !queryMatches(t.Status, q.Get("status")) || !queryMatches(t.Assignee, q.Get("assignee")) || !queryMatches(t.Source, q.Get("source")) {
+		if skippedTicket(r, t, q) {
 			continue
 		}
 		row := rowFor(s, t)
@@ -548,4 +549,19 @@ func (api *API) preview(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, 200, result)
+}
+
+// skippedTicket reports whether the ticket list must skip t: never forwarded,
+// private, outside the caller's scope, or not matching a query filter.
+func skippedTicket(r *http.Request, t Ticket, q url.Values) bool {
+	return t.ForwardedBy == "" ||
+		t.ForwardedAt.IsZero() ||
+		t.Private ||
+		!ticketAllowed(r, t.ID) ||
+		!allowed(r, t.ProjectID) ||
+		!queryMatches(t.ProjectID, q.Get("project_id")) ||
+		!queryMatches(t.Tracker, q.Get("tracker")) ||
+		!queryMatches(t.Status, q.Get("status")) ||
+		!queryMatches(t.Assignee, q.Get("assignee")) ||
+		!queryMatches(t.Source, q.Get("source"))
 }

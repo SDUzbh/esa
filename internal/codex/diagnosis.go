@@ -5,6 +5,7 @@ import (
 	"errors"
 	"esa/internal/esa"
 	"esa/internal/replaytools"
+	"fmt"
 	"sort"
 	"strconv"
 	"strings"
@@ -71,65 +72,91 @@ func (out EngineeringOutput) Report(packet Packet) (esa.Report, error) {
 	}
 	r := esa.Report{IssueRequest: &out.IssueRequest, Summary: out.IssueRequest.Title, Limitations: out.Limitations}
 	evidence := map[string]esa.Evidence{}
+	ambiguous := map[string]bool{}
 	for _, d := range packet.Documents {
 		for i, text := range d.Lines {
 			line := d.First + i
 			id := replaytools.EvidenceID(d.Source, d.Prefix, line, text)
 			ev := esa.Evidence{Source: d.Source, Reference: d.Prefix + strconv.Itoa(line), Quote: text}
+			// An ID naming two different lines resolves to neither.
 			if previous, exists := evidence[id]; exists && previous != ev {
-				return r, errors.New("ambiguous evidence ID")
+				ambiguous[id] = true
 			}
 			evidence[id] = ev
 		}
 	}
-	for _, selected := range out.Findings {
-		begin, ok := evidence[selected.Location]
-		end, endOK := evidence[selected.EndLocation]
-		if !ok || !endOK || begin.Source != "git" || end.Source != "git" {
-			return r, errors.New("finding locations must select inspected Git evidence IDs")
+	for id := range ambiguous {
+		delete(evidence, id)
+	}
+	// A bad selection drops only that citation, or the finding it would place;
+	// the rest of the report stands. Nothing unresolved enters a finding.
+	for n, selected := range out.Findings {
+		f, dropped, err := resolveFinding(selected, evidence, packet.Commit)
+		for _, id := range dropped {
+			r.Limitations = append(r.Limitations, fmt.Sprintf("Finding %d: evidence ID %q matches no inspected, non-empty line and was not used.", n+1, id))
 		}
-		parts := strings.Split(begin.Reference, ":")
-		if len(parts) != 3 || !strings.HasPrefix(end.Reference, parts[0]+":"+parts[1]+":") {
-			return r, errors.New("finding endpoints must select the same historical file")
-		}
-		first, firstErr := strconv.Atoi(parts[2])
-		last, lastErr := strconv.Atoi(strings.TrimPrefix(end.Reference, parts[0]+":"+parts[1]+":"))
-		if firstErr != nil || lastErr != nil {
-			return r, errors.New("invalid source coordinates in evidence")
-		}
-		f := esa.Finding{Commit: parts[0], File: parts[1], StartLine: first, EndLine: last, Problem: selected.Problem, Solution: selected.Solution}
-		seen := map[string]bool{}
-		for _, id := range append([]string{selected.Location, selected.EndLocation}, selected.EvidenceIDs...) {
-			if seen[id] {
-				continue
-			}
-			seen[id] = true
-			ev, exists := evidence[id]
-			if !exists || strings.TrimSpace(ev.Quote) == "" {
-				return r, errors.New("evidence ID is unknown or selects an empty line")
-			}
-			f.Evidence = append(f.Evidence, ev)
-		}
-		if f.Commit != packet.Commit ||
-			f.File == "" ||
-			strings.Contains(f.File, ":") ||
-			f.StartLine < 1 ||
-			f.EndLine < f.StartLine ||
-			f.EndLine-f.StartLine >= 200 ||
-			strings.TrimSpace(f.Problem) == "" ||
-			strings.TrimSpace(f.Solution) == "" ||
-			len(f.Evidence) == 0 {
-			return r, errors.New("finding requires historical commit, file, bounded lines, problem, solution and evidence")
+		if err != nil {
+			r.Limitations = append(r.Limitations, fmt.Sprintf("Finding %d was not reported: %v.", n+1, err))
+			continue
 		}
 		r.RootCauseCandidates = append(r.RootCauseCandidates, f.Problem)
 		r.Findings = append(r.Findings, f)
 		r.Recommendations = append(r.Recommendations, f.Solution)
 		r.Evidence = append(r.Evidence, f.Evidence...)
 	}
-	if len(out.Findings) == 0 {
+	if len(r.Findings) == 0 {
 		r.Limitations = append(r.Limitations, "No concrete code location was established; localization remains unassessed.")
 		return r, nil
 	}
 	r.VerificationSteps = []string{"Track subsequent mainline versions, review matching PRs and replay the reported scenario to assess the proposed solution."}
 	return r, ValidateEvidence(r, packet)
+}
+
+// resolveFinding places one finding from its location IDs and keeps the
+// supporting citations that resolve; dropped lists those that did not.
+func resolveFinding(selected EngineeringFinding, evidence map[string]esa.Evidence, commit string) (esa.Finding, []string, error) {
+	begin, ok := evidence[selected.Location]
+	end, endOK := evidence[selected.EndLocation]
+	if !ok || !endOK || begin.Source != "git" || end.Source != "git" {
+		return esa.Finding{}, nil, errors.New("its location and end_location must select inspected Git evidence IDs")
+	}
+	parts := strings.Split(begin.Reference, ":")
+	if len(parts) != 3 || !strings.HasPrefix(end.Reference, parts[0]+":"+parts[1]+":") {
+		return esa.Finding{}, nil, errors.New("its endpoints must select the same historical file")
+	}
+	first, firstErr := strconv.Atoi(parts[2])
+	last, lastErr := strconv.Atoi(strings.TrimPrefix(end.Reference, parts[0]+":"+parts[1]+":"))
+	if firstErr != nil || lastErr != nil {
+		return esa.Finding{}, nil, errors.New("its evidence has invalid source coordinates")
+	}
+	if strings.TrimSpace(begin.Quote) == "" || strings.TrimSpace(end.Quote) == "" {
+		return esa.Finding{}, nil, errors.New("its location selects an empty line")
+	}
+	f := esa.Finding{Commit: parts[0], File: parts[1], StartLine: first, EndLine: last, Problem: selected.Problem, Solution: selected.Solution}
+	var dropped []string
+	seen := map[string]bool{}
+	for _, id := range append([]string{selected.Location, selected.EndLocation}, selected.EvidenceIDs...) {
+		if seen[id] {
+			continue
+		}
+		seen[id] = true
+		ev, exists := evidence[id]
+		if !exists || strings.TrimSpace(ev.Quote) == "" {
+			dropped = append(dropped, id)
+			continue
+		}
+		f.Evidence = append(f.Evidence, ev)
+	}
+	if f.Commit != commit ||
+		f.File == "" ||
+		strings.Contains(f.File, ":") ||
+		f.StartLine < 1 ||
+		f.EndLine < f.StartLine ||
+		f.EndLine-f.StartLine >= 200 ||
+		strings.TrimSpace(f.Problem) == "" ||
+		strings.TrimSpace(f.Solution) == "" ||
+		len(f.Evidence) == 0 {
+		return esa.Finding{}, dropped, errors.New("it needs the historical commit, a file, at most 200 lines, a problem, a solution and evidence")
+	}
+	return f, dropped, nil
 }

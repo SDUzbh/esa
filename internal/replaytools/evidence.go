@@ -3,15 +3,38 @@ package replaytools
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"path"
 	"strconv"
+	"strings"
 )
 
 // EvidenceID binds source, reference prefix, absolute line number and exact text.
+// It reads as the location plus a checksum, such as Client.java:350#a3f9 or
+// run-48213:42#9c1e, so the Agent rebuilds it from what it cites instead of
+// recalling a random string; a wrong name, line or checksum matches nothing.
 // Consumers must reject ambiguous IDs rather than resolving a collision by order.
 // It is a provenance identifier, not a confidence or semantic-correctness score.
 func EvidenceID(source, prefix string, line int, text string) string {
 	sum := sha256.Sum256([]byte(source + "\x00" + prefix + strconv.Itoa(line) + "\x00" + text))
-	return "e_" + hex.EncodeToString(sum[:10])
+	return evidenceLabel(source, prefix) + ":" + strconv.Itoa(line) + "#" + hex.EncodeToString(sum[:2])
+}
+
+// evidenceLabel is the readable part of an ID: a source file's base name, or
+// run- and the last digits of a run's output reference.
+func evidenceLabel(source, prefix string) string {
+	ref := strings.TrimSuffix(prefix, ":")
+	switch source {
+	case "git":
+		if i := strings.Index(ref, ":"); i >= 0 {
+			ref = ref[i+1:]
+		}
+		return path.Base(ref)
+	case "replay":
+		if n := strings.TrimPrefix(ref, "tool-"); n != ref && len(n) > 5 {
+			return "run-" + n[len(n)-5:]
+		}
+	}
+	return ref
 }
 
 type EvidenceLine struct {

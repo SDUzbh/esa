@@ -81,7 +81,9 @@ def main():
     env = dict(os.environ, ESA_ANALYZER_TOKEN=token)
     provider_args = [str(Path(args.bin) / 'esa-codex'), '-codex', args.codex, '-registry', str(sets / 'releases.json'),
                      '-profiles', str(ROOT / 'profiles'), '-issues-directory', str(issues), '-runs', str(out / 'codex-runs'),
-                     '-listen', args.listen, '-concurrency', args.concurrency]
+                     '-listen', args.listen, '-concurrency', args.concurrency,
+                     # A replay may only install dependencies published before each ticket.
+                     '-maven-before-cutoff']
     if args.tool_catalog:
         provider_args += ['-tool-catalog', str(Path(args.tool_catalog).resolve())]
     record = {'set': str(sets), 'manifest': args.manifest, 'tool_catalog': args.tool_catalog and str(Path(args.tool_catalog).resolve()),

@@ -84,6 +84,7 @@ class LauncherTests(unittest.TestCase):
         provider, replay = self.recorded('provider'), self.recorded('replay')
         args = provider['argv']
         self.assertEqual(args[args.index('-tool-catalog') + 1], str(self.catalog.resolve()))
+        self.assertIn('-maven-before-cutoff', args)
         self.assertEqual(args[args.index('-issues-directory') + 1], str(Path(self.dir.name, 'issues')))
         self.assertTrue(provider['token'] and provider['token'] == replay['token'])
         self.assertEqual(replay['url'], 'http://%s/analyze' % self.listen)

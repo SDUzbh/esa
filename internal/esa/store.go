@@ -230,12 +230,12 @@ func (s *Store) needsWork(now time.Time, provider bool, maxQueueWait time.Durati
 	}
 	for _, task := range s.state.investigationsIn(states...) {
 		if parked(task) {
-			if provider && free || time.Since(task.WaitingSince) >= maxQueueWait {
+			if provider && free && !providerPaused(s.state) || time.Since(queueWaitStart(s.state, task)) >= maxQueueWait {
 				return true
 			}
 			continue
 		}
-		if task.State == InvestigationQueued ||
+		if task.State == InvestigationQueued && !(provider && providerPaused(s.state)) ||
 			activeInvestigation(task) && !task.LeaseUntil.After(now) ||
 			provider && task.State == InvestigationAwaitingConfiguration && !task.InvocationStarted {
 			return true

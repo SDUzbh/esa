@@ -237,8 +237,12 @@ func TestDurableStoreAndRollback(t *testing.T) {
 	if err := store.Update(func(s *State) error { s.LastClaimedProject = "3"; return nil }); err != nil {
 		t.Fatal(err)
 	}
+	paused := time.Date(2026, 10, 19, 15, 19, 0, 0, time.UTC)
+	if err := store.Update(func(s *State) error { s.ProviderPausedUntil = paused; return nil }); err != nil {
+		t.Fatal(err)
+	}
 	loaded := reopenTestStore(t, store)
-	if loaded.Snapshot().LastClaimedProject != "3" {
+	if loaded.Snapshot().LastClaimedProject != "3" || !loaded.Snapshot().ProviderPausedUntil.Equal(paused) {
 		t.Fatal("committed Update lost across a restart")
 	}
 	if err := loaded.Update(func(s *State) error { s.LastClaimedProject = "4"; return ErrConflict }); !errors.Is(err, ErrConflict) || loaded.Snapshot().LastClaimedProject != "3" {

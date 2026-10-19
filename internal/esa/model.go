@@ -304,18 +304,21 @@ type Receipt struct {
 // State is the persistence frame for business data and immutable audit history.
 // Generated Issue-directory files are projections, never a second authority.
 type State struct {
-	IssueAccessSequence   uint64                      `json:"issue_access_sequence,omitempty"`
-	StoredFields          JSONFields                  `json:"-"`
-	LatestSnapshot        Table[string]               `json:"latest_snapshot,omitzero"`
-	Snapshots             Table[TicketSnapshot]       `json:"snapshots,omitzero"`
-	Issues                Table[EngineeringIssue]     `json:"engineering_issues,omitzero"`
-	Memberships           Table[IssueTicketLink]      `json:"issue_ticket_links,omitzero"`
-	MembershipHistory     []IssueTicketLink           `json:"issue_ticket_link_history,omitempty"`
-	IssueOverrides        Table[string]               `json:"issue_overrides,omitzero"`
-	Investigations        Table[Investigation]        `json:"investigations,omitzero"`
-	Groups                Table[InvestigationGroup]   `json:"investigation_groups,omitzero"`
-	Solutions             Table[SolutionRevision]     `json:"solution_revisions,omitzero"`
-	ReplayClock           time.Time                   `json:"replay_clock,omitempty"`
+	IssueAccessSequence uint64                    `json:"issue_access_sequence,omitempty"`
+	StoredFields        JSONFields                `json:"-"`
+	LatestSnapshot      Table[string]             `json:"latest_snapshot,omitzero"`
+	Snapshots           Table[TicketSnapshot]     `json:"snapshots,omitzero"`
+	Issues              Table[EngineeringIssue]   `json:"engineering_issues,omitzero"`
+	Memberships         Table[IssueTicketLink]    `json:"issue_ticket_links,omitzero"`
+	MembershipHistory   []IssueTicketLink         `json:"issue_ticket_link_history,omitempty"`
+	IssueOverrides      Table[string]             `json:"issue_overrides,omitzero"`
+	Investigations      Table[Investigation]      `json:"investigations,omitzero"`
+	Groups              Table[InvestigationGroup] `json:"investigation_groups,omitzero"`
+	Solutions           Table[SolutionRevision]   `json:"solution_revisions,omitzero"`
+	ReplayClock         time.Time                 `json:"replay_clock,omitempty"`
+	// ProviderPausedUntil holds all provider work until the provider's usage
+	// limit resets (wall-clock time).
+	ProviderPausedUntil   time.Time                   `json:"provider_paused_until,omitempty"`
 	LastClaimedProject    string                      `json:"last_claimed_project,omitempty"`
 	ClassifierPredictions Table[ClassifierPrediction] `json:"classifier_predictions,omitzero"`
 	ClassifierFeedback    Table[ClassifierFeedback]   `json:"classifier_feedback,omitzero"`

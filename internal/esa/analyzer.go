@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"time"
 )
 
@@ -75,10 +76,15 @@ func (a HTTPAnalyzer) Analyze(ctx context.Context, input AnalyzeRequest) (Report
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		var failure struct {
-			Report Report `json:"report"`
+			Error   string    `json:"error"`
+			RetryAt time.Time `json:"retry_at"`
+			Report  Report    `json:"report"`
 		}
 		if json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&failure) == nil {
 			report = failure.Report
+		}
+		if resp.StatusCode == http.StatusTooManyRequests {
+			return report, &ProviderQuotaError{RetryAt: quotaRetryAt(failure.RetryAt, resp.Header.Get("Retry-After")), Message: failure.Error}
 		}
 		return report, fmt.Errorf("engineering provider returned HTTP %d", resp.StatusCode)
 	}
@@ -86,6 +92,19 @@ func (a HTTPAnalyzer) Analyze(ctx context.Context, input AnalyzeRequest) (Report
 		return report, err
 	}
 	return report, nil
+}
+
+// quotaRetryAt is the provider's reset time, from its body or Retry-After
+// seconds; without either, try again in an hour.
+func quotaRetryAt(at time.Time, retryAfter string) time.Time {
+	if at.IsZero() {
+		if seconds, err := strconv.Atoi(retryAfter); err == nil && seconds > 0 {
+			at = time.Now().Add(time.Duration(seconds) * time.Second)
+		} else {
+			at = time.Now().Add(time.Hour)
+		}
+	}
+	return at.UTC()
 }
 
 func (e *Engine) Recover() error {

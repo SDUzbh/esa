@@ -81,12 +81,14 @@ type frame struct {
 	IssueAccessSequence uint64
 	ReplayClock         [unsafe.Sizeof(State{}.ReplayClock)]byte
 	LastClaimedProject  string
+	ProviderPausedUntil [unsafe.Sizeof(State{}.ProviderPausedUntil)]byte
 	SchemaVersion       int
 }
 
 func frameOf(s *State) frame {
 	f := frame{IssueAccessSequence: s.IssueAccessSequence, LastClaimedProject: s.LastClaimedProject, SchemaVersion: s.SchemaVersion}
 	f.ReplayClock = *(*[unsafe.Sizeof(State{}.ReplayClock)]byte)(unsafe.Pointer(&s.ReplayClock))
+	f.ProviderPausedUntil = *(*[unsafe.Sizeof(State{}.ProviderPausedUntil)]byte)(unsafe.Pointer(&s.ProviderPausedUntil))
 	return f
 }
 

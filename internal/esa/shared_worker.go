@@ -47,7 +47,7 @@ func (e *Engine) settleParked(s *State) {
 			continue
 		}
 		superseded := !taskHasActiveMembers(*s, task) || s.Groups.Get(task.GroupID).CurrentTaskID != task.ID
-		if !superseded && time.Since(task.WaitingSince) < limit {
+		if !superseded && time.Since(queueWaitStart(*s, task)) < limit {
 			continue
 		}
 		run := s.Runs.Get(task.RunID)
@@ -244,6 +244,10 @@ func (e *Engine) ProcessOne(ctx context.Context, analyzer Analyzer) (bool, error
 			return err
 		}
 		e.settleParked(s)
+		// No new or resumed provider work starts until a usage limit resets.
+		if analyzer != nil && providerPaused(*s) {
+			return nil
+		}
 		// Parked tasks hold no worker, so they do not count toward the project limit.
 		active := map[string]int{}
 		for _, item := range s.investigationsIn(InvestigationRunning, InvestigationInvestigating) {
@@ -420,6 +424,23 @@ func (e *Engine) ProcessOne(ctx context.Context, analyzer Analyzer) (bool, error
 		// The parking transaction already stored the routed report and released
 		// ownership; the worker is free for other tickets.
 		return true, nil
+	}
+	if quota, ok := asQuota(callErr); ok {
+		// A usage limit is not a diagnosis failure: hold the task and resume
+		// at the refused stage after the reset.
+		err = e.update(func(s *State) error {
+			current := s.Investigations.Get(task.ID)
+			if !ownsInvestigation(current, task) {
+				return fmt.Errorf("%w: stale investigation result rejected", ErrConflict)
+			}
+			r := s.Runs.Get(run.ID)
+			e.holdForQuota(s, &current, &r, input, quota, time.Since(started))
+			s.Investigations.Put(task.ID, current)
+			s.Runs.Put(run.ID, r)
+			return nil
+		})
+		e.Store.signalWork()
+		return true, err
 	}
 	defer e.Store.signalWork()
 	if callErr == nil {

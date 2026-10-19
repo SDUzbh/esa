@@ -307,6 +307,7 @@ type pgFrame struct {
 	IssueAccessSequence uint64     `json:"issue_access_sequence,omitempty"`
 	ReplayClock         time.Time  `json:"replay_clock,omitzero"`
 	LastClaimedProject  string     `json:"last_claimed_project,omitempty"`
+	ProviderPausedUntil time.Time  `json:"provider_paused_until,omitzero"`
 	SchemaVersion       int        `json:"schema_version"`
 	Unknown             JSONFields `json:"unknown,omitempty"`
 }
@@ -439,6 +440,7 @@ func (p *PostgresPersister) readState(ctx context.Context, tx pgx.Tx, full bool)
 		return State{}, 0, 0, fmt.Errorf("meta frame: %w", err)
 	}
 	state.IssueAccessSequence, state.ReplayClock, state.LastClaimedProject, state.SchemaVersion, state.StoredFields = frame.IssueAccessSequence, frame.ReplayClock, frame.LastClaimedProject, frame.SchemaVersion, frame.Unknown
+	state.ProviderPausedUntil = frame.ProviderPausedUntil
 	readRows := func(table pgTable, query string, args ...any) error {
 		rows, err := tx.Query(ctx, query, args...)
 		if err != nil {
@@ -599,6 +601,7 @@ func (p *PostgresPersister) Apply(c Commit) (uint64, error) {
 		IssueAccessSequence: c.State.IssueAccessSequence,
 		ReplayClock:         c.State.ReplayClock,
 		LastClaimedProject:  c.State.LastClaimedProject,
+		ProviderPausedUntil: c.State.ProviderPausedUntil,
 		SchemaVersion:       c.State.SchemaVersion,
 		Unknown:             c.State.StoredFields,
 	})

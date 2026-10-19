@@ -6,7 +6,7 @@ for the releases it uses (see docs/TICKET_BACKTEST.md):
 
 * fixed bugs, stratified by primary component, whose single affected version
   is a release tag older than the ticket, with only regular files and whose fix is a first-parent
-  trunk commit that names the ticket and changes an existing non-test file
+  trunk commit that names the ticket and changes an existing file that is not a test or documentation
   inside the trace window (label analyze);
 * later duplicates of eligible bugs (label reuse), chosen first; their
   originals join the bug sample within their stratum's quota and are marked
@@ -72,6 +72,18 @@ def stamp(text):
 
 def iso(moment):
     return moment.astimezone(timezone.utc).strftime('%Y-%m-%dT%H:%M:%S.%f')[:-3] + 'Z'
+
+
+DOC_EXTENSIONS = {'.md', '.txt', '.rst', '.adoc', '.html', '.htm', '.png', '.jpg', '.jpeg', '.gif', '.svg'}
+DOC_NAMES = ('LICENSE', 'NOTICE', 'README', 'CHANGELOG', 'COPYING')
+
+
+def fix_file(name):
+    """Not a test, documentation or legal text; the scorer (system_replay/score.go) uses the same rule."""
+    path = Path(name)
+    if path.suffix.lower() in DOC_EXTENSIONS or path.name.upper().startswith(DOC_NAMES) or 'docs' in path.parts[:-1]:
+        return False
+    return not test_file(name)
 
 
 def test_file(name):
@@ -154,7 +166,7 @@ class History:
         out = git(self.repo, 'diff-tree', '-r', '-M', '--no-commit-id', '--name-status', commit + '^', commit)
         for line in out.splitlines():
             status, *names = line.split('\t')
-            if status[0] in 'MDR' and names and not test_file(names[0]):
+            if status[0] in 'MDR' and names and fix_file(names[0]):
                 return True
         return False
 
@@ -333,8 +345,11 @@ def main():
                         'run_id': ['/ticket/latest_run/id'], 'issue_id': ['/ticket/engineering_issue/id', '/ticket/latest_run/report/issue/existing_id'],
                         'findings': ['/ticket/latest_run/report/findings'], 'usage': ['/ticket/latest_run/report/usage']},
             'capture': {'run_id': '/ticket/latest_run/id'},
-            'terminal_states': ['completed', 'awaiting_configuration', 'awaiting_information', 'awaiting_review', 'failed', 'restricted',
-                                'invalidated', 'draft', 'trusted', 'rejected', 'duplicate', 'archived'],
+            # Every run state Routing or Engineering can end in, or a support
+            # return would wait out the whole timeout.
+            'terminal_states': ['completed', 'awaiting_configuration', 'awaiting_forward', 'awaiting_information', 'awaiting_review',
+                                'returned_to_support', 'joined', 'superseded', 'issue_removed', 'membership_reviewed', 'failed',
+                                'restricted', 'invalidated', 'draft', 'trusted', 'rejected', 'duplicate', 'archived'],
             'timeout_seconds': args.timeout or (30 if args.mode == 'fixture' else 1800), 'poll_milliseconds': 100 if args.mode == 'fixture' else 2000},
         'jobs': jobs, 'repo': str(repo), 'mainline': args.mainline, 'versions': args.versions}
     # Engineering is admitted only for a registered release, so the provider

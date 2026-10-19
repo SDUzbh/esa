@@ -35,6 +35,10 @@ func run() error {
 	registryPath := flag.String("registry", "", "Project/release registry for per-task historical source resolution")
 	profiles := flag.String("profiles", "profiles", "Operator-approved versioned Profile and Skill directory")
 	toolCatalog := flag.String("tool-catalog", "", "Private JSON catalog of approved pinned temporary tools")
+	mavenRepository := flag.String("maven-repository", "https://repo1.maven.org/maven2",
+		"HTTPS repository engineering may install any artifact from on demand (maven_install); empty disables it")
+	mavenBeforeCutoff := flag.Bool("maven-before-cutoff", false,
+		"Historical replays only: refuse artifacts published after each task's observation cutoff")
 	concurrency := flag.Int("concurrency", 3, "Maximum engineering environments running simultaneously (1..3)")
 	issuesRoot := flag.String("issues-directory", "runtime/esa/issues", "Local read-only root of ESA Issue projections shared with the service")
 	runs := flag.String("runs", ".esa/codex-runs", "Private invocation audit directory")
@@ -182,6 +186,13 @@ func run() error {
 		ToolCommand:  toolCommand,
 		ProfilesRoot: profileDir,
 	}
+	if *mavenRepository != "" && !strings.HasPrefix(*mavenRepository, "https://") {
+		return fmt.Errorf("-maven-repository must be an HTTPS URL")
+	}
+	if *mavenBeforeCutoff && *mavenRepository == "" {
+		return fmt.Errorf("-maven-before-cutoff needs -maven-repository")
+	}
+	provider.MavenRepository, provider.MavenBeforeCutoff = *mavenRepository, *mavenBeforeCutoff
 	if *toolCatalog != "" {
 		data, err := os.ReadFile(*toolCatalog)
 		if err != nil {

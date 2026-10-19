@@ -272,20 +272,22 @@ func validRunID(id string) bool {
 }
 func (p *Provider) child() *Provider {
 	return &Provider{
-		CLI:              p.CLI,
-		Model:            p.Model,
-		Effort:           p.Effort,
-		RunsDir:          p.RunsDir,
-		ToolsConfig:      p.ToolsConfig,
-		ToolCommand:      p.ToolCommand,
-		ProfilesRoot:     p.ProfilesRoot,
-		CheckRelease:     p.CheckRelease,
-		Resolve:          p.Resolve,
-		ToolCatalog:      p.ToolCatalog,
-		SetupEnvironment: p.SetupEnvironment,
-		Packet:           p.Packet,
-		IssuesRoot:       p.IssuesRoot,
-		Slots:            p.Slots,
+		CLI:               p.CLI,
+		Model:             p.Model,
+		Effort:            p.Effort,
+		RunsDir:           p.RunsDir,
+		ToolsConfig:       p.ToolsConfig,
+		ToolCommand:       p.ToolCommand,
+		ProfilesRoot:      p.ProfilesRoot,
+		CheckRelease:      p.CheckRelease,
+		Resolve:           p.Resolve,
+		ToolCatalog:       p.ToolCatalog,
+		MavenRepository:   p.MavenRepository,
+		MavenBeforeCutoff: p.MavenBeforeCutoff,
+		SetupEnvironment:  p.SetupEnvironment,
+		Packet:            p.Packet,
+		IssuesRoot:        p.IssuesRoot,
+		Slots:             p.Slots,
 	}
 }
 func combineUsage(a, b esa.Usage) esa.Usage {

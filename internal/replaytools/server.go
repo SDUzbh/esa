@@ -46,6 +46,7 @@ type Config struct {
 	AllowedProfiles       []string               `json:"allowed_profiles,omitempty"`
 	AvailableCapabilities []string               `json:"available_capabilities,omitempty"`
 	Tools                 map[string]ToolPackage `json:"tools,omitempty"`
+	Maven                 *MavenPolicy           `json:"maven,omitempty"`
 	ProfileHashes         map[string]string      `json:"profile_hashes,omitempty"`
 	Readiness             map[string]any         `json:"readiness,omitempty"`
 }
@@ -57,7 +58,9 @@ type Record struct {
 	Result    map[string]any          `json:"result,omitempty"`
 }
 
-var Names = []string{"read_code", "run", "install_environment", "request_environment_change", "source_search", "capability_request", "tool_install"}
+var Names = []string{
+	"read_code", "run", "install_environment", "request_environment_change", "source_search", "capability_request", "tool_install", "maven_install",
+}
 
 func Load(path string) (Config, error) {
 	var c Config
@@ -218,7 +221,7 @@ func (s *Server) Call(ctx context.Context, name string, args json.RawMessage) (m
 	if s.Config.IssuesOnly {
 		return nil, errors.New("Routing Agent cannot access source, runtime or installation tools")
 	}
-	if name == "source_search" || name == "capability_request" || name == "tool_install" {
+	if name == "source_search" || name == "capability_request" || name == "tool_install" || name == "maven_install" {
 		return s.extendedCall(ctx, name, args)
 	}
 	var a struct {
@@ -420,6 +423,9 @@ func (s *Server) Serve(ctx context.Context, in io.Reader, out io.Writer) (result
 			result = map[string]any{}
 		case "tools/list":
 			available := tools(s.Config.ProfilesRoot != "")
+			if s.Config.ProfilesRoot != "" && s.Config.Maven != nil {
+				available = append(available, mavenTool())
+			}
 			if s.Config.IssuesOnly {
 				available = routingTools(s.Config.IssueContext != "")
 			}

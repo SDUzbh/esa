@@ -81,6 +81,20 @@ type TicketScore struct {
 	Calls         float64  `json:"calls"`
 	ElapsedMS     int64    `json:"elapsed_ms"`
 	Error         string   `json:"error,omitempty"`
+	// Adjusted explains an expected route changed from the label: a duplicate
+	// whose original produced no issue has nothing to reuse.
+	Adjusted string `json:"adjusted,omitempty"`
+	// ReusedIssue is whether a reused duplicate joined its original's issue.
+	ReusedIssue bool `json:"reused_issue,omitempty"`
+	// Undelivered counts findings of a failed run, which ESA never published;
+	// they are not scored.
+	Undelivered int `json:"undelivered_findings,omitempty"`
+	// Abstained is an expected-analyze ticket with ground truth that delivered
+	// no findings.
+	Abstained bool `json:"abstained,omitempty"`
+	// StaleFindings counts findings whose file no longer exists where the fix
+	// was made, as after a rewrite; such a miss needs a manual look.
+	StaleFindings int `json:"stale_findings,omitempty"`
 }
 
 // Score is the evaluation report.
@@ -92,6 +106,12 @@ type Score struct {
 	Localized    int                       `json:"localization_tickets"`
 	NoTruth      int                       `json:"analyze_tickets_without_ground_truth"`
 	FileHit      Rate                      `json:"file_hit"`
+	Abstained    int                       `json:"abstained"`
+	Answered     Rate                      `json:"file_hit_when_answered"`
+	Undelivered  int                       `json:"tickets_with_undelivered_findings"`
+	Stale        int                       `json:"misses_with_stale_findings"`
+	ReuseIssue   Rate                      `json:"reuse_joined_original_issue"`
+	Adjusted     int                       `json:"adjusted_labels"`
 	LineHit      Rate                      `json:"line_hit"`
 	Precision    Mean                      `json:"precision"`
 	Recall       Mean                      `json:"recall"`
@@ -101,6 +121,23 @@ type Score struct {
 	Calls        Spread                    `json:"calls"`
 	ElapsedMS    Spread                    `json:"elapsed_ms"`
 	Unlabeled    []string                  `json:"unlabeled,omitempty"`
+}
+
+// docExtensions and docNames are documentation, legal text and images, which
+// cannot locate a fix. Build files can: a build bug is fixed in one.
+var docExtensions = map[string]bool{".md": true, ".txt": true, ".rst": true, ".adoc": true, ".html": true, ".htm": true,
+	".png": true, ".jpg": true, ".jpeg": true, ".gif": true, ".svg": true}
+var docNames = []string{"LICENSE", "NOTICE", "README", "CHANGELOG", "COPYING"}
+
+// fixFile reports whether a changed file can be part of a fix's location:
+// not a test, documentation or legal text.
+func fixFile(name string) bool {
+	base := strings.ToUpper(path.Base(name))
+	if docExtensions[strings.ToLower(path.Ext(name))] || slices.ContainsFunc(docNames, func(n string) bool { return strings.HasPrefix(base, n) }) ||
+		slices.Contains(strings.Split(path.Dir(name), "/"), "docs") {
+		return false
+	}
+	return !testFile(name)
 }
 
 // testFile reports whether a changed file is a test, which is not counted as
@@ -119,20 +156,36 @@ func ScoreRun(ctx context.Context, summary Summary, labels Labels, repo string) 
 	g := Git{repo, ctx}
 	out := Score{RoutingBy: map[string]Rate{}, Confusion: map[string]map[string]int{}}
 	var precision, recall []float64
-	seen := map[string]bool{}
+	observed := map[string]Observation{}
+	for _, r := range summary.Results {
+		observed[r.ID] = initialObservation(r)
+	}
 	for _, r := range summary.Results {
 		label, ok := labels.Jobs[r.ID]
 		if !ok {
 			out.Unlabeled = append(out.Unlabeled, r.ID)
 			continue
 		}
-		seen[r.ID] = true
 		obs := initialObservation(r)
+		undelivered := 0
+		if obs.State == "failed" && len(obs.Findings) > 0 {
+			undelivered, obs.Findings = len(obs.Findings), nil
+			out.Undelivered++
+		}
 		t := TicketScore{ID: r.ID, ExpectedRoute: label.ExpectedRoute, ObservedRoute: obs.Route, State: obs.State, Findings: len(obs.Findings), Error: r.Error}
+		t.Undelivered = undelivered
 		if t.ObservedRoute == "" {
 			t.ObservedRoute = "none"
 		}
-		t.RouteCorrect = t.ObservedRoute == label.ExpectedRoute
+		if label.Original != "" {
+			if original, ok := observed[label.Original]; ok && original.IssueID == "" {
+				t.ExpectedRoute, t.Adjusted = "analyze", "original "+label.Original+" produced no issue to reuse"
+				out.Adjusted++
+			} else if ok {
+				t.ReusedIssue = t.ObservedRoute == "reuse" && obs.IssueID != "" && obs.IssueID == original.IssueID
+			}
+		}
+		t.RouteCorrect = t.ObservedRoute == t.ExpectedRoute
 		if len(r.Events) > 0 {
 			t.ElapsedMS = r.Events[0].ElapsedMS
 		}
@@ -141,6 +194,7 @@ func ScoreRun(ctx context.Context, summary Summary, labels Labels, repo string) 
 		if label.ExpectedRoute == "analyze" {
 			scoreLocation(g, r, obs, &t)
 			if t.GroundTruth {
+				t.Abstained = len(obs.Findings) == 0
 				out.Localized++
 				precision, recall = append(precision, t.Precision), append(recall, t.Recall)
 			} else {
@@ -154,7 +208,7 @@ func ScoreRun(ctx context.Context, summary Summary, labels Labels, repo string) 
 		out.Tickets = append(out.Tickets, t)
 	}
 	sort.Slice(out.Tickets, func(i, j int) bool { return out.Tickets[i].ID < out.Tickets[j].ID })
-	var routed, fileHits, lineHits int
+	var routed, fileHits, lineHits, answered, answeredHits, reuse, reused int
 	byExpected := map[string][2]int{}
 	var input, cached, output, calls, elapsed []float64
 	for _, t := range out.Tickets {
@@ -168,6 +222,24 @@ func ScoreRun(ctx context.Context, summary Summary, labels Labels, repo string) 
 		if t.GroundTruth && t.FileHit {
 			fileHits++
 		}
+		if t.GroundTruth && !t.Abstained {
+			answered++
+			if t.FileHit {
+				answeredHits++
+			}
+		}
+		if t.Abstained {
+			out.Abstained++
+		}
+		if t.GroundTruth && !t.FileHit && t.StaleFindings > 0 {
+			out.Stale++
+		}
+		if t.ExpectedRoute == "reuse" {
+			reuse++
+			if t.ReusedIssue {
+				reused++
+			}
+		}
 		if t.GroundTruth && t.LineHit {
 			lineHits++
 		}
@@ -179,6 +251,7 @@ func ScoreRun(ctx context.Context, summary Summary, labels Labels, repo string) 
 		out.RoutingBy[route] = wilson(b[0], b[1])
 	}
 	out.FileHit, out.LineHit = wilson(fileHits, out.Localized), wilson(lineHits, out.Localized)
+	out.Answered, out.ReuseIssue = wilson(answeredHits, answered), wilson(reused, reuse)
 	out.Precision, out.Recall = bootstrap(precision, labels.Seed), bootstrap(recall, labels.Seed+1)
 	out.InputTokens, out.CachedTokens, out.OutputTokens = spread(input), spread(cached), spread(output)
 	out.Calls, out.ElapsedMS = spread(calls), spread(elapsed)
@@ -212,7 +285,7 @@ func scoreLocation(g Git, r Result, obs Observation, t *TicketScore) {
 		}
 		f := fix{parent: c.Parent}
 		for _, change := range c.Changes {
-			if change.OldFile == "/dev/null" || testFile(change.OldFile) {
+			if change.OldFile == "/dev/null" || !fixFile(change.OldFile) {
 				continue
 			}
 			h := hunk{change.OldFile, change.OldStart, change.OldCount}
@@ -235,13 +308,16 @@ func scoreLocation(g Git, r Result, obs Observation, t *TicketScore) {
 	covered := map[string]bool{}
 	fileHits := 0
 	for _, finding := range obs.Findings {
-		fileHit, lineHit := false, false
+		fileHit, lineHit, present := false, false, false
 		for _, f := range fixes {
 			mapped := finding
 			if finding.Commit != "" && finding.Commit != f.parent {
 				if patch, e := g.run("diff", "--no-ext-diff", "--no-textconv", "--find-renames", "--unified=0", finding.Commit, f.parent); e == nil {
 					mapped = mapFindings([]Finding{finding}, changes(patch))[0]
 				}
+			}
+			if _, e := g.run("cat-file", "-e", f.parent+":"+mapped.File); e == nil {
+				present = true
 			}
 			for _, h := range f.hunks {
 				if h.file != mapped.File {
@@ -253,6 +329,9 @@ func scoreLocation(g Git, r Result, obs Observation, t *TicketScore) {
 					lineHit = true
 				}
 			}
+		}
+		if !present {
+			t.StaleFindings++
 		}
 		if fileHit {
 			fileHits++
@@ -375,7 +454,10 @@ func WriteScore(dir string, s Score) error {
 	for _, r := range routes {
 		fmt.Fprintf(&b, "| Routing accuracy, expected %s | %s |\n", r, pct(s.RoutingBy[r]))
 	}
+	fmt.Fprintf(&b, "| Duplicates that joined their original's issue | %s |\n", pct(s.ReuseIssue))
 	fmt.Fprintf(&b, "| Fix file found | %s |\n", pct(s.FileHit))
+	fmt.Fprintf(&b, "| Fix file found, when the Agent answered | %s |\n", pct(s.Answered))
+	fmt.Fprintf(&b, "| Abstained (no findings delivered) | %d of %d |\n", s.Abstained, s.Localized)
 	fmt.Fprintf(&b, "| Fix lines overlapped | %s |\n", pct(s.LineHit))
 	fmt.Fprintf(&b, "| Finding precision (files) | %s |\n", mean(s.Precision))
 	fmt.Fprintf(&b, "| Fix-file recall | %s |\n", mean(s.Recall))
@@ -386,7 +468,11 @@ func WriteScore(dir string, s Score) error {
 		s.OutputTokens.Mean, s.OutputTokens.Median, s.OutputTokens.P90, s.OutputTokens.Total)
 	fmt.Fprintf(&b, "| Wall time per ticket | mean %.1f s, median %.1f s, p90 %.1f s |\n\n", s.ElapsedMS.Mean/1000, s.ElapsedMS.Median/1000, s.ElapsedMS.P90/1000)
 	fmt.Fprintf(&b, "Localization counts only expected-analyze tickets whose fix was found by an exact ticket reference (%d); %d had none. "+
-		"A ticket without findings counts as a miss. Test files are not part of a fix.\n\n", s.Localized, s.NoTruth)
+		"A ticket without findings counts as a miss. Tests, documentation and license files are not part of a fix; build files are.\n\n",
+		s.Localized, s.NoTruth)
+	fmt.Fprintf(&b, "Findings of a failed run were never published and are not scored (%d tickets). "+
+		"%d duplicate labels were changed to analyze because the original produced no issue. "+
+		"%d misses name a file that no longer exists where the fix was made, as after a rewrite; review those by hand.\n\n", s.Undelivered, s.Adjusted, s.Stale)
 	fmt.Fprintf(&b, "## Routing confusion (expected → observed)\n\n| Expected | Observed | Tickets |\n| --- | --- | --- |\n")
 	for _, e := range routes {
 		observed := make([]string, 0)

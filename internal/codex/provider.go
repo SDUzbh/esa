@@ -46,11 +46,17 @@ type Provider struct {
 	Resolve                     func(context.Context, esa.AnalyzeRequest) (Registration, error)
 	Slots                       chan struct{}
 	ToolCatalog                 map[string]replaytools.ToolPackage
-	SetupEnvironment            func(context.Context, string) (string, func() error, error)
-	Packet                      Packet
-	mu                          sync.Mutex
-	workflows                   sync.Map
-	slotsOnce                   sync.Once
+	// MavenRepository lets engineering install any artifact from this HTTPS
+	// repository on demand; empty disables it.
+	MavenRepository string
+	// MavenBeforeCutoff, for historical replays only, refuses artifacts
+	// published after the task's observation cutoff.
+	MavenBeforeCutoff bool
+	SetupEnvironment  func(context.Context, string) (string, func() error, error)
+	Packet            Packet
+	mu                sync.Mutex
+	workflows         sync.Map
+	slotsOnce         sync.Once
 }
 
 // Fingerprint excludes live issue IDs/timestamps but preserves all diagnostic
@@ -324,6 +330,7 @@ func (p *Provider) analyzeEngineering(ctx context.Context, in esa.AnalyzeRequest
 			if p.ToolCatalog != nil {
 				tools.Tools = p.ToolCatalog
 			}
+			tools.Maven = p.mavenPolicy(in.Contract.ObservationCutoff)
 			tools.ProfilesRoot = p.ProfilesRoot
 			if len(tools.AllowedProfiles) == 0 {
 				tools.AllowedProfiles = []string{"general", "java-debug", "performance", "compatibility", "configuration"}
@@ -447,4 +454,17 @@ func reportedTokens(raw json.RawMessage) (esa.Usage, bool) {
 		return esa.Usage{}, false
 	}
 	return esa.Usage{InputTokens: *u.Input, CachedInputTokens: u.Cached, OutputTokens: *u.Output, TokensReported: true}, true
+}
+
+// mavenPolicy is the task's on-demand download policy, or nil when disabled.
+// Only a historical replay limits it to what was published by the cutoff.
+func (p *Provider) mavenPolicy(cutoff time.Time) *replaytools.MavenPolicy {
+	if p.MavenRepository == "" {
+		return nil
+	}
+	policy := &replaytools.MavenPolicy{Repository: p.MavenRepository}
+	if p.MavenBeforeCutoff {
+		policy.PublishedBefore = &cutoff
+	}
+	return policy
 }

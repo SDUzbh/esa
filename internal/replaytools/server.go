@@ -350,8 +350,9 @@ func tools(extended bool) []map[string]any {
 	result := []map[string]any{
 		{
 			"name": "read_code",
-			"description": "Read frozen historical source with absolute line numbers and stable evidence IDs. Copy " +
-				"returned IDs into finding locations and evidence_ids; never count lines manually. " +
+			"description": "Read frozen historical source with absolute line numbers and stable evidence IDs such as " +
+				"Client.java:350#a3f9 (file, line, checksum). Copy returned IDs exactly into finding locations and evidence_ids; " +
+				"never count lines manually or change any part of an ID. " +
 				"last_line reflects the actual returned range, including EOF.",
 			"inputSchema": schema(map[string]any{"path": str(), "first_line": number(), "line_count": number()}, "path", "first_line", "line_count"),
 		},

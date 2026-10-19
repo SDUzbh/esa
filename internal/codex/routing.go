@@ -134,7 +134,8 @@ func (p *Provider) Analyze(ctx context.Context, in esa.AnalyzeRequest) (esa.Repo
 	routing, alerts, err := p.routingStage(ctx, in, routingDir, "", prompt, instructions, schema)
 	result := esa.Report{Usage: routing.Usage, Alerts: alerts, Routing: &routing}
 	if err != nil {
-		return result, err
+		// A refused routing turn starts the run over under the same ID.
+		return result, setAsideAfterQuota(err, p.RunsDir, in.RunID)
 	}
 	searched, read := routingAudit(filepath.Join(routingDir, "tools.jsonl"), routing.RecordPath, routing.RecordHash)
 	if !searched && routing.Action != "return_to_support" {
@@ -228,6 +229,7 @@ func (p *Provider) engineerAnalysis(ctx context.Context, in esa.AnalyzeRequest, 
 	engineer := p.child()
 	engineer.RunsDir = filepath.Join(dir, "engineering")
 	report, err := engineer.analyzeEngineering(ctx, in)
+	err = setAsideAfterQuota(err, dir, "engineering", "engineering-attempt")
 	report.Routing = routed.Routing
 	report.Usage = combineUsage(routed.Usage, report.Usage)
 	report.AccessedIssueIDs = routed.AccessedIssueIDs
@@ -249,6 +251,7 @@ func (p *Provider) assignAnalysis(ctx context.Context, in esa.AnalyzeRequest, di
 	result := report
 	if len(report.Findings) > 0 || len(report.Evidence) > 0 {
 		decision, issue, alerts, err := p.assignIssue(ctx, in, dir, routingDir, report)
+		err = setAsideAfterQuota(err, dir, "assignment", "assignment-attempt", filepath.Join("routing", "assignment-request.json"))
 		result.AssignmentRouting, result.Issue = &decision, issue
 		result.Usage = combineUsage(result.Usage, decision.Usage)
 		esa.AddAlerts(&result, alerts...)

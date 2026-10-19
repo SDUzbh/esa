@@ -72,6 +72,7 @@ func (p *Provider) invoke(ctx context.Context, dir, prompt, sourceKey string, bu
 	}
 	turns := 0
 	unexpected := false
+	quota := ""
 	var lastUsage json.RawMessage
 	scanner := bufio.NewScanner(stdout)
 	scanner.Buffer(make([]byte, 4096), 2<<20)
@@ -79,9 +80,11 @@ func (p *Provider) invoke(ctx context.Context, dir, prompt, sourceKey string, bu
 		line := scanner.Bytes()
 		_, _ = log.Write(append(append([]byte{}, line...), '\n'))
 		var ev struct {
-			Type  string          `json:"type"`
-			Usage json.RawMessage `json:"usage"`
-			Item  struct {
+			Type    string                   `json:"type"`
+			Message string                   `json:"message"`
+			Error   struct{ Message string } `json:"error"`
+			Usage   json.RawMessage          `json:"usage"`
+			Item    struct {
 				Type   string `json:"type"`
 				Server string `json:"server"`
 				Tool   string `json:"tool"`
@@ -89,6 +92,9 @@ func (p *Provider) invoke(ctx context.Context, dir, prompt, sourceKey string, bu
 		}
 		if json.Unmarshal(line, &ev) != nil {
 			continue
+		}
+		if message := ev.Message + ev.Error.Message; (ev.Type == "error" || ev.Type == "turn.failed") && usageLimited(message) {
+			quota = message
 		}
 		if ev.Type == "turn.completed" {
 			turns++
@@ -143,6 +149,9 @@ func (p *Provider) invoke(ctx context.Context, dir, prompt, sourceKey string, bu
 	_ = os.WriteFile(filepath.Join(dir, "audit.json"), audit, 0600)
 	if scanner.Err() != nil {
 		return nil, usage, alerts, scanner.Err()
+	}
+	if quota != "" && turns == 0 {
+		return nil, usage, alerts, &esa.ProviderQuotaError{RetryAt: quotaReset(quota, time.Now()), Message: quota}
 	}
 	if waitErr != nil {
 		return nil, usage, alerts, fmt.Errorf("Codex failed; inspect private run logs (timeout=%t)", callCtx.Err() != nil)

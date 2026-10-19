@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"esa/internal/esa"
 )
@@ -42,6 +43,15 @@ func (p *Provider) Handler(token string) http.Handler {
 		}
 		report, err := p.Analyze(r.Context(), in)
 		w.Header().Set("Content-Type", "application/json")
+		var quota *esa.ProviderQuotaError
+		if errors.As(err, &quota) {
+			// Not a diagnosis failure: ESA holds the task and retries this stage.
+			slog.Warn("Codex usage limit reached", "run_id", in.RunID, "retry_at", quota.RetryAt, "message", quota.Message)
+			w.Header().Set("Retry-After", strconv.Itoa(max(1, int(time.Until(quota.RetryAt).Seconds()))))
+			w.WriteHeader(http.StatusTooManyRequests)
+			_ = json.NewEncoder(w).Encode(map[string]any{"error": quota.Message, "retry_at": quota.RetryAt, "report": report})
+			return
+		}
 		if err != nil {
 			slog.Warn("Codex diagnosis failed", "run_id", in.RunID, "error", err)
 			w.WriteHeader(422)

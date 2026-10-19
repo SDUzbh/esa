@@ -152,6 +152,27 @@ func (s *Server) extendedCall(ctx context.Context, name string, args json.RawMes
 			break
 		}
 		result, err = s.installTool(ctx, request.ID, pkg)
+	case "maven_install":
+		var request struct {
+			Coordinate  string `json:"coordinate"`
+			Reason      string `json:"reason"`
+			Hypothesis  string `json:"hypothesis_id"`
+			Observation string `json:"expected_observation"`
+		}
+		if err = decodeArgs(args, &request); err != nil {
+			return nil, err
+		}
+		_, _, _, valid := mavenCoordinate(request.Coordinate)
+		switch {
+		case s.Config.Maven == nil:
+			result = map[string]any{"status": "denied", "reason": "Maven downloads are not enabled for this task"}
+		case !has(s.granted, "temporary_tools"):
+			result = map[string]any{"status": "denied", "reason": "temporary_tools capability has not been granted"}
+		case !valid || strings.TrimSpace(request.Reason) == "" || request.Hypothesis == "" || request.Observation == "":
+			result = map[string]any{"status": "denied", "reason": "a group:artifact:version coordinate, reason, hypothesis and expected observation are required"}
+		default:
+			result, err = s.installMaven(ctx, request.Coordinate)
+		}
 	default:
 		return nil, errors.New("tool is not registered")
 	}
@@ -221,9 +242,7 @@ func (s *Server) installTool(ctx context.Context, id string, pkg ToolPackage) (m
 	}
 	dest := "/workspace/tools/" + id + "-" + capabilities.Digest([]byte(pkg.Version))[:12] + "/tool"
 	// An installed file is reusable only if its executable bytes still match.
-	if out, err := s.docker(call, "exec", s.Config.Container, "sha256sum", dest); err == nil &&
-		len(strings.Fields(string(out))) > 0 &&
-		strings.Fields(string(out))[0] == pkg.SHA256 {
+	if s.installed(call, dest, pkg.SHA256) {
 		return map[string]any{"status": "installed", "cache_hit": true, "path": dest, "version": pkg.Version, "sha256": pkg.SHA256}, nil
 	}
 	var reader io.ReadCloser
@@ -265,6 +284,20 @@ func (s *Server) installTool(ctx context.Context, id string, pkg ToolPackage) (m
 	if len(data) > 16<<20 || capabilities.Digest(data) != pkg.SHA256 {
 		return nil, errors.New("tool package size or SHA256 validation failed")
 	}
+	return s.placeTool(call, dest, data, pkg.SHA256, pkg.Version)
+}
+
+func (s *Server) installed(ctx context.Context, dest, digest string) bool {
+	out, err := s.docker(ctx, "exec", s.Config.Container, "sha256sum", dest)
+	return err == nil && len(strings.Fields(string(out))) > 0 && strings.Fields(string(out))[0] == digest
+}
+
+// placeTool streams verified bytes into the sandbox's scratch tools directory
+// and checks the installed digest.
+func (s *Server) placeTool(call context.Context, dest string, data []byte, digest, version string) (map[string]any, error) {
+	if s.installed(call, dest, digest) {
+		return map[string]any{"status": "installed", "cache_hit": true, "path": dest, "version": version, "sha256": digest}, nil
+	}
 	if output, err := s.docker(call, "exec", s.Config.Container, "mkdir", "-p", filepath.Dir(dest)); err != nil {
 		return nil, fmt.Errorf("tool directory preparation failed: %s", strings.TrimSpace(string(output)))
 	}
@@ -280,14 +313,13 @@ func (s *Server) installTool(ctx context.Context, id string, pkg ToolPackage) (m
 	var output limitedBuffer
 	cmd.Stdout = &output
 	cmd.Stderr = &output
-	if err = cmd.Run(); err != nil {
+	if err := cmd.Run(); err != nil {
 		return nil, fmt.Errorf("sandbox tool installation failed: %s", strings.TrimSpace(output.String()))
 	}
-	checksum, err := s.docker(call, "exec", s.Config.Container, "sha256sum", dest)
-	if err != nil || len(strings.Fields(string(checksum))) == 0 || strings.Fields(string(checksum))[0] != pkg.SHA256 {
+	if !s.installed(call, dest, digest) {
 		return nil, errors.New("installed tool hash verification failed")
 	}
-	return map[string]any{"status": "installed", "cache_hit": false, "path": dest, "version": pkg.Version, "sha256": pkg.SHA256}, nil
+	return map[string]any{"status": "installed", "cache_hit": false, "path": dest, "version": version, "sha256": digest}, nil
 }
 func extendedTools() []map[string]any {
 	str := map[string]string{"type": "string"}

@@ -112,9 +112,10 @@ var investigationTransitions = transitions[InvestigationState]{
 		InvestigationRunning, InvestigationSuperseded,
 	},
 	InvestigationReuseProposed: {InvestigationApplied, InvestigationWithdrawn},
+	// Running returns to Queued when the provider's usage limit refuses routing.
 	InvestigationRunning: {
 		InvestigationAgentProposed, InvestigationAwaitingInformation, InvestigationFailed,
-		InvestigationInvestigating, InvestigationJoined, InvestigationReturnedToSupport,
+		InvestigationInvestigating, InvestigationJoined, InvestigationQueued, InvestigationReturnedToSupport,
 		InvestigationReuseProposed, InvestigationSuperseded,
 	},
 	InvestigationTrusted: {InvestigationRejected, InvestigationWithdrawn},
@@ -131,9 +132,10 @@ var runTransitions = transitions[RunState]{
 		RunSuperseded,
 	},
 	RunRestricted: {RunAwaitingReview},
+	// Running returns to Queued when the provider's usage limit refuses routing.
 	RunRunning: {
 		RunAwaitingInformation, RunAwaitingReview, RunFailed, RunInvestigating, RunJoined,
-		RunReturnedToSupport, RunSuperseded,
+		RunQueued, RunReturnedToSupport, RunSuperseded,
 	},
 }
 

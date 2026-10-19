@@ -29,6 +29,23 @@ func TestRoutingCLIHelper(t *testing.T) {
 		return ""
 	}
 	dir, output, decision := arg("-C"), arg("-o"), arg("--model")
+	// quota_<stage> refuses that stage once with the CLI's usage-limit events,
+	// then behaves like analyze.
+	if refused, ok := strings.CutPrefix(decision, "quota_"); ok {
+		stage := map[string]string{"routing": "route", "assignment": "assign"}[filepath.Base(dir)]
+		if stage == "" {
+			stage = "engineer"
+		}
+		if marker := os.Getenv("QUOTA_MARKER"); refused == stage {
+			if _, err := os.Stat(marker); os.IsNotExist(err) {
+				_ = os.WriteFile(marker, nil, 0600)
+				message := "You've hit your usage limit. Upgrade to Pro (https://chatgpt.com/explore/pro) or try again at 11:19 PM."
+				fmt.Printf("{\"type\":\"error\",\"message\":%q}\n{\"type\":\"turn.failed\",\"error\":{\"message\":%q}}\n", message, message)
+				os.Exit(1)
+			}
+		}
+		decision = "analyze"
+	}
 	if filepath.Base(dir) == "routing" {
 		raw, err := os.ReadFile(filepath.Join(dir, "tools-config.json"))
 		if err != nil {

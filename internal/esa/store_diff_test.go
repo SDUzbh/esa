@@ -55,6 +55,7 @@ func TestDiffFrameFields(t *testing.T) {
 		"access sequence": func(s *State) { s.IssueAccessSequence++ },
 		"replay clock":    func(s *State) { s.ReplayClock = time.Unix(1, 0).UTC() },
 		"last project":    func(s *State) { s.LastClaimedProject = "2" },
+		"provider pause":  func(s *State) { s.ProviderPausedUntil = time.Unix(2, 0).UTC() },
 		"schema version":  func(s *State) { s.SchemaVersion = 2 },
 		"stored fields":   func(s *State) { s.StoredFields["legacy"] = json.RawMessage(`2`) },
 	} {

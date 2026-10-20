@@ -71,6 +71,8 @@ nohup python3 scripts/run_agent_eval.py --set reports/eval/set --tool-catalog ru
 bin/system-replay -score reports/eval/run-1/run/pipeline.json -labels reports/eval/set/labels.json -repo kafka -output reports/eval/score-1
 ```
 
+Provider runs so far (October 2026: sets of 14, 25 and 80 Kafka tickets, plus small reruns of single tickets) live in ignored `reports/eval-*` directories. They measured routing, localization and token cost on those tickets; the 80-ticket run is only partly scored, and the same ticket can end differently between runs, so single-run numbers are not accuracy claims.
+
 ## Routing search evaluation
 
 `scripts/build_routing_corpus.py` and `tools/routing-eval` measure the Routing Agent's `issue_search` offline, without a model, at realistic directory sizes. The builder writes every Fixed Kafka ticket as it was filed (summary, description and environment from before later edits) and two case sets: Resolved `Duplicate` tickets whose single Duplicate link is an earlier Fixed ticket, and as many controls with no Duplicate link from the same years. Each case carries the query styles the Agent used in evaluation runs (one identifier, component and version, empty browse) and others it could send (title, exception names, stack-frame classes). `routing-eval` gives each case a directory of every Fixed ticket created before it and reports where each query ranks the true original and how many records match, for ESA's shipped search and for the alternative indexes it lists. A test keeps its ranking identical to an exported ESA directory.
@@ -92,7 +94,7 @@ On the 2026-10-21 export (252 duplicates, 252 controls, directories of 121 to 11
 | `esa-api-kafka.json` | Historical ticket intake with an unconfigured provider, plus independent baseline/parent/fix runtime checks | 0 |
 | `esa-shared-investigations.json` | Deterministic HTTP provider: shared investigation identity, pending proposals and immutable engineer solution revisions | 0 |
 
-These examples start a separate backend on port 18090 with a new state file and disable Redmine synchronization. The Kafka fixture compiles unmodified historical clients and uses the shipped MockClient to inject a disconnected response. It is a client-code replay, not a full broker cluster or Kafka Connect deployment.
+These examples start a separate backend on port 18090 on its own throwaway Postgres schema and disable Redmine synchronization. The Kafka fixture compiles unmodified historical clients and uses the shipped MockClient to inject a disconnected response. It is a client-code replay, not a full broker cluster or Kafka Connect deployment.
 
 For the registered Kafka scenario, the baseline `fc7243c2af4b2b4affcdf14d80826986fe6d4ce8` and upstream parent `8c3c9548b636cdf760d2537afe115942d13bc003` exhibit NullPointerException. Upstream fix `9fb1e25738f89b75a36ef69f730b0e138ccd55b1` (PR #581) instead exhibits TimeoutException with the successful-response control passing. This establishes the registered behavioral change, not an engineering Agent accuracy result.
 

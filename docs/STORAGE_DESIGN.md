@@ -286,6 +286,8 @@ After migration:
 
 ## Configuration and deployment
 
+*As designed for the rollout. `-store` was later removed with the JSON store (see [Postgres only](#postgres-only)), and `-state-url` now only makes ESA refuse to start while it is set; `-database-url` is ESA's only store setting.*
+
 - **Flags:** a new `-database-url` (env `ESA_DATABASE_URL`). It cannot be combined with `-store`, and `-state-url` becomes deprecated.
 - **Database:** an init script creates database `esa` and role `esa` with privileges only on `esa`.
   - `docker-entrypoint-initdb.d` runs only on a new volume, so existing installs need a documented one-time SQL step.

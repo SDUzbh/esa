@@ -468,7 +468,7 @@ func (p *Provider) mavenPolicy(cutoff time.Time) *replaytools.MavenPolicy {
 	if p.MavenRepository == "" {
 		return nil
 	}
-	policy := &replaytools.MavenPolicy{Repository: p.MavenRepository}
+	policy := &replaytools.MavenPolicy{Repository: p.MavenRepository, Cache: p.MavenCache, CacheMaxBytes: p.MavenCacheMaxBytes}
 	if p.MavenBeforeCutoff {
 		policy.PublishedBefore = &cutoff
 	}

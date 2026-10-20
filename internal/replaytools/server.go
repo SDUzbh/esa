@@ -49,6 +49,9 @@ type Config struct {
 	Maven                 *MavenPolicy           `json:"maven,omitempty"`
 	ProfileHashes         map[string]string      `json:"profile_hashes,omitempty"`
 	Readiness             map[string]any         `json:"readiness,omitempty"`
+	// RuntimeGuidance is the runtime procedure, returned once with the first
+	// grant that includes runtime work, so source-only diagnoses never carry it.
+	RuntimeGuidance string `json:"runtime_guidance,omitempty"`
 }
 type Record struct {
 	Tool      string                  `json:"tool"`
@@ -126,7 +129,9 @@ type Server struct {
 	issueDirectory *esa.IssueDirectory
 	Config         Config
 	granted        []string
-	cleanup        func() error
+	// guided records that the runtime guidance has been returned.
+	guided  bool
+	cleanup func() error
 }
 
 // RuntimeSetup registers the operator helper and its owned task directory.

@@ -57,8 +57,10 @@ var PromptVersion = func() string {
 
 // engineeringInstructions assembles the Engineering Agent's instructions:
 // packet-only diagnosis or registered tools, with the catalog variant when
-// approved Profiles are available, and the bootstrap Skill text.
-func engineeringInstructions(tools, catalog bool, bootstrap string) string {
+// approved Profiles are available. In the catalog variant the runtime
+// procedure and the chosen Profile's Skill arrive with the capability grant,
+// so a source-only diagnosis does not carry them on every model call.
+func engineeringInstructions(tools, catalog bool) string {
 	base := promptText("engineering-packet")
 	if tools {
 		base = promptText("engineering-tools")
@@ -68,11 +70,7 @@ func engineeringInstructions(tools, catalog bool, bootstrap string) string {
 	}
 	text := base + " " + promptText("engineering-forwarded")
 	if catalog {
-		text += " " + promptText("engineering-catalog") + "\n" + bootstrap
+		text += " " + promptText("engineering-catalog")
 	}
-	text += " " + promptText("engineering-task") + " " + promptText("engineering-evidence")
-	if catalog {
-		text += " " + promptText("engineering-workspace")
-	}
-	return text
+	return text + " " + promptText("engineering-task") + " " + promptText("engineering-evidence")
 }

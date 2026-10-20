@@ -54,9 +54,11 @@ type Provider struct {
 	MavenBeforeCutoff bool
 	SetupEnvironment  func(context.Context, string) (string, func() error, error)
 	Packet            Packet
-	mu                sync.Mutex
-	workflows         sync.Map
-	slotsOnce         sync.Once
+	// earlier is the unresolved investigation routing chose to start from.
+	earlier   *earlierInvestigation
+	mu        sync.Mutex
+	workflows sync.Map
+	slotsOnce sync.Once
 }
 
 // Fingerprint excludes live issue IDs/timestamps but preserves all diagnostic
@@ -385,9 +387,13 @@ func (p *Provider) analyzeEngineering(ctx context.Context, in esa.AnalyzeRequest
 		Limitations []string                       `json:"limitations"`
 		Commit      string                         `json:"source_commit"`
 		SourcePaths []string                       `json:"source_paths_preview,omitempty"`
-	}{in.Contract, catalog, p.Packet.Cutoff, p.Packet.Ticket, visibleDocuments(p.Packet.Documents), p.Packet.Limitations, p.Packet.Commit, paths}
+		Earlier     *earlierInvestigation          `json:"earlier_investigation,omitempty"`
+	}{in.Contract, catalog, p.Packet.Cutoff, p.Packet.Ticket, visibleDocuments(p.Packet.Documents), p.Packet.Limitations, p.Packet.Commit, paths, p.earlier}
 	payload, _ := json.Marshal(packet)
 	instructions := engineeringInstructions(p.ToolsConfig != "", len(catalog) > 0, bootstrap)
+	if p.earlier != nil {
+		instructions += " " + promptText("engineering-earlier")
+	}
 	prompt := engineeringPrompt + "\n" + string(payload)
 	for name, data := range map[string][]byte{"schema.json": EngineeringSchema(), "instructions.txt": []byte(instructions), "prompt.txt": []byte(prompt)} {
 		if err := os.WriteFile(filepath.Join(dir, name), data, 0600); err != nil {

@@ -66,6 +66,12 @@ func TestRoutingCLIHelper(t *testing.T) {
 		if strings.HasPrefix(decision, "join") || decision == "reuse_pending" {
 			kind = "investigating"
 		}
+		if strings.HasSuffix(decision, "unresolved") || decision == "analyze_unresolved_unread" {
+			kind = "unresolved"
+		}
+		if decision == "analyze_agent" {
+			kind = "agent_analyzed"
+		}
 		args, _ := json.Marshal(map[string]any{"query": "", "kind": kind, "limit": 20})
 		var result map[string]any
 		if decision != "return_to_support" {
@@ -95,6 +101,16 @@ func TestRoutingCLIHelper(t *testing.T) {
 			if decision == "invent" {
 				routing["record_path"] = "engineer_resolved/invented/issue.json"
 			}
+		} else if strings.HasPrefix(decision, "analyze_") {
+			// Start the analysis from a record instead of from nothing.
+			entry := found.Entries[0]
+			if decision != "analyze_unresolved_unread" {
+				args, _ = json.Marshal(map[string]string{"path": entry.Path, "sha256": entry.SHA256})
+				if _, err = server.Call(context.Background(), "issue_read", args); err != nil {
+					panic(err)
+				}
+			}
+			routing = map[string]string{"action": "analyze", "record_path": entry.Path, "record_hash": entry.SHA256, "reason": "An earlier investigation of the same deadlock found no answer on its release"}
 		} else if decision == "return_to_support" {
 			routing["action"] = "return_to_support"
 			routing["reason"] = "No software defect is reported. Ask Billing for the invoice download process."
@@ -178,6 +194,8 @@ func routingFixture(t *testing.T, decision string) (*Provider, esa.AnalyzeReques
 	for _, kind := range []string{"agent_analyzed", "engineer_resolved"} {
 		records = append(records, esa.IssueRecord{ID: "issue_" + kind, IssueID: "issue_" + kind, ProjectID: "1", ScopeHash: "scope", Kind: kind, Title: "Existing assignment defect", SourceTicketID: "source", SourceKey: "BUG-0", RunID: "run_original", Summary: "PRIVATE_CATALOGUE_SOLUTION_" + kind, Recommendations: []string{"Guard the known assignment"}, VerificationSteps: []string{"Use the stored regression"}, AvailableAt: at})
 	}
+	records = append(records, esa.IssueRecord{ID: "investigation_earlier", InvestigationID: "investigation_earlier", ProjectID: "1", ScopeHash: "scope", Kind: "unresolved", Title: "Deadlock on an older release", SourceTicketID: "earlier", SourceKey: "BUG-0", RunID: "run_earlier", Versions: []string{"0"},
+		Summary: "Reported frames are not in the frozen release", Limitations: []string{"EARLIER_LIMITATION: onCompleteJoin has no store call"}, AvailableAt: at})
 	relative, digest, err := esa.ExportIssueDirectory(root, "1", at, records)
 	if err != nil {
 		t.Fatal(err)
@@ -329,6 +347,64 @@ func TestRoutingRejectsUnreadOrInventedSolutions(t *testing.T) {
 			p, in, sourceCalls := routingFixture(t, decision)
 			if _, err := p.Analyze(context.Background(), in); err == nil || *sourceCalls != 0 {
 				t.Fatal("unread/invented solution accepted", err)
+			}
+		})
+	}
+}
+
+func TestRoutingStartsEngineeringFromAnUnresolvedRecord(t *testing.T) {
+	for _, staged := range []bool{false, true} {
+		t.Run(fmt.Sprint("staged=", staged), func(t *testing.T) {
+			p, in, sourceCalls := routingFixture(t, "analyze_unresolved")
+			var report esa.Report
+			var err error
+			if staged {
+				in.Stage = "route"
+				if report, err = p.Analyze(context.Background(), in); err != nil || report.Routing.RecordPath == "" {
+					t.Fatal("routing did not keep the unresolved record", report.Routing, err)
+				}
+				in.Stage = "engineer"
+			}
+			report, err = p.Analyze(context.Background(), in)
+			if err != nil || *sourceCalls != 1 || report.Routing.Action != "analyze" || !strings.HasPrefix(report.Routing.RecordPath, "unresolved/") || len(report.Findings) != 1 {
+				t.Fatal("analysis did not start from the unresolved record", report.Routing, err)
+			}
+			dir := filepath.Join(p.RunsDir, in.RunID, "engineering", in.RunID)
+			prompt, _ := os.ReadFile(filepath.Join(dir, "prompt.txt"))
+			instructions, _ := os.ReadFile(filepath.Join(dir, "instructions.txt"))
+			if !strings.Contains(string(prompt), `"earlier_investigation"`) || !strings.Contains(string(prompt), "EARLIER_LIMITATION") ||
+				!strings.Contains(string(instructions), promptText("engineering-earlier")) {
+				t.Fatal("engineering did not receive the earlier investigation", string(prompt))
+			}
+			for _, denied := range []string{"PRIVATE_CATALOGUE_SOLUTION", "issue_directory", "unresolved/"} {
+				if strings.Contains(string(prompt), denied) {
+					t.Fatal("engineering received catalogue context", denied)
+				}
+			}
+		})
+	}
+	p, in, _ := routingFixture(t, "analyze")
+	if _, err := p.Analyze(context.Background(), in); err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(p.RunsDir, in.RunID, "engineering", in.RunID)
+	prompt, _ := os.ReadFile(filepath.Join(dir, "prompt.txt"))
+	instructions, _ := os.ReadFile(filepath.Join(dir, "instructions.txt"))
+	if strings.Contains(string(prompt), "earlier_investigation") || strings.Contains(string(instructions), "earlier_investigation") {
+		t.Fatal("a fresh analysis was told about an earlier investigation")
+	}
+}
+
+func TestRoutingRefusesUnresolvedRecordMisuse(t *testing.T) {
+	for decision, refusal := range map[string]string{
+		"analyze_unresolved_unread": "must read the unresolved record",
+		"analyze_agent":             "only from an unresolved record",
+		"reuse_unresolved":          "not a reusable solution",
+	} {
+		t.Run(decision, func(t *testing.T) {
+			p, in, sourceCalls := routingFixture(t, decision)
+			if _, err := p.Analyze(context.Background(), in); err == nil || !strings.Contains(err.Error(), refusal) || *sourceCalls != 0 {
+				t.Fatal("an unresolved record was misused or a solution started an analysis", err)
 			}
 		})
 	}

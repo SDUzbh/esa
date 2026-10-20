@@ -39,6 +39,9 @@ func mavenRepository(t *testing.T, jar []byte, published time.Time, sha string) 
 			w.Write([]byte(sha + "  lz4-1.3.0.jar\n"))
 		case base + ".pom":
 			w.Write([]byte(pom))
+		case base + ".pom.sha1":
+			sum := sha1.Sum([]byte(pom))
+			w.Write([]byte(hex.EncodeToString(sum[:])))
 		case "/moved/a/1/a-1.jar":
 			// Followed, this would fetch the real JAR and then fail on a missing SHA-1.
 			http.Redirect(w, r, base+".jar", http.StatusFound)

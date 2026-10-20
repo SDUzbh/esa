@@ -91,7 +91,7 @@ func queueTimeout(seconds int) error {
 // pipeline runs route, then reserves an engineering slot or parks the task.
 // It persists an investigating claim before releasing the project routing gate.
 // A parked task returns errParked; ProcessOne later resumes it with engineer.
-func (e *Engine) pipeline(ctx context.Context, provider PipelineAnalyzer, input AnalyzeRequest, task Investigation, started time.Time) (Report, error) {
+func (e *Engine) pipeline(ctx context.Context, provider PipelineAnalyzer, input AnalyzeRequest, task Investigation, records []IssueRecord, started time.Time) (Report, error) {
 	routed, err := e.stage(ctx, provider, input, "route")
 	if err != nil {
 		return routed, err
@@ -109,7 +109,7 @@ func (e *Engine) pipeline(ctx context.Context, provider PipelineAnalyzer, input 
 	if decision.Action != "analyze" {
 		return routed, nil
 	}
-	if decision.RecordPath != "" || decision.RecordHash != "" || routed.Issue != nil || len(routed.Evidence) != 0 {
+	if !unresolvedSelection(records, *decision) || routed.Issue != nil || len(routed.Evidence) != 0 {
 		return routed, fmt.Errorf("intake analysis cannot assign or publish a solution")
 	}
 	// Persist both the route audit and the visible claim before another intake

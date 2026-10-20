@@ -88,7 +88,7 @@ func (p *Provider) Analyze(ctx context.Context, in esa.AnalyzeRequest) (esa.Repo
 				return report, errors.New("only analyze requests can continue")
 			}
 			if stage == "engineer" {
-				return p.engineerAnalysis(ctx, in, dir, report)
+				return p.engineerAnalysis(ctx, in, dir, directory, report)
 			}
 			return p.assignAnalysis(ctx, in, dir, directory, report)
 		}
@@ -150,7 +150,7 @@ func (p *Provider) Analyze(ctx context.Context, in esa.AnalyzeRequest) (esa.Repo
 		if err != nil {
 			return result, err
 		}
-		if record.Kind == "investigating" {
+		if record.Kind == "investigating" || record.Kind == "unresolved" {
 			return result, errors.New("an investigation is not a reusable solution")
 		}
 		result = esa.ReusedIssueReport(record, routing)
@@ -169,8 +169,16 @@ func (p *Provider) Analyze(ctx context.Context, in esa.AnalyzeRequest) (esa.Repo
 		result.Summary = "Additional ticket information required"
 		result.Limitations = []string{routing.Reason}
 	case "analyze":
+		// Analysis may start from an unresolved record the Router read; it can
+		// never claim a solution or an active investigation.
 		if routing.RecordPath != "" || routing.RecordHash != "" {
-			return result, errors.New("new analysis cannot claim a reused solution")
+			if !read {
+				return result, errors.New("Routing Agent must read the unresolved record it starts from")
+			}
+			record, err := directory.ReadRecord(routing.RecordPath, routing.RecordHash)
+			if err != nil || record.Kind != "unresolved" {
+				return result, errors.New("new analysis can start only from an unresolved record")
+			}
 		}
 		// Gate the handoff before claiming work or invoking engineering. The raw
 		// model decision remains in routing/answer.json for the invocation audit.
@@ -180,6 +188,7 @@ func (p *Provider) Analyze(ctx context.Context, in esa.AnalyzeRequest) (esa.Repo
 		}
 		if reason != "" {
 			routing.Action, routing.Reason = "request_information", reason
+			routing.RecordPath, routing.RecordHash = "", ""
 			result.Summary = "Additional ticket information required"
 			result.Limitations = []string{reason}
 			break
@@ -192,7 +201,7 @@ func (p *Provider) Analyze(ctx context.Context, in esa.AnalyzeRequest) (esa.Repo
 			err = os.WriteFile(filepath.Join(dir, "routing-report.json"), data, 0600)
 			return result, err
 		}
-		report, err := p.engineerAnalysis(ctx, in, dir, result)
+		report, err := p.engineerAnalysis(ctx, in, dir, directory, result)
 		if err != nil {
 			return report, err
 		}
@@ -222,12 +231,19 @@ func (p *Provider) Analyze(ctx context.Context, in esa.AnalyzeRequest) (esa.Repo
 	return result, err
 }
 
-func (p *Provider) engineerAnalysis(ctx context.Context, in esa.AnalyzeRequest, dir string, routed esa.Report) (esa.Report, error) {
+func (p *Provider) engineerAnalysis(ctx context.Context, in esa.AnalyzeRequest, dir string, directory esa.IssueDirectory, routed esa.Report) (esa.Report, error) {
 	if err := os.Mkdir(filepath.Join(dir, "engineering-attempt"), 0700); err != nil {
 		return esa.Report{}, errors.New("engineering already attempted; inspect the audit before an explicit new run")
 	}
 	engineer := p.child()
 	engineer.RunsDir = filepath.Join(dir, "engineering")
+	if routed.Routing != nil && routed.Routing.RecordPath != "" {
+		record, err := directory.ReadRecord(routed.Routing.RecordPath, routed.Routing.RecordHash)
+		if err != nil || record.Kind != "unresolved" {
+			return esa.Report{}, errors.New("new analysis can start only from an unresolved record")
+		}
+		engineer.earlier = earlierFrom(record)
+	}
 	report, err := engineer.analyzeEngineering(ctx, in)
 	err = setAsideAfterQuota(err, dir, "engineering", "engineering-attempt")
 	report.Routing = routed.Routing
@@ -291,6 +307,7 @@ func (p *Provider) child() *Provider {
 		MavenCacheMaxBytes: p.MavenCacheMaxBytes,
 		SetupEnvironment:   p.SetupEnvironment,
 		Packet:             p.Packet,
+		earlier:            p.earlier,
 		IssuesRoot:         p.IssuesRoot,
 		Slots:              p.Slots,
 	}

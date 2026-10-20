@@ -104,8 +104,10 @@ var investigationTransitions = transitions[InvestigationState]{
 	InvestigationAgentProposed:         {InvestigationTrusted, InvestigationWithdrawn},
 	InvestigationApplied:               {InvestigationWithdrawn},
 	InvestigationAwaitingConfiguration: {InvestigationRunning, InvestigationSuperseded},
+	// Investigating awaits information when engineering abstains or assignment
+	// routing asks for grouping information.
 	InvestigationInvestigating: {
-		InvestigationAgentProposed, InvestigationFailed, InvestigationSuperseded,
+		InvestigationAgentProposed, InvestigationAwaitingInformation, InvestigationFailed, InvestigationSuperseded,
 	},
 	InvestigationQueued: {
 		InvestigationAwaitingConfiguration, InvestigationAwaitingForward, InvestigationInvestigating,
@@ -126,7 +128,7 @@ var runTransitions = transitions[RunState]{
 	RunAwaitingConfiguration: {RunRunning, RunSuperseded},
 	RunAwaitingReview:        {RunCompleted, RunInvalidated, RunRestricted},
 	RunCompleted:             {RunInvalidated, RunRejected},
-	RunInvestigating:         {RunAwaitingReview, RunFailed, RunRestricted},
+	RunInvestigating:         {RunAwaitingInformation, RunAwaitingReview, RunFailed, RunRestricted},
 	RunQueued: {
 		RunAwaitingConfiguration, RunAwaitingForward, RunInvestigating, RunRestricted, RunRunning,
 		RunSuperseded,

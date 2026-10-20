@@ -12,7 +12,7 @@ flowchart LR
     R -->|"Yes: retrieve local Issues on demand"| C{"Existing solution applies?"}
     C -->|"Agent analyzed / engineer resolved"| D["Return stored solution; skip engineering Agent"]
     C -->|"Matching investigation"| Q["Join existing investigating task"]
-    C -->|"No"| W["Persist investigating claim / wait for capacity"]
+    C -->|"No, or only an unresolved earlier attempt"| W["Persist investigating claim / wait for capacity"]
     W --> E["Engineering workers: maximum 3 / isolated tools"]
     C -->|"Missing essential information"| F["Request information"]
     E --> G["Engineering grouping request + findings"]
@@ -41,6 +41,12 @@ Initial routing is serialized per project until its outcome or in-progress claim
 
 A queued ticket can outlast an investigation that was active when it arrived. If the registered pipeline claim has completed beyond the ticket's frozen cutoff, the directory still exposes only its original input as `investigating` coordination metadata. It exposes no later diagnosis, Issue title, findings or solution; a `join` decision shares the investigation and current result visibility rules still apply. Later knowledge is never presented as time-eligible repair evidence. Claim metadata does not advance the historical availability of a repair. Completed knowledge available within the cutoff continues through `agent_analyzed`/`engineer_resolved` instead.
 
+## Unresolved investigations
+
+An investigation whose engineering found no supported answer ends in **Awaiting information**. It creates no Issue or solution, but its report says what engineering checked and why it stopped, often a ticket version that does not match the code the reporter ran. The directory exposes it as an `unresolved` record: the original ticket, scope, summary, any findings and the limitations. Only engineering abstentions qualify; a routing request for information checked nothing and is not exported. The record follows the same visibility and cutoff rules as an Agent analysis, and a newer attempt on the same ticket replaces it.
+
+An `unresolved` record is neither a solution nor active work, so `reuse` and `join` refuse it. When it describes the same problem as the new ticket, Routing Agent reads it and returns `analyze` with its path/hash. The provider then adds an `earlier_investigation` block to the engineering packet: the earlier ticket's key, subject, versions, summary, findings and limitations. Engineering uses it to decide where to look first and which dead ends to skip, then diagnoses the new ticket on its own frozen source; the block is not evidence and cannot be cited. Its scope need not match the new ticket, since a version mismatch is the usual reason for the original to fail. When the new analysis succeeds, its `agent_analyzed` record is what the original ticket finds if its reporter later adds information and it is forwarded again.
+
 For non-engineering requests accidentally forwarded by support, Routing Agent returns `return_to_support` with customer-service next steps. ESA records `returned_to_support` / `customer_support`, invokes no engineering Agent, and creates no Issue or solution. This decision belongs to Routing Agent; there is no keyword admission classifier.
 
 Exact input duplicates already share a task before model invocation. Differently worded duplicates depend on Routing Agent's applicability judgment; concurrency control cannot prove semantic equivalence or prevent a model from missing a match. Joining fails closed if the target fails/expires or its source changes during routing; it does not launch a replacement engineer automatically.
@@ -56,6 +62,7 @@ Exact input duplicates already share a task before model invocation. Differently
     agent_analyzed/<issue-key>/<scope-hash>/issue.json
     engineer_resolved/<issue-key>/<scope-hash>/issue.json
     investigating/<investigation-key>/<scope-hash>/issue.json
+    unresolved/<investigation-key>/<scope-hash>/issue.json
 ```
 
 The index supports paginated search over title, source key, symptoms, diagnosis, component and version. Search returns bounded metadata with relative record paths and hashes; `issue_read` loads only selected records. Empty-query browsing handles differences in wording. The archive is not truncated to the first ten Issues or five cases.
@@ -96,4 +103,4 @@ For supported findings, the adapter registers a local `assignment-request.json` 
 
 Request, routing and engineering audits are stored beneath the provider's private per-run directory. Repeating a completed request returns its cached report; a partial/uncertain invocation is not silently retried. Joined routing spend remains on its original run rather than being copied into the shared engineering report. The replay tester continues to interact through public ESA APIs and does not implement this routing workflow itself.
 
-Automated routing tests use a subprocess fixture and the real directory tool handlers: both Issue kinds skip engineering/source/runtime setup, unseen records cannot be reused, new problems invoke engineering once, and clarification invokes no engineering. Directory and application tests cover pagination, scope separation, historical cutoffs, withdrawal and source visibility. Pipeline tests also verify both Routing Agent request types, three-worker capacity across projects/workers, the fourth task parking without holding a worker while another ticket is routed, resumption with identical provider input after a provider restart, release before grouping review, pending joins, delayed joins without future findings, lease fencing and visibility rechecks. These tests verify orchestration and constraints, not model matching accuracy on real customer tickets.
+Automated routing tests use a subprocess fixture and the real directory tool handlers: both Issue kinds skip engineering/source/runtime setup, unseen records cannot be reused, new problems invoke engineering once, and clarification invokes no engineering. An analysis started from an unresolved record passes it to engineering as `earlier_investigation`; an unread unresolved record, a solution record named by `analyze`, and reuse or join of an unresolved record are refused. Directory and application tests cover pagination, scope separation, historical cutoffs, withdrawal and source visibility. Pipeline tests also verify both Routing Agent request types, three-worker capacity across projects/workers, the fourth task parking without holding a worker while another ticket is routed, resumption with identical provider input after a provider restart, release before grouping review, pending joins, delayed joins without future findings, lease fencing and visibility rechecks. These tests verify orchestration and constraints, not model matching accuracy on real customer tickets.

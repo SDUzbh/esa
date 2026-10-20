@@ -37,6 +37,9 @@ func run() error {
 	toolCatalog := flag.String("tool-catalog", "", "Private JSON catalog of approved pinned temporary tools")
 	mavenRepository := flag.String("maven-repository", "https://repo1.maven.org/maven2",
 		"HTTPS repository engineering may install any artifact from on demand (maven_install); empty disables it")
+	mavenCache := flag.String("maven-cache", "runtime/maven-cache",
+		"Host directory that keeps verified Maven downloads for all tasks, so each artifact is fetched once; empty disables it")
+	mavenCacheMB := flag.Int64("maven-cache-max-mb", 2048, "Size cap of -maven-cache in MiB; least recently used files are removed first")
 	mavenBeforeCutoff := flag.Bool("maven-before-cutoff", false,
 		"Historical replays only: refuse artifacts published after each task's observation cutoff")
 	concurrency := flag.Int("concurrency", 3, "Maximum engineering environments running simultaneously (1..3)")
@@ -193,6 +196,16 @@ func run() error {
 		return fmt.Errorf("-maven-before-cutoff needs -maven-repository")
 	}
 	provider.MavenRepository, provider.MavenBeforeCutoff = *mavenRepository, *mavenBeforeCutoff
+	if *mavenCache != "" && *mavenRepository != "" {
+		// The tool server runs from another directory; give it an absolute path.
+		if provider.MavenCache, err = filepath.Abs(*mavenCache); err != nil {
+			return err
+		}
+		if *mavenCacheMB < 1 {
+			return fmt.Errorf("-maven-cache-max-mb must be positive")
+		}
+		provider.MavenCacheMaxBytes = *mavenCacheMB << 20
+	}
 	if *toolCatalog != "" {
 		data, err := os.ReadFile(*toolCatalog)
 		if err != nil {

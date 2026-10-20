@@ -168,6 +168,9 @@ func validateReport(report Report, input AnalyzeRequest, records []IssueRecord) 
 			report.Routing.Action != "return_to_support" {
 			return fmt.Errorf("invalid routing action")
 		}
+		if report.Routing.Action == "analyze" && !unresolvedSelection(records, *report.Routing) {
+			return fmt.Errorf("analysis can start only from an unresolved record")
+		}
 		if report.Routing.Action != "analyze" && (report.Usage.Calls > 1 || len(report.Findings) > 0) {
 			return fmt.Errorf("reuse/clarification cannot invoke engineering or claim new findings")
 		}
@@ -392,7 +395,7 @@ func (e *Engine) ProcessOne(ctx context.Context, analyzer Analyzer) (bool, error
 		if resumed {
 			report, callErr = e.engineer(callCtx, pipeline, input, task, report)
 		} else if staged {
-			report, callErr = e.pipeline(callCtx, pipeline, input, task, started)
+			report, callErr = e.pipeline(callCtx, pipeline, input, task, records, started)
 		} else {
 			report, callErr = analyzer.Analyze(callCtx, input)
 		}
@@ -403,7 +406,7 @@ func (e *Engine) ProcessOne(ctx context.Context, analyzer Analyzer) (bool, error
 		if err == nil {
 			record, err = directory.ReadRecord(report.Routing.RecordPath, report.Routing.RecordHash)
 		}
-		if err == nil && record.Kind == "investigating" {
+		if err == nil && (record.Kind == "investigating" || record.Kind == "unresolved") {
 			err = fmt.Errorf("an investigation is not a reusable solution")
 		}
 		if err != nil {

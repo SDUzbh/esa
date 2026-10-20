@@ -579,6 +579,16 @@ func (d IssueDirectory) ReadRecord(name, digest string) (IssueRecord, error) {
 	return r, nil
 }
 
+// IssueSearch is how issue_search matches records: code identifiers also
+// match by their parts, common plural and verb endings are ignored, and a
+// record must hold at least a third of the query's distinct terms, so
+// component and version words alone no longer match nearly everything.
+// Measured offline on 252 Kafka duplicates against directories of up to
+// 11,320 records (tools/routing-eval): the original is in the top 10 about as
+// often as with identifier parts and stemming alone, and a ticket title
+// matches about 400 records instead of about 3,200.
+var IssueSearch = retrieval.Options{Stem: true, MinShare: 1.0 / 3}
+
 // Search paginates lexical retrieval over one frozen view.
 // Hits identify candidates; relevance alone is never an applicability or trust decision.
 // Search pages through the active records: retired ones are left out.
@@ -647,7 +657,7 @@ func (d *IssueDirectory) search(query, kind string, archive bool, offset, limit 
 					docs = append(docs, doc)
 				}
 			}
-			index = retrieval.Build(docs)
+			index = retrieval.BuildWith(docs, IssueSearch)
 			d.searchIndexes[key] = index
 		}
 		for _, item := range index.Search(query) {

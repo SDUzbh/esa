@@ -199,7 +199,8 @@ func routingTools(withContext bool) []map[string]any {
 			"description": "Search the registered local Issue directory or browse with an empty query. Results are " +
 				"paginated metadata, not a decision of applicability. Pass queries (up to 5) instead of query to " +
 				"run several wordings in one call; their first pages are merged and each hit lists the " +
-				"queries that found it. Prefer engineer_resolved records " +
+				"queries that found it. A record matches only if it holds at least a third of the query's words; code identifiers " +
+				"also match by their parts and plural or verb endings are ignored. Prefer engineer_resolved records " +
 				"when equally applicable; inspect the record before reuse. archive=true searches only " +
 				"records of retired, solved Issues; use it when no current record applies.",
 			"inputSchema": map[string]any{

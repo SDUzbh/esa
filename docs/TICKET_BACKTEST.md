@@ -71,6 +71,18 @@ nohup python3 scripts/run_agent_eval.py --set reports/eval/set --tool-catalog ru
 bin/system-replay -score reports/eval/run-1/run/pipeline.json -labels reports/eval/set/labels.json -repo kafka -output reports/eval/score-1
 ```
 
+## Routing search evaluation
+
+`scripts/build_routing_corpus.py` and `tools/routing-eval` measure the Routing Agent's `issue_search` offline, without a model, at realistic directory sizes. The builder writes every Fixed Kafka ticket as it was filed (summary, description and environment from before later edits) and two case sets: Resolved `Duplicate` tickets whose single Duplicate link is an earlier Fixed ticket, and as many controls with no Duplicate link from the same years. Each case carries the query styles the Agent used in evaluation runs (one identifier, component and version, empty browse) and others it could send (title, exception names, stack-frame classes). `routing-eval` gives each case a directory of every Fixed ticket created before it and reports where each query ranks the true original and how many records match, for ESA's shipped search and for the alternative indexes it lists. A test keeps its ranking identical to an exported ESA directory.
+
+```sh
+python3 scripts/build_routing_corpus.py --output reports/routing-eval/corpus
+go build -o .tools/routing-eval ./tools/routing-eval
+.tools/routing-eval -corpus reports/routing-eval/corpus/corpus.jsonl -cases reports/routing-eval/corpus/cases.json -out reports/routing-eval/measures.json
+```
+
+On the 2026-10-21 export (252 duplicates, 252 controls, directories of 121 to 11,320 records) the shipped search puts the original in the top 10 for 62% of duplicates' title queries (any-word BM25: 56%) and matches a median of 412 records per title query (3,175).
+
 ## Current examples and coverage
 
 | Manifest | Actual coverage | Model calls by default |

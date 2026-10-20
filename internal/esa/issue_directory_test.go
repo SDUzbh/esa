@@ -237,3 +237,37 @@ func TestIssueDirectoryExcludesFutureAndPrivateSources(t *testing.T) {
 		t.Fatal("future/private/other-project content entered directory", records)
 	}
 }
+
+func TestIssueSearchMatchesIdentifierPartsAndNeedsAThirdOfTheWords(t *testing.T) {
+	root := t.TempDir()
+	at := time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
+	record := func(id, summary string) IssueRecord {
+		return IssueRecord{ID: id, IssueID: id, ProjectID: "1", ScopeHash: "scope", Kind: "agent_analyzed", Title: id, Summary: summary,
+			Recommendations: []string{"Fix it"}, Components: []string{"core"}, Versions: []string{"0.10.1.0"}, AvailableAt: at}
+	}
+	relative, digest, err := ExportIssueDirectory(root, "1", at, []IssueRecord{
+		record("issue_deadlock", "GroupMetadataManager deadlocks during heartbeat expiry"),
+		record("issue_fetch", "Fetch requests time out on a busy broker"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	directory, err := OpenIssueDirectory(root, relative, digest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Prose words reach the identifier and the plural.
+	rows, total, err := directory.Search("group metadata deadlock", "", 0, 20)
+	if err != nil || total != 1 || rows[0].IssueID != "issue_deadlock" {
+		t.Fatal("identifier parts and plurals did not match", rows, err)
+	}
+	// Sharing one word of a four-word query is not a match; any-word matching
+	// returned both records here.
+	rows, total, err = directory.Search("broker heartbeat deadlock expiry", "", 0, 20)
+	if err != nil || total != 1 || rows[0].IssueID != "issue_deadlock" {
+		t.Fatal("a record sharing one of four words matched", rows, err)
+	}
+	if _, total, _ = directory.Search("", "", 0, 20); total != 2 {
+		t.Fatal("browsing changed", total)
+	}
+}

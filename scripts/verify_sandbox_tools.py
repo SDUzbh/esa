@@ -6,6 +6,7 @@ import subprocess
 import tempfile
 
 from replay_environment import Environment, digest, write_json
+import mcp_view
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -35,7 +36,7 @@ def main():
                 response = json.loads(process.stdout.readline())['result']
                 if response['isError']:
                     raise RuntimeError(response['content'][0]['text'])
-                return json.loads(response['content'][0]['text'])
+                return mcp_view.decode(response['content'][0]['text'])
 
             try:
                 grant = call('capability_request', {'profile': 'general', 'version': '2', 'requested_capabilities': ['runtime', 'temporary_tools'], 'hypothesis_id': 'H1', 'reason': 'Inspect a diagnostic trace', 'expected_observation': 'Run a pinned auxiliary diagnostic tool'})

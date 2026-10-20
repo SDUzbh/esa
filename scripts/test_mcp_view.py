@@ -21,6 +21,17 @@ class DecodeTests(unittest.TestCase):
         self.assertEqual(evidence['lines'][1]['text'], '')
         self.assertEqual(result['environment_request'], {'reason': 'r'})
 
+    def test_batched_documents(self):
+        block = lambda path, line, check, code: '\n'.join([
+            '%s at commit 3402a8361b73, lines %d-%d' % (path, line, line),
+            'Cite a line by its evidence ID %s:<line>#<check>, for example %s:%d#%s' % (path.split('/')[-1], path.split('/')[-1], line, check),
+            '%d#%s | %s' % (line, check, code),
+        ])
+        text = block('core/A.scala', 10, '0fe2', 'a()') + '\n\n' + block('core/B.scala', 20, 'bf93', 'b()')
+        docs = mcp_view.decode(text)['documents']
+        self.assertEqual([d['lines'][0]['id'] for d in docs], ['A.scala:10#0fe2', 'B.scala:20#bf93'])
+        self.assertEqual(docs[1]['first_line'], 20)
+
     def test_search_and_json(self):
         text = '\n'.join([
             '2 literal hits at commit f10ef2720b03 (limit reached; more exist, narrow the query). Read a hit with read_code to cite it.',

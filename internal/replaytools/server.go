@@ -225,14 +225,15 @@ func (s *Server) Call(ctx context.Context, name string, args json.RawMessage) (m
 		return s.extendedCall(ctx, name, args)
 	}
 	var a struct {
-		Path       string `json:"path"`
-		First      int    `json:"first_line"`
-		Count      int    `json:"line_count"`
-		Script     string `json:"script"`
-		Timeout    int    `json:"timeout_seconds"`
-		Reason     string `json:"reason"`
-		Change     string `json:"proposed_change"`
-		Validation string `json:"validation"`
+		Path       string      `json:"path"`
+		First      int         `json:"first_line"`
+		Count      int         `json:"line_count"`
+		Ranges     []readRange `json:"ranges"`
+		Script     string      `json:"script"`
+		Timeout    int         `json:"timeout_seconds"`
+		Reason     string      `json:"reason"`
+		Change     string      `json:"proposed_change"`
+		Validation string      `json:"validation"`
 	}
 	decoder := json.NewDecoder(bytes.NewReader(args))
 	decoder.DisallowUnknownFields()
@@ -242,42 +243,14 @@ func (s *Server) Call(ctx context.Context, name string, args json.RawMessage) (m
 	record := Record{Tool: name, Arguments: args}
 	switch name {
 	case "read_code":
-		path := filepath.ToSlash(filepath.Clean(a.Path))
-		expected, ok := s.Config.Files[path]
-		if !ok || a.First < 1 || a.Count < 1 || a.Count > 200 {
-			return nil, errors.New("choose a registered source path and 1..200 lines")
+		if a.Ranges != nil {
+			return s.readRanges(args, a.Path != "" || a.First != 0 || a.Count != 0, a.Ranges)
 		}
-		root, err := os.OpenRoot(s.Config.SourceDir)
+		doc, err := s.readSource(a.Path, a.First, a.Count)
 		if err != nil {
 			return nil, err
 		}
-		defer root.Close()
-		f, err := root.Open(path)
-		if err != nil {
-			return nil, err
-		}
-		defer f.Close()
-		hash := sha256.New()
-		scanner := bufio.NewScanner(io.TeeReader(f, hash))
-		scanner.Buffer(make([]byte, 4096), 2<<20)
-		var lines []string
-		line := 0
-		for scanner.Scan() {
-			line++
-			if line >= a.First && line < a.First+a.Count {
-				lines = append(lines, scanner.Text())
-			}
-		}
-		if err = scanner.Err(); err != nil {
-			return nil, err
-		}
-		if hex.EncodeToString(hash.Sum(nil)) != expected {
-			return nil, errors.New("historical source hash changed")
-		}
-		if len(lines) == 0 {
-			return nil, errors.New("source line range is empty")
-		}
-		record.Document = &Document{Source: "git", Prefix: s.Config.Commit + ":" + path + ":", First: a.First, Lines: lines}
+		record.Document = doc
 	case "run", "install_environment":
 		if s.Config.ProfilesRoot != "" && !has(s.granted, "runtime") {
 			return nil, errors.New("request the runtime capability for a named hypothesis first")
@@ -341,6 +314,99 @@ func (s *Server) Call(ctx context.Context, name string, args json.RawMessage) (m
 	return result, nil
 }
 
+// readRange is one file range of a batched read_code.
+type readRange struct {
+	Path  string `json:"path"`
+	First int    `json:"first_line"`
+	Count int    `json:"line_count"`
+}
+
+// maxRanges bounds one batched read_code.
+const maxRanges = 5
+
+// readSource reads one range of a registered file after verifying the
+// file's recorded hash.
+func (s *Server) readSource(path string, first, count int) (*Document, error) {
+	path = filepath.ToSlash(filepath.Clean(path))
+	expected, ok := s.Config.Files[path]
+	if !ok || first < 1 || count < 1 || count > 200 {
+		return nil, errors.New("choose a registered source path and 1..200 lines")
+	}
+	root, err := os.OpenRoot(s.Config.SourceDir)
+	if err != nil {
+		return nil, err
+	}
+	defer root.Close()
+	f, err := root.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	hash := sha256.New()
+	scanner := bufio.NewScanner(io.TeeReader(f, hash))
+	scanner.Buffer(make([]byte, 4096), 2<<20)
+	var lines []string
+	line := 0
+	for scanner.Scan() {
+		line++
+		if line >= first && line < first+count {
+			lines = append(lines, scanner.Text())
+		}
+	}
+	if err = scanner.Err(); err != nil {
+		return nil, err
+	}
+	if hex.EncodeToString(hash.Sum(nil)) != expected {
+		return nil, errors.New("historical source hash changed")
+	}
+	if len(lines) == 0 {
+		return nil, errors.New("source line range is empty")
+	}
+	return &Document{Source: "git", Prefix: s.Config.Commit + ":" + path + ":", First: first, Lines: lines}, nil
+}
+
+// readRanges reads up to maxRanges file ranges in one call, so the Agent
+// can look at several places without a model call per read. Every range is
+// read before anything is audited; each is then audited as its own
+// read_code record, so evidence validation sees ordinary single reads.
+func (s *Server) readRanges(args json.RawMessage, mixed bool, ranges []readRange) (map[string]any, error) {
+	if mixed || len(ranges) == 0 || len(ranges) > maxRanges {
+		return nil, fmt.Errorf("pass either path/first_line/line_count or ranges with 1..%d entries", maxRanges)
+	}
+	records := make([]Record, 0, len(ranges))
+	documents := make([]NumberedDocument, 0, len(ranges))
+	for i, r := range ranges {
+		doc, err := s.readSource(r.Path, r.First, r.Count)
+		if err != nil {
+			return nil, fmt.Errorf("range %d (%s): %w", i+1, r.Path, err)
+		}
+		single, _ := json.Marshal(r)
+		records = append(records, Record{Tool: "read_code", Arguments: single, Document: doc})
+		documents = append(documents, Numbered(*doc))
+	}
+	f, err := os.OpenFile(s.Config.AuditPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
+	if err != nil {
+		return nil, err
+	}
+	var batch []byte
+	for _, record := range records {
+		b, err := json.Marshal(record)
+		if err != nil {
+			f.Close()
+			return nil, err
+		}
+		batch = append(append(batch, b...), '\n')
+	}
+	_, err = f.Write(batch)
+	if closeErr := f.Close(); err == nil {
+		err = closeErr
+	}
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{"documents": documents}, nil
+}
+
 func tools(extended bool) []map[string]any {
 	str := func() map[string]string { return map[string]string{"type": "string"} }
 	number := func() map[string]string { return map[string]string{"type": "integer"} }
@@ -353,8 +419,11 @@ func tools(extended bool) []map[string]any {
 			"description": "Read frozen historical source. Returns a header naming the file, then one line each as " +
 				"<line>#<check> | text. A line's evidence ID is <file>:<line>#<check> (the header gives an example, such as " +
 				"Client.java:350#a3f9); use it exactly in finding locations and evidence_ids, never count lines manually or change any part. " +
-				"The header's line range is the range actually returned, including at end of file.",
-			"inputSchema": schema(map[string]any{"path": str(), "first_line": number(), "line_count": number()}, "path", "first_line", "line_count"),
+				"The header's line range is the range actually returned, including at end of file. To read several places at once, " +
+				"pass ranges (up to 5 objects with path, first_line and line_count) instead of path/first_line/line_count; each comes back " +
+				"as its own block.",
+			"inputSchema": schema(map[string]any{"path": str(), "first_line": number(), "line_count": number(),
+				"ranges": map[string]any{"type": "array", "maxItems": maxRanges, "items": schema(map[string]any{"path": str(), "first_line": number(), "line_count": number()}, "path", "first_line", "line_count")}}),
 		},
 		{
 			"name": "run",

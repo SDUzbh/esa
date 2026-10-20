@@ -2,13 +2,15 @@
 
 read_code, run and install_environment print a header and one line each as
 <line>#<check> | text (see internal/replaytools/render.go); source_search
-prints hits grouped by file. Every other tool returns JSON.
+prints hits grouped by file. A read_code call with several ranges prints one
+such block per range, separated by a blank line. Every other tool returns JSON.
 """
 import json
 import re
 
 LINE = re.compile(r'^(\d+)#([0-9a-f]+) \| (.*)$')
 LABEL = re.compile(r'^Cite a line by its evidence ID (.+):<line>#<check>')
+HEADER = re.compile(r'^\S.* (at commit \S+|output \S+), lines \d+-\d+$')
 
 
 def decode(text):
@@ -24,6 +26,14 @@ def decode(text):
             else:
                 file = row
         return {'hits': hits, 'truncated': 'limit reached' in rows[0]}
+    blocks = text.split('\n\n')
+    if len(blocks) > 1 and all(HEADER.match(block.split('\n', 1)[0]) for block in blocks):
+        return {'documents': [document(block)['evidence'] for block in blocks]}
+    return document(text)
+
+
+def document(text):
+    rows = text.split('\n')
     result, label, lines = {'environment_request': None}, '', []
     for row in rows[1:]:
         if row.startswith('environment_request: '):

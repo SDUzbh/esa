@@ -4,7 +4,10 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
+	"sort"
+	"strings"
 
 	"esa/internal/esa"
 )
@@ -28,13 +31,14 @@ func (s *Server) issueCall(name string, args json.RawMessage) (map[string]any, e
 		return nil, errors.New("no issue directory is registered")
 	}
 	var a struct {
-		Query   string `json:"query"`
-		Kind    string `json:"kind"`
-		Offset  int    `json:"offset"`
-		Limit   int    `json:"limit"`
-		Path    string `json:"path"`
-		SHA256  string `json:"sha256"`
-		Archive bool   `json:"archive"`
+		Query   string   `json:"query"`
+		Queries []string `json:"queries"`
+		Kind    string   `json:"kind"`
+		Offset  int      `json:"offset"`
+		Limit   int      `json:"limit"`
+		Path    string   `json:"path"`
+		SHA256  string   `json:"sha256"`
+		Archive bool     `json:"archive"`
 	}
 	decoder := json.NewDecoder(bytes.NewReader(args))
 	decoder.DisallowUnknownFields()
@@ -76,6 +80,15 @@ func (s *Server) issueCall(name string, args json.RawMessage) (map[string]any, e
 		if a.Archive {
 			search = directory.SearchArchive
 		}
+		if a.Queries != nil {
+			if a.Query != "" {
+				return nil, errors.New("pass either query or queries, not both")
+			}
+			if result, err = searchMany(search, a.Queries, a.Kind, a.Offset, a.Limit); err != nil {
+				return nil, err
+			}
+			break
+		}
 		rows, total, err := search(a.Query, a.Kind, a.Offset, a.Limit)
 		if err != nil {
 			return nil, err
@@ -110,6 +123,73 @@ func (s *Server) issueCall(name string, args json.RawMessage) (map[string]any, e
 	}
 	return result, closeErr
 }
+
+// maxQueries bounds one batched issue_search.
+const maxQueries = 5
+
+// batchEntry is a hit of a batched search with the queries that found it.
+type batchEntry struct {
+	esa.IssueIndexEntry
+	Matched []string `json:"matched_queries"`
+}
+
+// searchMany runs several first-page searches in one call, so the Routing
+// Agent can try its symptom, exception, component and version wordings
+// without a model call per query. Hits are merged by their best rank in any
+// query, then by query order; each lists the queries that found it.
+func searchMany(search func(string, string, int, int) ([]esa.IssueIndexEntry, int, error), queries []string, kind string, offset, limit int) (map[string]any, error) {
+	if len(queries) == 0 || len(queries) > maxQueries || offset != 0 {
+		return nil, fmt.Errorf("queries takes 1..%d searches and no offset; page one query with query and offset", maxQueries)
+	}
+	type hit struct {
+		entry      batchEntry
+		rank, from int
+	}
+	hits := map[string]*hit{}
+	totals := map[string]int{}
+	for i, q := range queries {
+		if strings.TrimSpace(q) == "" {
+			return nil, errors.New("each batched query must be non-empty; browse with an empty query")
+		}
+		if _, repeated := totals[q]; repeated {
+			continue
+		}
+		rows, total, err := search(q, kind, 0, limit)
+		if err != nil {
+			return nil, err
+		}
+		totals[q] = total
+		for rank, row := range rows {
+			h := hits[row.Path]
+			if h == nil {
+				h = &hit{entry: batchEntry{IssueIndexEntry: row}, rank: rank, from: i}
+				hits[row.Path] = h
+			}
+			h.entry.Matched = append(h.entry.Matched, q)
+			h.rank = min(h.rank, rank)
+		}
+	}
+	merged := make([]*hit, 0, len(hits))
+	for _, h := range hits {
+		merged = append(merged, h)
+	}
+	sort.Slice(merged, func(i, j int) bool {
+		a, b := merged[i], merged[j]
+		if a.rank != b.rank {
+			return a.rank < b.rank
+		}
+		if a.from != b.from {
+			return a.from < b.from
+		}
+		return a.entry.Path < b.entry.Path
+	})
+	entries := make([]batchEntry, 0, len(merged))
+	for _, h := range merged {
+		entries = append(entries, h.entry)
+	}
+	return map[string]any{"entries": entries, "totals": totals}, nil
+}
+
 func routingTools(withContext bool) []map[string]any {
 	str := func() map[string]string { return map[string]string{"type": "string"} }
 	integer := func() map[string]string { return map[string]string{"type": "integer"} }
@@ -117,19 +197,21 @@ func routingTools(withContext bool) []map[string]any {
 		{
 			"name": "issue_search",
 			"description": "Search the registered local Issue directory or browse with an empty query. Results are " +
-				"paginated metadata, not a decision of applicability. Prefer engineer_resolved records " +
+				"paginated metadata, not a decision of applicability. Pass queries (up to 5) instead of query to " +
+				"run several wordings in one call; their first pages are merged and each hit lists the " +
+				"queries that found it. Prefer engineer_resolved records " +
 				"when equally applicable; inspect the record before reuse. archive=true searches only " +
 				"records of retired, solved Issues; use it when no current record applies.",
 			"inputSchema": map[string]any{
 				"type": "object",
 				"properties": map[string]any{
 					"query":   str(),
+					"queries": map[string]any{"type": "array", "items": str(), "maxItems": maxQueries},
 					"kind":    str(),
 					"offset":  integer(),
 					"limit":   integer(),
 					"archive": map[string]any{"type": "boolean"},
 				},
-				"required":             []string{"query"},
 				"additionalProperties": false,
 			},
 		},

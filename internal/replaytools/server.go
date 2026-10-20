@@ -350,10 +350,10 @@ func tools(extended bool) []map[string]any {
 	result := []map[string]any{
 		{
 			"name": "read_code",
-			"description": "Read frozen historical source with absolute line numbers and stable evidence IDs such as " +
-				"Client.java:350#a3f9 (file, line, checksum). Copy returned IDs exactly into finding locations and evidence_ids; " +
-				"never count lines manually or change any part of an ID. " +
-				"last_line reflects the actual returned range, including EOF.",
+			"description": "Read frozen historical source. Returns a header naming the file, then one line each as " +
+				"<line>#<check> | text. A line's evidence ID is <file>:<line>#<check> (the header gives an example, such as " +
+				"Client.java:350#a3f9); use it exactly in finding locations and evidence_ids, never count lines manually or change any part. " +
+				"The header's line range is the range actually returned, including at end of file.",
 			"inputSchema": schema(map[string]any{"path": str(), "first_line": number(), "line_count": number()}, "path", "first_line", "line_count"),
 		},
 		{
@@ -361,7 +361,7 @@ func tools(extended bool) []map[string]any {
 			"description": "Run installation, the system or debugger commands inside the isolated replay container. " +
 				"Product source and runtime inputs are read-only. Write auxiliary scripts and compiled " +
 				"tools only under /workspace. No host filesystem, credentials or Docker socket is exposed. " +
-				"Output is capped at 64 KiB.",
+				"Output is capped at 64 KiB. Output lines carry evidence IDs the same way, such as run-48213:42#9c1e.",
 			"inputSchema": schema(map[string]any{"script": str(), "timeout_seconds": number()}, "script"),
 		},
 		{
@@ -445,8 +445,7 @@ func (s *Server) Serve(ctx context.Context, in io.Reader, out io.Writer) (result
 			if err != nil {
 				text = err.Error()
 			} else {
-				b, _ := json.Marshal(r)
-				text = string(b)
+				text = renderResult(p.Name, r)
 			}
 			result = map[string]any{"content": []map[string]string{{"type": "text", "text": text}}, "isError": err != nil}
 			err = nil

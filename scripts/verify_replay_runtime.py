@@ -9,6 +9,7 @@ import sys
 import tempfile
 
 from replay_environment import ROOT, Environment, cleanup_sessions, dependencies, write_json
+import mcp_view
 
 
 def absent(env):
@@ -55,7 +56,7 @@ def main():
                 response = json.loads(process.stdout.readline())
                 assert 'error' not in response, response
                 result = response['result']; assert not result.get('isError'), result
-                return json.loads(result['content'][0]['text'])
+                return mcp_view.decode(result['content'][0]['text'])
             try:
                 call('install_environment', {})
                 source = 'clients/src/main/java/org/apache/kafka/clients/consumer/internals/Fetcher.java'

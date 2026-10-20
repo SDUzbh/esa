@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 import subprocess
 import tempfile
+import mcp_view
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -31,7 +32,7 @@ def main():
             process.stdin.flush()
             result = json.loads(process.stdout.readline())['result']
             assert not result['isError'], result
-            return json.loads(result['content'][0]['text'])
+            return mcp_view.decode(result['content'][0]['text'])
         def call(profile, capabilities):
             return tool('capability_request', {'profile': profile, 'version': '2', 'requested_capabilities': capabilities, 'hypothesis_id': 'H1', 'reason': 'Inspect registered behavior', 'expected_observation': 'Source and baseline controls'})
         try:

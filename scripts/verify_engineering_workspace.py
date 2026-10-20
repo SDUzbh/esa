@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 import subprocess
 import tempfile
+import mcp_view
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -36,12 +37,12 @@ def main():
             process.stdin.flush()
             result = json.loads(process.stdout.readline())['result']
             assert not result['isError'], result
-            return json.loads(result['content'][0]['text'])
+            return mcp_view.decode(result['content'][0]['text'])
 
         try:
             first = call('read_code', {'path': code.name, 'first_line': 1, 'line_count': 175})['evidence']
             assert first['first_line'] == first['last_line'] == first['lines'][0]['line'] == 1
-            assert first['lines'][0]['id'].startswith('e_') and not runtime.exists()
+            assert first['lines'][0]['id'].startswith(Path(code.name).name + ':1#') and not runtime.exists()
             ready = call('capability_request', {'profile': 'java-debug', 'version': '2', 'requested_capabilities': ['runtime'], 'hypothesis_id': 'H1', 'reason': 'Compile unchanged source and test empty arguments', 'expected_observation': 'A passing argument control and a failing empty-argument case'})
             assert ready['decision']['status'] == 'granted', ready
             assert ready['readiness']['status'] == 'workspace_ready' and not ready['readiness']['compiled']

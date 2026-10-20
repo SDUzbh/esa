@@ -50,3 +50,29 @@ func TestExtendedGatewayEnforcesPolicyAndFrozenSearch(t *testing.T) {
 		t.Fatal("future/tampered source entered search")
 	}
 }
+
+func TestRuntimeGuidanceComesOnceWithTheFirstRuntimeGrant(t *testing.T) {
+	root, _ := filepath.Abs("../../profiles")
+	dir := t.TempDir()
+	// An already-registered container needs no preparation for the grant.
+	s := Server{Config: Config{ProfilesRoot: root, AllowedProfiles: []string{"java-debug"}, AvailableCapabilities: []string{"source", "runtime"},
+		Container: "task", RuntimeGuidance: "RUNTIME_PROCEDURE", AuditPath: filepath.Join(dir, "audit.jsonl")}}
+	grant := func(capability string) map[string]any {
+		t.Helper()
+		result, err := s.Call(context.Background(), "capability_request", json.RawMessage(`{"profile":"java-debug","version":"2","requested_capabilities":["`+capability+
+			`"],"hypothesis_id":"H1","reason":"Inspect assignment","expected_observation":"Find dereference"}`))
+		if err != nil || result["decision"].(capabilities.Decision).Status != "granted" {
+			t.Fatalf("grant %s: %+v %v", capability, result, err)
+		}
+		return result
+	}
+	if _, given := grant("source")["runtime_guidance"]; given {
+		t.Fatal("a source-only grant carried the runtime procedure")
+	}
+	if grant("runtime")["runtime_guidance"] != "RUNTIME_PROCEDURE" {
+		t.Fatal("the first runtime grant lacks the runtime procedure")
+	}
+	if _, given := grant("runtime")["runtime_guidance"]; given {
+		t.Fatal("the runtime procedure was repeated")
+	}
+}

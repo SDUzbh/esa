@@ -322,7 +322,6 @@ func (p *Provider) analyzeEngineering(ctx context.Context, in esa.AnalyzeRequest
 	}
 	var tools replaytools.Config
 	var catalog []capabilities.Profile
-	var bootstrap string
 	var paths []string
 	if p.ToolsConfig != "" {
 		var err error
@@ -339,6 +338,8 @@ func (p *Provider) analyzeEngineering(ctx context.Context, in esa.AnalyzeRequest
 			}
 			tools.Maven = p.mavenPolicy(in.Contract.ObservationCutoff)
 			tools.ProfilesRoot = p.ProfilesRoot
+			// Given once, with the first grant that includes runtime work.
+			tools.RuntimeGuidance = promptText("engineering-runtime")
 			if len(tools.AllowedProfiles) == 0 {
 				tools.AllowedProfiles = []string{"general", "java-debug", "performance", "compatibility", "configuration"}
 			}
@@ -359,9 +360,6 @@ func (p *Provider) analyzeEngineering(ctx context.Context, in esa.AnalyzeRequest
 					tools.ProfileHashes = map[string]string{}
 				}
 				tools.ProfileHashes[catalog[i].ID] = catalog[i].ManifestHash
-				if catalog[i].ID == "general" {
-					bootstrap = catalog[i].Skill
-				}
 				catalog[i].Skill = ""
 				catalog[i].Toolset = ""
 			}
@@ -395,7 +393,7 @@ func (p *Provider) analyzeEngineering(ctx context.Context, in esa.AnalyzeRequest
 		Earlier     *earlierInvestigation          `json:"earlier_investigation,omitempty"`
 	}{in.Contract, catalog, p.Packet.Cutoff, p.Packet.Ticket, visibleDocuments(p.Packet.Documents), p.Packet.Limitations, p.Packet.Commit, paths, p.earlier}
 	payload, _ := json.Marshal(packet)
-	instructions := engineeringInstructions(p.ToolsConfig != "", len(catalog) > 0, bootstrap)
+	instructions := engineeringInstructions(p.ToolsConfig != "", len(catalog) > 0)
 	if p.earlier != nil {
 		instructions += " " + promptText("engineering-earlier")
 	}

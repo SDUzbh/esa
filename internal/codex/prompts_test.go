@@ -25,9 +25,14 @@ func TestPromptFilesAreWellFormed(t *testing.T) {
 		t.Fatal("prompt version is not a 16-hex digest:", PromptVersion)
 	}
 	for _, catalog := range []bool{false, true} {
-		text := engineeringInstructions(true, catalog, "SKILL")
-		if strings.Contains(text, "  ") || strings.Contains(text, "SKILL") != catalog {
+		text := engineeringInstructions(true, catalog)
+		if strings.Contains(text, "  ") || strings.Contains(text, "capability_request before runtime work") != catalog {
 			t.Errorf("engineering instructions joined badly (catalog=%v)", catalog)
 		}
+	}
+	// The catalog variant leaves the runtime procedure to the capability grant.
+	runtime := promptText("engineering-runtime")
+	if catalog := engineeringInstructions(true, true); strings.Contains(catalog, runtime) || strings.Contains(catalog, "maven_install") || strings.Contains(catalog, "/workspace/classes") {
+		t.Error("the catalog instructions still carry the runtime procedure")
 	}
 }

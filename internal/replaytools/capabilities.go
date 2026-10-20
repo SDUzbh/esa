@@ -104,6 +104,11 @@ func (s *Server) extendedCall(ctx context.Context, name string, args json.RawMes
 		}
 		result["tool_catalog"] = catalog
 		result["readiness"] = s.Config.Readiness
+		runtimeWork := has(decision.Granted, "runtime") || has(decision.Granted, "debugger") || has(decision.Granted, "temporary_tools")
+		if decision.Status == "granted" && runtimeWork && s.Config.RuntimeGuidance != "" && !s.guided {
+			result["runtime_guidance"] = s.Config.RuntimeGuidance
+			s.guided = true
+		}
 		if decision.Status == "granted" {
 			for _, grant := range decision.Granted {
 				if !has(s.granted, grant) {

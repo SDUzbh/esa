@@ -19,6 +19,13 @@ func renderResult(name string, r map[string]any) string {
 		}
 		return text
 	}
+	if docs, ok := r["documents"].([]NumberedDocument); ok {
+		texts := make([]string, len(docs))
+		for i, doc := range docs {
+			texts[i] = renderDocument(doc)
+		}
+		return strings.Join(texts, "\n\n")
+	}
 	if hits, ok := r["hits"].([]map[string]any); ok && name == "source_search" {
 		truncated, _ := r["truncated"].(bool)
 		return renderSearch(hits, truncated)

@@ -18,7 +18,12 @@ func TestMavenDownloadsAreLimitedToTheCutoffOnlyInReplays(t *testing.T) {
 	if replay == nil || replay.PublishedBefore == nil || !replay.PublishedBefore.Equal(cutoff) {
 		t.Fatalf("a replay must refuse artifacts published after its cutoff: %+v", replay)
 	}
-	if child := (&Provider{MavenRepository: "https://r", MavenBeforeCutoff: true}).child(); child.MavenRepository != "https://r" || !child.MavenBeforeCutoff {
+	cached := (&Provider{MavenRepository: "https://r", MavenCache: "/var/cache/esa", MavenCacheMaxBytes: 1 << 30}).mavenPolicy(cutoff)
+	if cached.Cache != "/var/cache/esa" || cached.CacheMaxBytes != 1<<30 {
+		t.Fatalf("the shared cache must reach each task: %+v", cached)
+	}
+	parent := &Provider{MavenRepository: "https://r", MavenBeforeCutoff: true, MavenCache: "/c", MavenCacheMaxBytes: 5}
+	if child := parent.child(); child.MavenRepository != "https://r" || !child.MavenBeforeCutoff || child.MavenCache != "/c" || child.MavenCacheMaxBytes != 5 {
 		t.Fatal("registry tasks run in a child provider, which must keep the download policy")
 	}
 }

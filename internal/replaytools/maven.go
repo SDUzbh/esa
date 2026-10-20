@@ -2,7 +2,6 @@ package replaytools
 
 import (
 	"context"
-	"crypto/sha1"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/xml"
@@ -11,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -24,6 +24,11 @@ type MavenPolicy struct {
 	// PublishedBefore, set only for historical replays, refuses artifacts the
 	// repository published after the task's observation cutoff.
 	PublishedBefore *time.Time `json:"published_before,omitempty"`
+	// Cache, when set, is a host directory that keeps verified downloads so
+	// each artifact is fetched from the repository once for all tasks.
+	Cache string `json:"cache,omitempty"`
+	// CacheMaxBytes caps the cache; the least recently used files go first.
+	CacheMaxBytes int64 `json:"cache_max_bytes,omitempty"`
 }
 
 // mavenTransport is the HTTP transport for repository downloads; tests
@@ -67,18 +72,45 @@ func mavenTool() map[string]any {
 	}
 }
 
-// fetch downloads one repository file; redirects are refused.
+// mavenUserAgent identifies the provider to the repository, which asks
+// automated clients to name themselves.
+const mavenUserAgent = "esa-engineering-provider/1 (Go)"
+
+// mavenRetryBase is the first wait after a throttled or failed request; tests shorten it.
+var mavenRetryBase = 2 * time.Second
+
+// fetch downloads one repository file; redirects are refused. Throttling
+// (HTTP 429) and server errors are retried up to four times with exponential
+// backoff, honoring Retry-After, at most 30 seconds per wait.
 func (p MavenPolicy) fetch(ctx context.Context, path string, limit int64) ([]byte, http.Header, error) {
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(p.Repository, "/")+"/"+path, nil)
-	if err != nil {
-		return nil, nil, err
-	}
 	client := &http.Client{Transport: mavenTransport, Timeout: 120 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error {
 		return errors.New("repository redirects are not permitted")
 	}}
-	response, err := client.Do(request)
-	if err != nil {
-		return nil, nil, errors.New("repository download failed")
+	var response *http.Response
+	for attempt := 0; ; attempt++ {
+		request, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(p.Repository, "/")+"/"+path, nil)
+		if err != nil {
+			return nil, nil, err
+		}
+		request.Header.Set("User-Agent", mavenUserAgent)
+		response, err = client.Do(request)
+		if err != nil {
+			return nil, nil, errors.New("repository download failed")
+		}
+		if (response.StatusCode != http.StatusTooManyRequests && response.StatusCode < 500) || attempt == 4 {
+			break
+		}
+		wait := mavenRetryBase << attempt
+		if seconds, err := strconv.Atoi(response.Header.Get("Retry-After")); err == nil && seconds > 0 {
+			wait = time.Duration(seconds) * time.Second
+		}
+		wait = min(wait, 30*time.Second)
+		response.Body.Close()
+		select {
+		case <-ctx.Done():
+			return nil, nil, ctx.Err()
+		case <-time.After(wait):
+		}
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
@@ -100,11 +132,10 @@ func (s *Server) installMaven(ctx context.Context, coordinate string) (map[strin
 	}
 	group, artifact, version, _ := mavenCoordinate(coordinate)
 	base := strings.ReplaceAll(group, ".", "/") + "/" + artifact + "/" + version + "/" + artifact + "-" + version
-	data, header, err := policy.fetch(call, base+".jar", mavenMaxBytes)
+	data, published, err := policy.verified(call, base+".jar", mavenMaxBytes)
 	if err != nil {
 		return nil, err
 	}
-	published, _ := http.ParseTime(header.Get("Last-Modified"))
 	if policy.PublishedBefore != nil && (published.IsZero() || published.After(*policy.PublishedBefore)) {
 		when := "at an unknown time"
 		if !published.IsZero() {
@@ -112,14 +143,6 @@ func (s *Server) installMaven(ctx context.Context, coordinate string) (map[strin
 		}
 		return map[string]any{"status": "denied", "reason": fmt.Sprintf("%s was published %s, after this replay's observation cutoff %s",
 			coordinate, when, policy.PublishedBefore.UTC().Format(time.RFC3339))}, nil
-	}
-	expected, _, err := policy.fetch(call, base+".jar.sha1", 1<<10)
-	if err != nil {
-		return nil, err
-	}
-	sum := sha1.Sum(data)
-	if fields := strings.Fields(string(expected)); len(fields) == 0 || !strings.EqualFold(fields[0], hex.EncodeToString(sum[:])) {
-		return nil, errors.New("downloaded JAR does not match the repository's SHA-1")
 	}
 	digest := sha256.Sum256(data)
 	dest := "/workspace/tools/maven/" + group + "/" + artifact + "-" + version + ".jar"
@@ -131,7 +154,7 @@ func (s *Server) installMaven(ctx context.Context, coordinate string) (map[strin
 	if !published.IsZero() {
 		result["published"] = published.UTC().Format(time.RFC3339)
 	}
-	if pom, _, err := policy.fetch(call, base+".pom", 1<<20); err == nil {
+	if pom, _, err := policy.verified(call, base+".pom", 1<<20); err == nil {
 		result["dependencies"], result["unresolved_dependencies"] = pomDependencies(pom)
 	}
 	return result, nil

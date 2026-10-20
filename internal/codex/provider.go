@@ -52,11 +52,16 @@ type Provider struct {
 	// MavenBeforeCutoff, for historical replays only, refuses artifacts
 	// published after the task's observation cutoff.
 	MavenBeforeCutoff bool
-	SetupEnvironment  func(context.Context, string) (string, func() error, error)
-	Packet            Packet
-	mu                sync.Mutex
-	workflows         sync.Map
-	slotsOnce         sync.Once
+	// MavenCache is a host directory shared by all tasks that keeps verified
+	// downloads, so each artifact is fetched once; empty disables it.
+	MavenCache string
+	// MavenCacheMaxBytes caps that cache.
+	MavenCacheMaxBytes int64
+	SetupEnvironment   func(context.Context, string) (string, func() error, error)
+	Packet             Packet
+	mu                 sync.Mutex
+	workflows          sync.Map
+	slotsOnce          sync.Once
 }
 
 // Fingerprint excludes live issue IDs/timestamps but preserves all diagnostic
@@ -462,7 +467,7 @@ func (p *Provider) mavenPolicy(cutoff time.Time) *replaytools.MavenPolicy {
 	if p.MavenRepository == "" {
 		return nil
 	}
-	policy := &replaytools.MavenPolicy{Repository: p.MavenRepository}
+	policy := &replaytools.MavenPolicy{Repository: p.MavenRepository, Cache: p.MavenCache, CacheMaxBytes: p.MavenCacheMaxBytes}
 	if p.MavenBeforeCutoff {
 		policy.PublishedBefore = &cutoff
 	}

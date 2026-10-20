@@ -52,8 +52,13 @@ type Provider struct {
 	// MavenBeforeCutoff, for historical replays only, refuses artifacts
 	// published after the task's observation cutoff.
 	MavenBeforeCutoff bool
-	SetupEnvironment  func(context.Context, string) (string, func() error, error)
-	Packet            Packet
+	// MavenCache is a host directory shared by all tasks that keeps verified
+	// downloads, so each artifact is fetched once; empty disables it.
+	MavenCache string
+	// MavenCacheMaxBytes caps that cache.
+	MavenCacheMaxBytes int64
+	SetupEnvironment   func(context.Context, string) (string, func() error, error)
+	Packet             Packet
 	// earlier is the unresolved investigation routing chose to start from.
 	earlier   *earlierInvestigation
 	mu        sync.Mutex

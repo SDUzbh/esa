@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -27,6 +28,12 @@ func (p *Provider) invoke(ctx context.Context, dir, prompt, sourceKey string, bu
 	callCtx, cancel := context.WithTimeout(ctx, time.Duration(budget.TimeoutSeconds)*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(callCtx, p.CLI, p.cliArgs(dir)...)
+	// The CLI starts children (the ESA tool server, which runs docker). Run it
+	// in its own process group and kill the whole group on timeout or
+	// cancellation: a surviving child would keep the CLI's stderr open, and
+	// Wait would then never return, holding this engineering slot.
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
 	cmd.Stdin = strings.NewReader(prompt)
 	// The credential-bearing ESA service token is not passed to the CLI.
 	for _, env := range os.Environ() {

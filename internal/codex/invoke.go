@@ -8,6 +8,7 @@ import (
 	"errors"
 	"esa/internal/esa"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"os/exec"
@@ -16,6 +17,30 @@ import (
 	"syscall"
 	"time"
 )
+
+// maxEventLine bounds one CLI event line. A longer line is discarded as it
+// is read, never buffered whole.
+const maxEventLine = 2 << 20
+
+// readEvent reads one newline-terminated event. It returns the line without
+// its newline and the line's full size; a line over maxEventLine comes back
+// empty, with its size, after the rest of it has been discarded.
+func readEvent(r *bufio.Reader) ([]byte, int, error) {
+	var line []byte
+	size := 0
+	for {
+		chunk, err := r.ReadSlice('\n')
+		size += len(chunk)
+		if size <= maxEventLine {
+			line = append(line, chunk...)
+		} else {
+			line = nil
+		}
+		if !errors.Is(err, bufio.ErrBufferFull) {
+			return bytes.TrimSuffix(line, []byte{'\n'}), size, err
+		}
+	}
+}
 
 // invoke records every CLI attempt, including rejected output and missing usage.
 // Token thresholds warn but do not cancel the process.
@@ -81,10 +106,8 @@ func (p *Provider) invoke(ctx context.Context, dir, prompt, sourceKey string, bu
 	unexpected := false
 	quota := ""
 	var lastUsage json.RawMessage
-	scanner := bufio.NewScanner(stdout)
-	scanner.Buffer(make([]byte, 4096), 2<<20)
-	for scanner.Scan() {
-		line := scanner.Bytes()
+	// handle logs one event and applies the tool policy to it.
+	handle := func(line []byte) {
 		_, _ = log.Write(append(append([]byte{}, line...), '\n'))
 		var ev struct {
 			Type    string                   `json:"type"`
@@ -98,7 +121,7 @@ func (p *Provider) invoke(ctx context.Context, dir, prompt, sourceKey string, bu
 			} `json:"item"`
 		}
 		if json.Unmarshal(line, &ev) != nil {
-			continue
+			return
 		}
 		if message := ev.Message + ev.Error.Message; (ev.Type == "error" || ev.Type == "turn.failed") && usageLimited(message) {
 			quota = message
@@ -128,6 +151,31 @@ func (p *Provider) invoke(ctx context.Context, dir, prompt, sourceKey string, bu
 			cancel()
 		}
 	}
+	reader := bufio.NewReaderSize(stdout, 64<<10)
+	var readErr error
+	oversized := 0
+	for {
+		line, size, err := readEvent(reader)
+		if size > maxEventLine {
+			// The event was discarded unread, so the tool policy cannot check
+			// it: stop the run instead of reading past it. The process group
+			// is killed, so the rest of the output drains to end of file.
+			if oversized == 0 {
+				oversized = size
+				note, _ := json.Marshal(map[string]any{"type": "esa.oversized_event", "bytes": size, "limit": maxEventLine})
+				_, _ = log.Write(append(note, '\n'))
+				cancel()
+			}
+		} else if len(line) > 0 {
+			handle(line)
+		}
+		if err != nil {
+			if !errors.Is(err, io.EOF) {
+				readErr = err
+			}
+			break
+		}
+	}
 	waitErr := cmd.Wait()
 	_ = os.WriteFile(filepath.Join(dir, "stderr.log"), stderr.Bytes(), 0600)
 	if !usage.TokensReported {
@@ -154,8 +202,11 @@ func (p *Provider) invoke(ctx context.Context, dir, prompt, sourceKey string, bu
 		"  ",
 	)
 	_ = os.WriteFile(filepath.Join(dir, "audit.json"), audit, 0600)
-	if scanner.Err() != nil {
-		return nil, usage, alerts, scanner.Err()
+	if readErr != nil {
+		return nil, usage, alerts, readErr
+	}
+	if oversized > 0 {
+		return nil, usage, alerts, fmt.Errorf("Codex emitted a %d-byte event, over the %d-byte limit; the run was stopped", oversized, maxEventLine)
 	}
 	if quota != "" && turns == 0 {
 		return nil, usage, alerts, &esa.ProviderQuotaError{RetryAt: quotaReset(quota, time.Now()), Message: quota}

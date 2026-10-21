@@ -159,6 +159,41 @@ func (p *PostgresPersister) ReadSnapshot(ctx context.Context, id string) (Ticket
 	return snap, true, nil
 }
 
+// ReadTickets reads tickets with their full text, for request handlers; it
+// runs outside any Update, on the same connection as ReadSnapshot.
+func (p *PostgresPersister) ReadTickets(ctx context.Context, ids []string) (map[string]Ticket, error) {
+	p.readMu.Lock()
+	defer p.readMu.Unlock()
+	ctx, cancel := context.WithTimeout(ctx, p.timeout)
+	defer cancel()
+	if p.reads == nil || p.reads.IsClosed() {
+		conn, err := pgx.Connect(ctx, p.url)
+		if err != nil {
+			return nil, err
+		}
+		p.reads = conn
+	}
+	rows, err := p.reads.Query(ctx, "SELECT id, payload FROM "+p.table("tickets")+" WHERE id = ANY($1)", ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	tickets := map[string]Ticket{}
+	for rows.Next() {
+		var id string
+		var payload []byte
+		if err = rows.Scan(&id, &payload); err != nil {
+			return nil, err
+		}
+		var t Ticket
+		if err = json.Unmarshal(payload, &t); err != nil {
+			return nil, fmt.Errorf("ticket %s: %w", id, err)
+		}
+		tickets[id] = t
+	}
+	return tickets, rows.Err()
+}
+
 func (p *PostgresPersister) table(name string) string {
 	return pgx.Identifier{p.schema, name}.Sanitize()
 }
@@ -350,7 +385,7 @@ var pgTables = []pgTable{
 	mapTable("solution_revisions", func(s *State) *Table[SolutionRevision] { return &s.Solutions }),
 	mapTable("classifier_predictions", func(s *State) *Table[ClassifierPrediction] { return &s.ClassifierPredictions }),
 	mapTable("classifier_feedback", func(s *State) *Table[ClassifierFeedback] { return &s.ClassifierFeedback }),
-	mapTable("tickets", func(s *State) *Table[Ticket] { return &s.Tickets }),
+	ticketsTable(),
 	eventsTable(),
 	mapTable("receipts", func(s *State) *Table[Receipt] { return &s.Receipts }),
 	mapTable("event_rejections", func(s *State) *Table[EventRejection] { return &s.Rejections }),
@@ -358,6 +393,25 @@ var pgTables = []pgTable{
 	mapTable("latest", func(s *State) *Table[string] { return &s.Latest }),
 	mapTable("cases", func(s *State) *Table[Case] { return &s.Cases }),
 }
+
+// ticketsTable refuses to write a ticket loaded without its text, so a closed
+// ticket's description and comments can never be overwritten with empties.
+func ticketsTable() pgTable {
+	t := mapTable("tickets", func(s *State) *Table[Ticket] { return &s.Tickets })
+	t.encode = func(s *State, id string) ([]byte, error) {
+		ticket := s.Tickets.Get(id)
+		if ticket.textInStore {
+			return nil, fmt.Errorf("esa: ticket %s was loaded without its text and cannot be written", id)
+		}
+		return json.Marshal(ticket)
+	}
+	return t
+}
+
+// coldTicketText is the working set's tickets query: closed tickets come
+// without description and comments, which only the ticket API and the
+// classifier read (docs/STORAGE_DESIGN.md#closed-ticket-text).
+const coldTicketText = "SELECT id, CASE WHEN payload->>'closed' = 'true' THEN (payload::jsonb - 'description' - 'comments')::json ELSE payload END FROM "
 
 // eventsTable stores records without Raw; Raw goes to the cold event_raw table.
 func eventsTable() pgTable {
@@ -465,8 +519,20 @@ func (p *PostgresPersister) readState(ctx context.Context, tx pgx.Tx, full bool)
 			snapshots = table
 			continue
 		}
-		if err = readRows(table, "SELECT id, payload FROM "+p.table(table.name)); err != nil {
+		query := "SELECT id, payload FROM " + p.table(table.name)
+		if table.name == "tickets" && !full {
+			query = coldTicketText + p.table(table.name)
+		}
+		if err = readRows(table, query); err != nil {
 			return State{}, 0, 0, err
+		}
+	}
+	if !full {
+		for id, t := range state.Tickets.All() {
+			if t.Closed {
+				t.textInStore = true
+				state.Tickets.Put(id, t)
+			}
 		}
 	}
 	if full {

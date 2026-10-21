@@ -412,8 +412,23 @@ func (api *API) tickets(w http.ResponseWriter, r *http.Request) {
 		end = total
 	}
 	pageRows := make([]TicketRow, 0, end-start)
+	pageTickets := make([]Ticket, 0, end-start)
 	for _, row := range rows[start:end] {
 		pageRows = append(pageRows, row.row)
+		pageTickets = append(pageTickets, row.row.Ticket)
+	}
+	// Closed tickets loaded at startup keep their text in storage; only the
+	// page's rows are read back.
+	full, err := api.Engine.Store.WithText(r.Context(), pageTickets)
+	if err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "Ticket storage is unavailable."})
+		return
+	}
+	for i := range pageRows {
+		if run := pageRows[i].LatestRun; run != nil && run.Input.textInStore {
+			run.Input = full[i]
+		}
+		pageRows[i].Ticket = full[i]
 	}
 	writeJSON(w, 200, map[string]any{"tickets": pageRows, "total_count": total, "page": page, "limit": limit})
 }
@@ -441,6 +456,12 @@ func (api *API) ticket(w http.ResponseWriter, r *http.Request) {
 		s = api.Engine.Store.Snapshot()
 		t = s.Tickets.Get(t.ID)
 	}
+	full, err := api.Engine.Store.WithText(r.Context(), []Ticket{t})
+	if err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "Ticket storage is unavailable."})
+		return
+	}
+	t = full[0]
 	history := []Run{}
 	seen := map[string]bool{}
 	for _, id := range s.runsOfTicket(t.ID) {

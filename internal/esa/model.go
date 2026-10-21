@@ -54,6 +54,10 @@ type Ticket struct {
 	Closed       bool              `json:"closed"`
 	Private      bool              `json:"private"`
 	Resolution   Resolution        `json:"resolution"`
+	// textInStore marks a closed ticket loaded without its Description and
+	// Comments, which stay in Postgres; Store.WithText reads them back. Such a
+	// ticket is never persisted.
+	textInStore bool
 }
 
 // Event asserts an explicit human forwarding action and carries its frozen ticket.

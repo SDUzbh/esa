@@ -486,5 +486,13 @@ func hotProjection(s State) State {
 		out.Events.Put(id, r)
 	}
 	out.MembershipHistory = nil
+	// Closed tickets received since startup keep their text in memory; loaded
+	// ones leave it in storage.
+	for id, t := range out.Tickets.All() {
+		if t.Closed {
+			t.Description, t.Comments, t.textInStore = "", nil, true
+			out.Tickets.Put(id, t)
+		}
+	}
 	return out
 }

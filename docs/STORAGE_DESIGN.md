@@ -104,6 +104,7 @@ func sameBits[V any](a, b *V) bool {
 | **Run input** | `Run.Input` is unchanged in memory and is filled from `Snapshots[run.SnapshotID].Ticket` at load. | The payload **omits `input`** when `SnapshotID != ""` and `hash(Input) == snapshot.Hash`. Otherwise `input` is kept (legacy or divergent runs). |
 | **Snapshots** | The **hot set** (see below) | All snapshots are stored in `esa.snapshots`. Only the hot set is loaded. |
 | **Membership history** | **Not loaded.** It is append-only and no code reads it. | `esa.membership_history` |
+| **Closed tickets' text** | Loaded **without description and comments** (see [Closed ticket text](#closed-ticket-text)) | Unchanged: the full ticket in `esa.tickets` |
 | **Case history** | Loaded, because `eligibleCaseHistory`/`CasesAt` reads it on every Issue-directory export | `esa.case_history` |
 | Everything else | Unchanged | One row per entity |
 
@@ -443,6 +444,26 @@ The JSON file adapter is removed (2026-10-18), and so is the one-time migration 
 - Compose provisions ESA's role and database with the one-shot `esa-db-init` service from `ESA_DB_PASSWORD`, before every ESA start.
 - Tests and harnesses use throwaway schemas. Every `testEngine` test runs on its own schema with the reload-after-commit check; replay targets and local scripts run ESA with `-ephemeral-schema`, which drops its schema on exit. `scripts/test_postgres.sh` starts a disposable server.
 - A standby answers `/healthz` while `/v1/*` returns 503, so `-healthcheck` and every harness wait for `/healthz?role=active`.
+
+## Closed ticket text
+
+The `tickets` table held 118 MB of the 313 MB live heap after loading the real archive, almost all of it descriptions and comments, and 14,585 of the 19,869 tickets are closed. Only two places read a stored ticket's text: the ticket API (`GET /v1/tickets/{id}` and the list rows) and the classifier. Every other check that hashes a ticket's text (`investigationSignature`, `diagnosticHash`) tests `Closed` first. So a restart loads closed tickets without their text:
+
+- **Load.** The working-set query strips `description` and `comments` from closed rows in Postgres (`coldTicketText`), and the loaded tickets are marked `textInStore`. The stored row is unchanged, so there is no migration and an older binary reads the same table.
+- **Reads.** `Store.WithText` reads the text back in one query outside any `Update`, on the connection `ReadSnapshot` uses. The ticket API reads it for the one ticket; the list reads it for the page's rows only. On a local Postgres a closed ticket's GET takes about 0.34 ms against 0.10 ms for an open one.
+- **Classifier.** It reads the text the same way. Inside its `Update`, a ticket still marked `textInStore` has not changed since startup, so it is taken to match the text read from its stored row.
+- **Writes.** The tickets encoder refuses a ticket marked `textInStore`, so an `Update` that edits one in place fails instead of overwriting the stored text with empties. Forwarding a ticket replaces the row with the full forwarded ticket, as before.
+- **Since startup.** Like snapshots, tickets received since startup keep their text in memory until the next restart. The reload-after-commit test check compares closed tickets without their text.
+
+Measured with `TestArchiveHeapProbe` (`internal/esa/archive_probe_test.go`, skipped unless `ESA_ARCHIVE_PROBE` names a Jira `raw/` directory; `ESA_ARCHIVE_REPORT` gives half the open tickets a real 30 KB Agent report): all 19,869 Kafka issues ingested into Postgres, then loaded as a restart does.
+
+| | Before | After |
+|---|---|---|
+| Live heap after load | 313 MB | **230 MB** |
+| of which `tickets` | 118.5 MB | 35.3 MB |
+| Load time | 1.8 s | 1.8 s |
+
+The rest of the heap is run reports (76 MB with the probe's reports), cases and case history (62 MB, mostly copies of closed tickets' descriptions in `Case.Summary`) and hot snapshots (27 MB). Cases are edited by reviews in several places and run reports feed the Issue directory, so leaving their text in storage needs more than a write guard; they are not changed here.
 
 ## Risks
 

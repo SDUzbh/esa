@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"maps"
 	"sync"
 	"sync/atomic"
@@ -34,6 +35,46 @@ type Store struct {
 // out of memory.
 type coldSnapshotReader interface {
 	ReadSnapshot(ctx context.Context, id string) (TicketSnapshot, bool, error)
+}
+
+type coldTicketReader interface {
+	ReadTickets(ctx context.Context, ids []string) (map[string]Ticket, error)
+}
+
+// WithText returns the tickets with their description and comments. Closed
+// tickets loaded at startup leave them in storage (Ticket.textInStore); they
+// are read in one query, outside any Update.
+func (s *Store) WithText(ctx context.Context, tickets []Ticket) ([]Ticket, error) {
+	var ids []string
+	for _, t := range tickets {
+		if t.textInStore {
+			ids = append(ids, t.ID)
+		}
+	}
+	if len(ids) == 0 {
+		return tickets, nil
+	}
+	r, ok := s.persister.(coldTicketReader)
+	if !ok {
+		return nil, errors.New("esa: ticket text is in storage but the persister cannot read it")
+	}
+	stored, err := r.ReadTickets(ctx, ids)
+	if err != nil {
+		return nil, err
+	}
+	out := append([]Ticket(nil), tickets...)
+	for i, t := range out {
+		if !t.textInStore {
+			continue
+		}
+		full, ok := stored[t.ID]
+		if !ok {
+			return nil, fmt.Errorf("esa: ticket %s is missing from storage", t.ID)
+		}
+		t.Description, t.Comments, t.textInStore = full.Description, full.Comments, false
+		out[i] = t
+	}
+	return out, nil
 }
 
 // LookupSnapshot returns a snapshot from memory or, when the persister keeps

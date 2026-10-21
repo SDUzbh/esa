@@ -19,7 +19,19 @@ func (api *API) classifierTicket(r *http.Request) (Ticket, error) {
 	if !ok || t.Private || t.ForwardedBy == "" || t.ForwardedAt.IsZero() || !allowed(r, t.ProjectID) || !ticketAllowed(r, t.ID) {
 		return t, ErrNotFound
 	}
-	return t, nil
+	full, err := api.Engine.Store.WithText(r.Context(), []Ticket{t})
+	if err != nil {
+		return t, err
+	}
+	return full[0], nil
+}
+
+// sameClassifierText reports whether the stored ticket still has text. A
+// ticket whose text is in storage has not changed since startup (any change
+// replaces it with the full forwarded ticket), and callers read text from
+// that stored row, so it matches.
+func sameClassifierText(current Ticket, text string) bool {
+	return current.textInStore || classifierText(current) == text
 }
 func latestPrediction(s State, t Ticket, m *classifier.Model) *ClassifierPrediction {
 	var latest *ClassifierPrediction
@@ -107,7 +119,7 @@ func (api *API) classifierPredict(w http.ResponseWriter, r *http.Request) {
 	p.ID = hash([]string{t.ID, t.ProjectID, text, t.ForwardedAt.UTC().Format(time.RFC3339Nano), m.Version})
 	err = api.Engine.update(func(s *State) error {
 		current, ok := s.Tickets.Lookup(t.ID)
-		if !ok || current.Private || current.ProjectID != t.ProjectID || classifierText(current) != text || !current.ForwardedAt.Equal(t.ForwardedAt) {
+		if !ok || current.Private || current.ProjectID != t.ProjectID || !sameClassifierText(current, text) || !current.ForwardedAt.Equal(t.ForwardedAt) {
 			return ErrConflict
 		}
 		if old, ok := s.ClassifierPredictions.Lookup(p.ID); ok {
@@ -181,7 +193,7 @@ func (api *API) classifierFeedback(w http.ResponseWriter, r *http.Request) {
 			return ErrNotFound
 		}
 		if p.Prediction.ModelVersion != m.Version ||
-			p.Text != classifierText(current) ||
+			!sameClassifierText(current, p.Text) ||
 			!p.ForwardedAt.Equal(current.ForwardedAt) ||
 			m.TrainingThrough.After(p.ForwardedAt) {
 			return fmt.Errorf("%w: prediction is stale; request suggestions for the current snapshot", ErrConflict)

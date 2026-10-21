@@ -121,6 +121,164 @@ func parseJira(record map[string]any) (Ticket, error) {
 	return t, nil
 }
 
+// Upload bounds. A real Jira record with its comments and changelog reaches
+// about 4.3 MB and 38,000 JSON values in the Kafka export; Jira CSV exports
+// repeat comment columns. Decoding JSON into generic values costs about 40
+// times its size for tiny values, so records are decoded one at a time and
+// each is checked before decoding.
+const (
+	maxImportRecords      = 2000
+	maxImportRecordBytes  = 8 << 20
+	maxImportRecordValues = 200_000
+	maxImportCSVColumns   = 1024
+	maxImportCSVField     = 8 << 20
+)
+
+// jsonRecords calls each with every record of an upload: the elements of a
+// top-level array or of an "issues" array, or the document itself. Arrays
+// are read one element at a time and the record cap is applied while
+// reading, so an oversized upload is rejected without decoding all of it.
+// A record over the size or value bound is reported as that record's
+// problem instead of being decoded.
+func jsonRecords(data []byte, each func(index int, value any, problem error)) error {
+	decodeRecord := func(index int, raw []byte) {
+		if len(raw) > maxImportRecordBytes {
+			each(index, nil, fmt.Errorf("Record is larger than %d MB.", maxImportRecordBytes>>20))
+			return
+		}
+		if jsonValues(raw) > maxImportRecordValues {
+			each(index, nil, fmt.Errorf("Record has more than %d JSON values.", maxImportRecordValues))
+			return
+		}
+		var value any
+		d := json.NewDecoder(bytes.NewReader(raw))
+		d.UseNumber()
+		if err := d.Decode(&value); err != nil {
+			each(index, nil, err)
+			return
+		}
+		each(index, value, nil)
+	}
+	array := func(raw []byte) error {
+		d := json.NewDecoder(bytes.NewReader(raw))
+		if _, err := d.Token(); err != nil {
+			return fmt.Errorf("%w: invalid JSON: %v", ErrInvalid, err)
+		}
+		for index := 1; d.More(); index++ {
+			if index > maxImportRecords {
+				return fmt.Errorf("%w: at most %d tickets per upload", ErrInvalid, maxImportRecords)
+			}
+			var element json.RawMessage
+			if err := d.Decode(&element); err != nil {
+				return fmt.Errorf("%w: invalid JSON: %v", ErrInvalid, err)
+			}
+			decodeRecord(index, element)
+		}
+		if _, err := d.Token(); err != nil {
+			return fmt.Errorf("%w: invalid JSON: %v", ErrInvalid, err)
+		}
+		return expectEnd(d)
+	}
+	switch firstByte(data) {
+	case '[':
+		return array(data)
+	case '{':
+		// Only "issues" is copied out; the rest is validated in place.
+		var top struct {
+			Issues json.RawMessage `json:"issues"`
+		}
+		if err := json.Unmarshal(data, &top); err != nil {
+			return fmt.Errorf("%w: invalid JSON: %v", ErrInvalid, err)
+		}
+		if firstByte(top.Issues) == '[' {
+			return array(top.Issues)
+		}
+		decodeRecord(1, bytes.TrimSpace(data))
+		return nil
+	default:
+		var value any
+		d := json.NewDecoder(bytes.NewReader(data))
+		d.UseNumber()
+		if err := d.Decode(&value); err != nil {
+			return fmt.Errorf("%w: invalid JSON: %v", ErrInvalid, err)
+		}
+		if err := expectEnd(d); err != nil {
+			return err
+		}
+		each(1, value, nil)
+		return nil
+	}
+}
+
+func expectEnd(d *json.Decoder) error {
+	var extra any
+	if err := d.Decode(&extra); err != io.EOF {
+		return fmt.Errorf("%w: expected one JSON document", ErrInvalid)
+	}
+	return nil
+}
+
+func firstByte(data []byte) byte {
+	if trimmed := bytes.TrimLeft(data, " \t\r\n"); len(trimmed) > 0 {
+		return trimmed[0]
+	}
+	return 0
+}
+
+// jsonValues counts the values in a JSON text without allocating: one per
+// object or array, plus one per element separator, plus the first value.
+func jsonValues(raw []byte) int {
+	n, inString, escaped := 1, false, false
+	for _, c := range raw {
+		switch {
+		case inString:
+			if escaped {
+				escaped = false
+			} else if c == '\\' {
+				escaped = true
+			} else if c == '"' {
+				inString = false
+			}
+		case c == '"':
+			inString = true
+		case c == '{' || c == '[' || c == ',':
+			n++
+		}
+	}
+	return n
+}
+
+// csvMaxColumns returns the largest number of columns in any CSV row, without
+// allocating, and stops counting past maxImportCSVColumns. A quote toggles
+// quoted text; a doubled quote inside it toggles twice and stays quoted.
+func csvMaxColumns(data []byte) int {
+	most, columns, quoted := 0, 1, false
+	for _, c := range data {
+		switch {
+		case c == '"':
+			quoted = !quoted
+		case quoted:
+		case c == ',':
+			columns++
+		case c == '\n':
+			most, columns = max(most, columns), 1
+		}
+		if columns > maxImportCSVColumns {
+			return columns
+		}
+	}
+	return max(most, columns)
+}
+
+func oversizedField(fields []string) bool {
+	for _, f := range fields {
+		if len(f) > maxImportCSVField {
+			return true
+		}
+	}
+	return false
+}
+
 func ParseImport(filename, projectID string, data []byte, received time.Time) (Preview, error) {
 	preview := Preview{Tickets: []Ticket{}, Problems: []ImportProblem{}, Warnings: []string{}}
 	if projectID == "" {
@@ -158,37 +316,20 @@ func ParseImport(filename, projectID string, data []byte, received time.Time) (P
 	}
 	switch lower(filepath.Ext(filename)) {
 	case ".json":
-		var payload any
-		decoder := json.NewDecoder(bytes.NewReader(data))
-		decoder.UseNumber()
-		if err := decoder.Decode(&payload); err != nil {
-			return preview, fmt.Errorf("%w: invalid JSON: %v", ErrInvalid, err)
-		}
-		var extra any
-		if err := decoder.Decode(&extra); err != io.EOF {
-			return preview, fmt.Errorf("%w: expected one JSON document", ErrInvalid)
-		}
-		var records []any
-		if xs, ok := payload.([]any); ok {
-			records = xs
-		} else if xs, ok := object(payload)["issues"].([]any); ok {
-			records = xs
-		} else {
-			records = []any{payload}
-		}
-		if len(records) > 2000 {
-			return preview, fmt.Errorf("%w: at most 2000 tickets per upload", ErrInvalid)
-		}
-		for i, value := range records {
+		err := jsonRecords(data, func(index int, value any, problem error) {
+			if problem != nil {
+				appendTicket(Ticket{}, index, problem)
+				return
+			}
 			record, ok := value.(map[string]any)
 			if !ok {
-				appendTicket(Ticket{}, i+1, fmt.Errorf("Record must be an object."))
-				continue
+				appendTicket(Ticket{}, index, fmt.Errorf("Record must be an object."))
+				return
 			}
 			issue := object(record["issue"])
 			if record["fields"] != nil || issue["fields"] != nil {
 				t, err := parseJira(record)
-				appendTicket(t, i+1, err)
+				appendTicket(t, index, err)
 			} else {
 				if record["ticket"] != nil {
 					record = object(record["ticket"])
@@ -196,15 +337,26 @@ func ParseImport(filename, projectID string, data []byte, received time.Time) (P
 				b, _ := json.Marshal(record)
 				var t Ticket
 				err := json.Unmarshal(b, &t)
-				appendTicket(t, i+1, err)
+				appendTicket(t, index, err)
 			}
+		})
+		if err != nil {
+			return preview, err
 		}
 	case ".csv":
+		// csv.Reader allocates every field of a row before it can be counted,
+		// so the column bound is applied to the raw text first.
+		if columns := csvMaxColumns(data); columns > maxImportCSVColumns {
+			return preview, fmt.Errorf("%w: a CSV row has more than %d columns", ErrInvalid, maxImportCSVColumns)
+		}
 		r := csv.NewReader(bytes.NewReader(data))
 		r.FieldsPerRecord = -1
 		headers, err := r.Read()
 		if err != nil {
 			return preview, fmt.Errorf("%w: invalid CSV header", ErrInvalid)
+		}
+		if oversizedField(headers) {
+			return preview, fmt.Errorf("%w: a CSV header is larger than %d MB", ErrInvalid, maxImportCSVField>>20)
 		}
 		for i := range headers {
 			headers[i] = lower(headers[i])
@@ -222,6 +374,10 @@ func ParseImport(filename, projectID string, data []byte, received time.Time) (P
 			}
 			if len(row) != len(headers) {
 				appendTicket(Ticket{}, index, fmt.Errorf("Column count does not match the header."))
+				continue
+			}
+			if oversizedField(row) {
+				appendTicket(Ticket{}, index, fmt.Errorf("A field is larger than %d MB.", maxImportCSVField>>20))
 				continue
 			}
 			values := map[string][]string{}

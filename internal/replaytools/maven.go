@@ -40,6 +40,9 @@ const mavenMaxBytes = 64 << 20
 
 var mavenPart = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9_.+\-]*$`)
 
+// pomProperty matches a ${property} reference in a POM value.
+var pomProperty = regexp.MustCompile(`\$\{([^}]+)\}`)
+
 // mavenCoordinate splits group:artifact:version and rejects anything that
 // could leave the repository's path layout.
 func mavenCoordinate(s string) (group, artifact, version string, ok bool) {
@@ -193,9 +196,8 @@ func pomDependencies(data []byte) ([]string, []string) {
 	for _, p := range pom.Properties.Values {
 		props[p.XMLName.Local] = strings.TrimSpace(p.Value)
 	}
-	expand := regexp.MustCompile(`\$\{([^}]+)\}`)
 	resolve := func(s string) string {
-		return expand.ReplaceAllStringFunc(strings.TrimSpace(s), func(m string) string {
+		return pomProperty.ReplaceAllStringFunc(strings.TrimSpace(s), func(m string) string {
 			if v, ok := props[m[2:len(m)-1]]; ok && v != "" {
 				return v
 			}

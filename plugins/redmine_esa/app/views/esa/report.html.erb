@@ -12,6 +12,7 @@
 <p>Identical inputs share an investigation automatically. Routing Agent can also join matching symptoms within the same version, component and environment scope. Membership remains tentative until reviewed.</p>
 <% if @row['solution_application'] %><p><strong>Applicability:</strong> <%= esa_label(@row.dig('solution_application', 'state')) %>. This references existing knowledge; it does not create a new solution.</p><% end %>
 <% if solution %><p><strong>Solution:</strong> Revision <%= solution['revision'] %> · <%= esa_label(solution['state']) %> · <%= solution['origin'] %></p>
+<%= render partial: 'review_outcome' %>
 <% if solution['state'] == 'proposed' %><p class="warning">Agent proposal awaiting engineer review. Source citations alone do not verify the cause or repair.</p><% end %>
 <% if solution['state'] == 'trusted' %><% %w[cause solution validation].each do |field| %><p><strong><%= esa_label(field) %>:</strong> <%= solution.dig('resolution', field) %></p><% end %><p>Reviewed by <%= solution['reviewer'] %>. <%= solution['note'] %></p><% end %>
 <% else %><p>There is no solution available within the current visibility and observation scope.</p><% end %>

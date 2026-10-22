@@ -73,6 +73,44 @@ class EsaPresentationTest < Minitest::Test
     end
   end
 
+  def test_revoked_proposal_shows_the_review_note
+    input = row
+    assert_nil Esa::Presentation.new(input).review_outcome
+    input['solution'] = { 'state' => 'rejected', 'reviewer' => 'engineer-1', 'note' => ' Need the JVM and map-count limits. ' }
+    assert_equal({ 'summary' => 'engineer-1 rejected the agent proposal.', 'note' => 'Need the JVM and map-count limits.' },
+                 Esa::Presentation.new(input).review_outcome)
+    input['solution'] = { 'state' => 'withdrawn', 'reviewer' => '', 'note' => 'The source ticket became private' }
+    assert_equal 'ESA withdrew the reviewed solution.', Esa::Presentation.new(input).review_outcome['summary']
+    input['solution'] = { 'state' => 'trusted', 'reviewer' => 'engineer-1', 'note' => 'ok' }
+    assert_nil Esa::Presentation.new(input).review_outcome
+  end
+
+  def test_revoked_applicability_uses_its_latest_matching_review
+    input = row
+    input['solution'] = { 'state' => 'trusted', 'reviewer' => 'engineer-1', 'note' => 'Original review' }
+    input['solution_application'] = { 'state' => 'rejected', 'reviews' => [
+      { 'state' => 'rejected', 'reviewer' => 'engineer-1', 'note' => 'First' },
+      { 'state' => 'accepted', 'reviewer' => 'engineer-1', 'note' => 'Accepted' },
+      { 'state' => 'rejected', 'reviewer' => 'engineer-2', 'note' => 'Different stack' }
+    ] }
+    assert_equal({ 'summary' => 'engineer-2 rejected applying the existing solution.', 'note' => 'Different stack' },
+                 Esa::Presentation.new(input).review_outcome)
+    input['solution_application'] = { 'state' => 'withdrawn', 'reviews' => [{ 'state' => 'withdrawn', 'reviewer' => 'system', 'note' => 'The referenced source changed or was withdrawn' }] }
+    assert_equal "ESA withdrew the existing solution's applicability.", Esa::Presentation.new(input).review_outcome['summary']
+    input['solution_application'] = { 'state' => 'accepted', 'reviews' => [] }
+    assert_nil Esa::Presentation.new(input).review_outcome
+  end
+
+  def test_review_notice_matches_the_action
+    assert_match(/published/, Esa::Presentation.review_notice('approve', application: false))
+    assert_match(/\AAgent proposal rejected/, Esa::Presentation.review_notice('reject', application: false))
+    assert_match(/\ASolution withdrawn/, Esa::Presentation.review_notice('withdraw', application: false))
+    assert_match(/\AApplicability accepted/, Esa::Presentation.review_notice('approve', application: true))
+    assert_match(/\AApplicability rejected/, Esa::Presentation.review_notice('reject', application: true))
+    assert_match(/\AApplicability withdrawn/, Esa::Presentation.review_notice('withdraw', application: true))
+    %w[reject withdraw].each { |action| refute_match(/published/, Esa::Presentation.review_notice(action, application: false)) }
+  end
+
   def test_closed_case_and_missing_fields
     input = { 'ticket' => { 'closed' => true }, 'case' => { 'state' => 'trusted', 'resolution' => { 'reason' => 'Resolved', 'cause' => '', 'solution' => 'Known resolution' } } }
     view = Esa::Presentation.new(input)

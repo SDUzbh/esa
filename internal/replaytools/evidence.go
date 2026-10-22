@@ -9,8 +9,8 @@ import (
 )
 
 // EvidenceID binds source, reference prefix, absolute line number and exact text.
-// It reads as the location plus a checksum, such as Client.java:350#a3f9 or
-// run-48213:42#9c1e, so the Agent rebuilds it from what it cites instead of
+// It reads as the location plus a checksum, such as `Client.java:350#a3f9` or
+// `run-48213:42#9c1e`, so the Agent rebuilds it from what it cites instead of
 // recalling a random string; a wrong name, line or checksum matches nothing.
 // Consumers must reject ambiguous IDs rather than resolving a collision by order.
 // It is a provenance identifier, not a confidence or semantic-correctness score.

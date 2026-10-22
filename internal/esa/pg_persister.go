@@ -410,7 +410,7 @@ func ticketsTable() pgTable {
 
 // coldTicketText is the working set's tickets query: closed tickets come
 // without description and comments, which only the ticket API and the
-// classifier read (docs/STORAGE_DESIGN.md#closed-ticket-text).
+// classifier read (`docs/STORAGE_DESIGN.md#closed-ticket-text`).
 const coldTicketText = "SELECT id, CASE WHEN payload->>'closed' = 'true' THEN (payload::jsonb - 'description' - 'comments')::json ELSE payload END FROM "
 
 // eventsTable stores records without Raw; Raw goes to the cold event_raw table.

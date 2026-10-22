@@ -1,7 +1,7 @@
 """Decode the ESA tool server's MCP text back into data, for verification scripts.
 
 read_code, run and install_environment print a header and one line each as
-<line>#<check> | text (see internal/replaytools/render.go); source_search
+`<line>#<check> | text` (see internal/replaytools/render.go); source_search
 prints hits grouped by file. A read_code call with several ranges prints one
 such block per range, separated by a blank line. Every other tool returns JSON.
 """

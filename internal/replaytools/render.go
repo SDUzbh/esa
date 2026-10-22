@@ -35,7 +35,7 @@ func renderResult(name string, r map[string]any) string {
 }
 
 // renderDocument prints a header naming the source once, then one line each
-// as <line>#<check> | text. A line's evidence ID is <label>:<line>#<check>.
+// as `<line>#<check> | text`. A line's evidence ID is `<label>:<line>#<check>`.
 func renderDocument(d NumberedDocument) string {
 	label := evidenceLabel(d.Source, d.Prefix)
 	var b strings.Builder

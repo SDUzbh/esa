@@ -27,7 +27,7 @@ Non-goals:
 - Several active writers.
 - Moving domain logic into SQL.
 - Changing the plugin–ESA HTTP API.
-- Making Case history or run reports cold. Both stay in memory; see [Open questions](#open-questions).
+- Making Case history or run reports cold. Both stay in memory; see [Review answers and open questions](#review-answers-and-open-questions).
 
 ## Where we are after Phase 1
 
@@ -436,6 +436,9 @@ These remain O(N), off the per-write path or on rare events:
 - `withdrawSourceSolutions` on a reopened ticket, and withdrawal when a ticket becomes private.
 - `GET /v1/tickets` without `X-ESA-Ticket-IDs`, which the plugin never sends: about 2.5 µs per ticket, outside the write lock. A scoped list is O(scope).
 - Startup, which loads the hot set and builds the indexes once.
+- `GET /v1/cases`, which walks every case and returns all matches, unpaginated. The plugin does not call it.
+- With the classifier enabled, its view scans all predictions and feedback on every ticket GET, and feedback submission scans all feedback inside the write transaction.
+- The Issue title fallback, which scans all runs for an Issue created before `TitleSourceTicketID` existed.
 
 ## Postgres only
 
@@ -450,7 +453,7 @@ The JSON file adapter is removed (2026-10-18), and so is the one-time migration 
 The `tickets` table held 118 MB of the 313 MB live heap after loading the real archive, almost all of it descriptions and comments, and 14,585 of the 19,869 tickets are closed. Only two places read a stored ticket's text: the ticket API (`GET /v1/tickets/{id}` and the list rows) and the classifier. Every other check that hashes a ticket's text (`investigationSignature`, `diagnosticHash`) tests `Closed` first. So a restart loads closed tickets without their text:
 
 - **Load.** The working-set query strips `description` and `comments` from closed rows in Postgres (`coldTicketText`), and the loaded tickets are marked `textInStore`. The stored row is unchanged, so there is no migration and an older binary reads the same table.
-- **Reads.** `Store.WithText` reads the text back in one query outside any `Update`, on the connection `ReadSnapshot` uses. The ticket API reads it for the one ticket; the list reads it for the page's rows only. On a local Postgres a closed ticket's GET takes about 0.34 ms against 0.10 ms for an open one.
+- **Reads.** `Store.WithText` reads the text back in one query outside any `Update`, on the connection `ReadSnapshot` uses. The ticket API reads it for the one ticket; the list reads it for the page's rows only. On a local Postgres a closed ticket's GET takes about 0.34 ms against 0.10 ms for an open one. That connection is a single `pgx.Conn` behind a mutex, shared with `ReadSnapshot`, so concurrent cold reads queue. At this cost and the plugin's polling rate (a closed ticket every 15 s per open tab) that is not a bottleneck; a small read pool is the change if it becomes one.
 - **Classifier.** It reads the text the same way. Inside its `Update`, a ticket still marked `textInStore` has not changed since startup, so it is taken to match the text read from its stored row.
 - **Writes.** The tickets encoder refuses a ticket marked `textInStore`, so an `Update` that edits one in place fails instead of overwriting the stored text with empties. Forwarding a ticket replaces the row with the full forwarded ticket, as before.
 - **Since startup.** Like snapshots, tickets received since startup keep their text in memory until the next restart. The reload-after-commit test check compares closed tickets without their text.
@@ -476,5 +479,5 @@ The rest of the heap is run reports (76 MB with the probe's reports), cases and 
 
 1. **Standby returning 503: accepted** (2026-10-17), on condition that the mechanism is correct. See [Single writer and standby](#single-writer-and-standby) for the mechanism, the correctness argument and the interleaving tests.
 2. **`pgx` as a dependency:** a normal `go.mod` requirement pinned by `go.sum`, **not vendored** (2026-10-17). See [Configuration and deployment](#configuration-and-deployment).
-3. **Memory:** measured at 280 MB of live heap for the full archive (see [Memory](#memory)). Run reports and `Case.Summary` stay in memory.
+3. **Memory:** measured at 280 MB of live heap for the full archive (see [Memory](#memory)); 230 MB since closed tickets load without their text ([Closed ticket text](#closed-ticket-text)). Run reports and `Case.Summary` stay in memory.
 4. **Plugin `/esa/api/state` endpoints: remove** them one release after migration, once no installation still uses them (2026-10-17).

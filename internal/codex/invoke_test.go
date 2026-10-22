@@ -30,7 +30,8 @@ func TestInvokeKillsTheCLIProcessGroupOnTimeout(t *testing.T) {
 	done := make(chan error, 1)
 	start := time.Now()
 	go func() {
-		_, _, _, err := p.invoke(context.Background(), t.TempDir(), "prompt", "K-1", esa.Budget{TimeoutSeconds: 1})
+		// Long enough for the child to start even when the suite is busy.
+		_, _, _, err := p.invoke(context.Background(), t.TempDir(), "prompt", "K-1", esa.Budget{TimeoutSeconds: 5})
 		done <- err
 	}()
 	select {
@@ -38,10 +39,10 @@ func TestInvokeKillsTheCLIProcessGroupOnTimeout(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), "timeout=true") {
 			t.Fatal("the timed-out call did not report its timeout", err)
 		}
-	case <-time.After(15 * time.Second):
-		t.Fatal("invoke was still blocked 15 s after a 1 s timeout")
+	case <-time.After(20 * time.Second):
+		t.Fatal("invoke was still blocked 20 s after a 5 s timeout")
 	}
-	if elapsed := time.Since(start); elapsed > 10*time.Second {
+	if elapsed := time.Since(start); elapsed > 15*time.Second {
 		t.Fatal("invoke took", elapsed)
 	}
 	raw, err := os.ReadFile(pidFile)

@@ -1,0 +1,4 @@
+<% if (outcome = @presentation.review_outcome) %>
+  <div class="warning"><p><strong>Review outcome:</strong> <%= outcome['summary'] %></p>
+  <p><%= outcome['note'].empty? ? 'No review note was recorded.' : "Review note: #{outcome['note']}" %></p></div>
+<% end %>

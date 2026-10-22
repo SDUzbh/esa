@@ -157,7 +157,7 @@ class EsaController < ApplicationController
       reviewer: User.current.login, note: params[:note].to_s,
       resolution: { cause: params[:cause].to_s, solution: params[:solution].to_s, validation: params[:validation].to_s }
     })
-    flash[:notice] = 'A new solution revision was published for this investigation scope.'
+    flash[:notice] = Esa::Presentation.review_notice(params[:review_action], application: row['solution_application'].present?)
     redirect_to esa_ticket_path(@issue)
   end
 

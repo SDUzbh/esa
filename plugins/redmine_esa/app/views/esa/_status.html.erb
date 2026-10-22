@@ -15,5 +15,6 @@
   <% run = @row['latest_run'] %>
   <% if @presentation.state == 'failed' %><p class="warning">Analysis could not finish. Open the report for details.</p><% end %>
   <% if @presentation.state == 'awaiting_information' %><p class="warning">More information is needed. Open the report for the requested details.</p><% end %>
+  <%= render partial: 'review_outcome' %>
   <% if run && Array(run.dig('report', 'alerts')).any? %><p>Analysis has <%= Array(run.dig('report', 'alerts')).length %> advisory notice(s). See the report.</p><% end %>
 </div>

@@ -32,6 +32,42 @@ module Esa
       !@pending && !active? && !!(@row['latest_run'] || @row['case'])
     end
 
+    REVOKED = {
+      %w[solution rejected] => 'rejected the agent proposal.', %w[solution withdrawn] => 'withdrew the reviewed solution.',
+      %w[applicability rejected] => 'rejected applying the existing solution.', %w[applicability withdrawn] => "withdrew the existing solution's applicability."
+    }.freeze
+
+    REVIEW_NOTICES = {
+      ['solution', 'approve'] => 'Reviewed solution published for this investigation scope.',
+      ['solution', 'reject'] => 'Agent proposal rejected. Support can see your review note; forward a new analysis request to investigate again.',
+      ['solution', 'withdraw'] => 'Solution withdrawn. Support can see your review note; earlier revisions remain in history.',
+      ['applicability', 'approve'] => 'Applicability accepted. The existing solution now applies to this ticket.',
+      ['applicability', 'reject'] => 'Applicability rejected. Support can see your review note; the existing solution is unchanged.',
+      ['applicability', 'withdraw'] => 'Applicability withdrawn. Support can see your review note; the existing solution is unchanged.'
+    }.freeze
+
+    # The notice after an engineer's solution review, worded for the action taken.
+    def self.review_notice(action, application:)
+      REVIEW_NOTICES.fetch([application ? 'applicability' : 'solution', action.to_s], 'Review recorded.')
+    end
+
+    # Why the shared proposal or its applicability is no longer offered, so
+    # support knows what the engineer asked for. Nil while nothing was revoked.
+    def review_outcome
+      application = @row['solution_application']
+      if application && %w[rejected withdrawn].include?(application['state'])
+        review = Array(application['reviews']).reverse.find { |r| r['state'] == application['state'] } || {}
+        subject, state, reviewer, note = 'applicability', application['state'], review['reviewer'], review['note']
+      else
+        solution = @row['solution']
+        return nil unless solution && %w[rejected withdrawn].include?(solution['state'])
+        subject, state, reviewer, note = 'solution', solution['state'], solution['reviewer'], solution['note']
+      end
+      # Automatic withdrawals (a source became private or changed) have no engineer.
+      by = ['', 'system'].include?(reviewer.to_s) ? 'ESA' : reviewer
+      { 'summary' => "#{by} #{REVOKED[[subject, state]]}", 'note' => note.to_s.strip }
+    end
+
     def suggestion_source
       @row.dig('solution', 'state') == 'trusted' || @row.dig('case', 'state') == 'trusted' ? 'Engineer-reviewed solution' : 'ESA draft — not verified'
     end
